@@ -35,14 +35,14 @@ After 10 seconds it will show in top average speed value which you can then manu
 <speed_data_average ... hismith_speed="100" ... rotation_speed_total_average="1611" .../>\
 For getting the best results it is greatly recommended to check all 5-100 speeds that rotation_speed_total_average are mostly the same or change them manually accordingly.
 5) You will need special VLC build with milliseconds support for get best results (standard VLC now not supported it can sync only by seconds) you can find it in latest artifact in 3rdParty VLC fork project:\
-https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/artifacts\
+https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/artifacts \
 Also you will need to enabler HTTP request supports in VLC according\
-https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer\
+https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer \
 Don't forget to align used settings with settings.xml fields:\
-<vlc_url>http://127.0.0.1</vlc_url>\
+<vlc_url>http://127.0.0.1</vlc_url> \
 <vlc_port>8080</vlc_port>\
 <vlc_password>1234</vlc_password>\
-If you correctly configured VLC you will can check this in Firefox by using http://127.0.0.1:8080/requests/status.xml\
+If you correctly configured VLC you will can check this in Firefox by using http://127.0.0.1:8080/requests/status.xml \
 (in my case Chrome doesn't open it)
 6) So if all is done now you can simply press button "Start"
 If VLC does not run it will show a message that is waiting for it.
