@@ -58,10 +58,10 @@ dif_end_pos:-26 req_dpos:180+(147) len:320 ... start_t:0:07:52:062 ...\
 dif_end_pos:-65 req_dpos:180+(83) len:240 ... start_t:0:07:52:382 ...\
 dif_end_pos:-35 req_dpos:180+(183) len:360 ... start_t:0:07:52:622 ...\
 ...\
-dif_end_pos is the most important part it show difference with what should be and what was gotten in angle of rotation, where 360 is full circle of rotation.\
- - means that movement was end later then it was in scene.\
- + means that movement was end early then it was in scene.\
- -90 -- 90 are mostly very good results especially if they belo 45.
+dif_end_pos is the most important part it show difference with what should be and what was gotten in angle of rotation, where '360' is full circle of rotation. \
+ '-' means that movement was end later then it was in scene. \
+ '+' means that movement was end early then it was in scene. \
+ '-90' -- '90' are mostly very good results especially if they belo '45'.
 
 ## ! WARNING !
 Be aware to stop Hismith by power button or hotkey (alt+q) to stop running.\
@@ -69,8 +69,8 @@ Due to different reasons like computer freeze or "Intiface Central" becoming uns
 So I highly recommend checking each scene before usage. You can simply play video with turned on program or use OpenFunscripter https://github.com/OpenFunscripter/OFS
 
 ## This project use next 3rdParty projects:
-https://github.com/dumbowumbo/buttplugCpp
-https://github.com/studiosi/OpenCVDeviceEnumerator
+https://github.com/dumbowumbo/buttplugCpp \
+https://github.com/studiosi/OpenCVDeviceEnumerator \
 https://code.videolan.org/skosnits/vlc-extended-playlist-support
 
 
