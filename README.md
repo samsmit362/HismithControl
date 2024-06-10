@@ -75,6 +75,7 @@ dif_end_pos:-35 req_dpos:180+(183) len:360 ... start_t:0:07:52:622 ...\
 Due to different reasons like computer freeze or "Intiface Central" becoming unstable or "Funscript - some of which has very fast stroking on scenes where they are totally missed or not".\
 If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI.\
 So I highly recommend checking each scene before usage.\
+**To minimize risks I have initially set "Hismith Speed Limit" to 50 by default, but you can get less good experience in this case.**\
 You can simply play video with turned on program or use OpenFunscripter https://github.com/OpenFunscripter/OFS
 
 ## Notes

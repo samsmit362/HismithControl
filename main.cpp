@@ -1885,15 +1885,25 @@ int update_abs_pos(const int &cur_pos, const int &prev_pos, int &abs_cur_pos, cv
 	return dpos;
 }
 
+//------------------------------------------
+
+const int _tmp_prev_poss_max_N = 100;
+__int64 _tmp_msec_video_prev_poss[_tmp_prev_poss_max_N];
+int _tmp_abs_prev_poss[_tmp_prev_poss_max_N];
+int _num_prev_poss;
+
+void shift_get_next_frame_and_cur_speed_data(int dpos)
+{
+	for (int i = 0; i < _num_prev_poss; i++)
+	{
+		_tmp_abs_prev_poss[i] += dpos;
+	}
+}
+
 bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, cv::Mat& prev_frame*/,
 	int& abs_cur_pos, int& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
 	__int64& msec_video_prev_pos, int& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, QString add_data = QString())
 {
-	static const int max_N = 100;
-	static __int64 msec_video_prev_poss[max_N];
-	static int abs_prev_poss[max_N];
-	static int num_prev_poss;
-
 	int prev_pos, res, dpos;
 	int dt;
 
@@ -1905,18 +1915,18 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 
 	if (msec_video_prev_pos != -1)
 	{
-		if (num_prev_poss == max_N - 1)
+		if (_num_prev_poss == _tmp_prev_poss_max_N - 1)
 		{
-			for (int i = 0; i < num_prev_poss; i++)
+			for (int i = 0; i < _num_prev_poss; i++)
 			{
-				msec_video_prev_poss[i] = msec_video_prev_poss[i + 1];
-				abs_prev_poss[i] = abs_prev_poss[i + 1];
+				_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
+				_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
 			}
-			num_prev_poss--;			
+			_num_prev_poss--;			
 		}
 
-		msec_video_prev_pos = msec_video_prev_poss[0];
-		abs_prev_pos = abs_prev_poss[0];
+		msec_video_prev_pos = _tmp_msec_video_prev_poss[0];
+		abs_prev_pos = _tmp_abs_prev_poss[0];
 	}
 
 	dt = (int)(msec_video_cur_pos - msec_video_prev_pos);
@@ -1928,33 +1938,34 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 
 	if (msec_video_prev_pos != -1)
 	{
-		msec_video_prev_poss[num_prev_poss] = msec_video_cur_pos;
-		abs_prev_poss[num_prev_poss] = abs_cur_pos;
-		num_prev_poss++;
+		_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
+		_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
+		_num_prev_poss++;
 
 		cur_speed = (double)((abs_cur_pos - abs_prev_pos) * 1000.0) / (double)dt;
 
 		if (dt >= g_dt_for_get_cur_speed)
 		{
-			for (int i = 0; i < num_prev_poss; i++)
+			for (int i = 0; i < _num_prev_poss; i++)
 			{
-				msec_video_prev_poss[i] = msec_video_prev_poss[i + 1];
-				abs_prev_poss[i] = abs_prev_poss[i + 1];
+				_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
+				_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
 			}
-			num_prev_poss--;
+			_num_prev_poss--;
 		}
 	}
 	else
 	{
 		msec_video_prev_pos = msec_video_cur_pos;
 		abs_prev_pos = abs_cur_pos;
-		num_prev_poss = 0;
+		_num_prev_poss = 0;
 		
-		msec_video_prev_poss[num_prev_poss] = msec_video_cur_pos;
-		abs_prev_poss[num_prev_poss] = abs_cur_pos;
-		num_prev_poss++;
+		_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
+		_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
+		_num_prev_poss++;
 	}
 }
+//------------------------------------------
 
 void get_delay_data()
 {
@@ -2695,6 +2706,13 @@ void run_funscript()
 			while (action_id < actions_size)
 			{				
 				action_start_time = cur_time = GetTickCount64();
+
+				if ((funscript_data_maped[action_id].second - abs_cur_pos >= 360 * 2) && (g_max_allowed_hismith_speed < 100))
+				{
+					abs_cur_pos += 360;
+					shift_get_next_frame_and_cur_speed_data(360);
+				}
+
 				action_start_abs_pos = abs_cur_pos;
 				avg_speed_start_time = -1;
 				got_avg_speed = -1;
@@ -2767,12 +2785,6 @@ void run_funscript()
 					{
 						break;
 					}
-
-					// NOTE: breack cur_speed
-					//if ((funscript_data_maped[action_id].second - abs_cur_pos >= 360) && (g_max_allowed_hismith_speed < 100))
-					//{
-					//	abs_cur_pos += 360 * ((funscript_data_maped[action_id].second - abs_cur_pos) / 360);
-					//}
 					
 					if (funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time)) > 1000)
 					{

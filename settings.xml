@@ -1,5 +1,5 @@
 <settings>
- <max_allowed_hismith_speed>100</max_allowed_hismith_speed>
+ <max_allowed_hismith_speed>50</max_allowed_hismith_speed>
  <min_funscript_relative_move>10</min_funscript_relative_move>
  <dt_for_get_cur_speed>120</dt_for_get_cur_speed>
  <increase_hismith_speed_start_multiplier>1.25</increase_hismith_speed_start_multiplier>
@@ -15,7 +15,7 @@
  <webcam_frame_height>1080</webcam_frame_height>
  <intiface_central_client_url>ws://127.0.0.1</intiface_central_client_url>
  <intiface_central_client_port>12345</intiface_central_client_port>
- <hismith_device_name>Hismith</hismith_device_name>
+ <hismith_device_name>Hismith Sex Machine</hismith_device_name>
  <vlc_url>http://127.0.0.1</vlc_url>
  <vlc_port>8080</vlc_port>
  <vlc_password>1234</vlc_password>
