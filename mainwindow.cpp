@@ -2,8 +2,6 @@
 #include "./ui_mainwindow.h"
 #include <windows.h>
 #include <thread>
-#include <QPushButton>
-#include <QLineEdit>
 #include <condition_variable>
 #include <mutex>
 
@@ -45,7 +43,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->startButton, &QPushButton::released, this, &MainWindow::handleStartButton);
     connect(ui->testButton, &QPushButton::released, this, &MainWindow::handleTestButton);
-    connect(ui->testCameraButton, &QPushButton::released, this, &MainWindow::handleTestCameraButton);    
+    connect(ui->testCameraButton, &QPushButton::released, this, &MainWindow::handleTestCameraButton);
+    connect(ui->refreshDevices, &QPushButton::released, this, &MainWindow::handleRefreshDevicesButton);
+
+    connect(ui->actionSave_Settings, &QAction::triggered, this, &MainWindow::handleSaveSettings);
+
+    connect(ui->speedLimit, SIGNAL(textChanged(const QString&)), this, SLOT(handleSpeedLimitChanged()));
+    connect(ui->minRelativeMove, SIGNAL(textChanged(const QString&)), this, SLOT(handleMinRelativeMoveChanged()));
 
     //-------------------
 
@@ -96,6 +100,48 @@ void MainWindow::handleTestButton()
 void MainWindow::handleTestCameraButton()
 {
     test_camera();
+}
+
+void MainWindow::handleSaveSettings()
+{
+    SaveSettings();
+}
+
+void MainWindow::handleSpeedLimitChanged()
+{
+    g_max_allowed_hismith_speed = ui->speedLimit->text().toInt();
+}
+
+void MainWindow::handleMinRelativeMoveChanged()
+{
+    g_min_funscript_relative_move = ui->minRelativeMove->text().toInt();
+}
+
+void MainWindow::handleRefreshDevicesButton()
+{
+    ui->Webcams->clear();
+    DeviceEnumerator de;
+    std::map<int, InputDevice> devices = de.getVideoDevicesMap();
+    for (auto const& device : devices) {
+        ui->Webcams->addItem(device.second.deviceName.c_str());
+        if (QString(device.second.deviceName.c_str()).contains(g_req_webcam_name))
+        {
+            ui->Webcams->setCurrentIndex(ui->Webcams->count() - 1);
+        }
+    }
+
+    //--------------------
+
+    ui->Devices->clear();
+    get_devices_list();
+    for (DeviceClass& dev : g_myDevices)
+    {
+        ui->Devices->addItem(dev.deviceName.c_str());
+        if (QString(dev.deviceName.c_str()).contains(g_hismith_device_name))
+        {
+            ui->Devices->setCurrentIndex(ui->Devices->count() - 1);
+        }
+    }
 }
 
 void MainWindow::handleStopStart()

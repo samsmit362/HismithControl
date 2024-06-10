@@ -13,6 +13,8 @@
 #include <QDomDocument>
 #include <QApplication>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QLineEdit>
 
 #include <iostream>
 #include <map>
@@ -27,6 +29,11 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
 
+#include "3rdParty/buttplugCpp/include/buttplugclient.h"
+#include "3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h"
+#include "DataTypes.h"
+#include "MyClosedFigure.h"
+
 class MainWindow;
 
 //---------------------------------------------------------------
@@ -36,6 +43,13 @@ extern bool g_stop_run;
 
 extern std::mutex g_stop_mutex;
 extern std::condition_variable g_stop_cvar;
+
+extern int g_max_allowed_hismith_speed;
+extern int g_min_funscript_relative_move;
+
+extern QString g_req_webcam_name;
+extern QString g_hismith_device_name;
+extern std::vector<DeviceClass> g_myDevices;
 
 //---------------------------------------------------------------
 
@@ -48,6 +62,8 @@ bool connect_to_hismith();
 void error_msg(QString msg, cv::Mat* p_frame = NULL, cv::Mat* p_frame_upd = NULL, cv::Mat* p_prev_frame = NULL, int x1 = -1, int y1 = -1, int x2 = -1, int y2 = -1);
 int make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req, bool& is_paused, QString& video_filename);
 QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl);
+bool get_devices_list();
+void SaveSettings();
 
 //---------------------------------------------------------------
 
@@ -111,11 +127,15 @@ private slots:
     void handleStopStart();
     void handlePauseStart();
     void handleResumeStart();
+    void handleRefreshDevicesButton();
+    void handleSaveSettings();
+    void handleSpeedLimitChanged();
+    void handleMinRelativeMoveChanged();
 
 protected:
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result);
 
-private:
+public:
     Ui::MainWindow *ui;
     QAction* stopStartAction;
     QAction* pauseStartAction;

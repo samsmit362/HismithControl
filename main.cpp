@@ -1,10 +1,7 @@
 
 #include "mainwindow.h"
+#include "./ui_mainwindow.h"
 
-#include "3rdParty/buttplugCpp/include/buttplugclient.h"
-#include "3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h"
-#include "DataTypes.h"
-#include "MyClosedFigure.h"
 
 //---------------------------------------------------------------
 
@@ -51,6 +48,8 @@ QNetworkRequest g_NetworkRequest;
 
 bool g_stop_run = false;
 bool g_pause = false;
+
+MainWindow* pW = NULL;
 
 std::mutex g_stop_mutex;
 std::condition_variable g_stop_cvar;
@@ -253,24 +252,20 @@ int get_video_dev_id()
 	std::map<int, InputDevice> devices = de.getVideoDevicesMap();
 	int video_dev_id = -1;
 
-	QStringList dev_names;
+	QString selected_webcam = pW->ui->Webcams->itemText(pW->ui->Webcams->currentIndex());
 
 	// Print information about the devices
 	for (auto const& device : devices) {
-		if (QString(device.second.deviceName.c_str()).contains(g_req_webcam_name))
+		if (selected_webcam == device.second.deviceName.c_str())
 		{
 			video_dev_id = device.first;
 			break;
-		}
-		else
-		{
-			dev_names.push_back(device.second.deviceName.c_str());
 		}
 	}
 
 	if (video_dev_id == -1)
 	{
-		error_msg(QString("ERROR: No one of found connected webcams %1:\n\"%2\"\ncontains \"%3\" in name").arg(devices.size()).arg(dev_names.join("\"\n\"")).arg(g_req_webcam_name));
+		error_msg(QString("ERROR: Selected webcam is not currently present"));
 	}
 
 	return video_dev_id;
@@ -1306,7 +1301,7 @@ int rel_move_to_dpos(double rel_move)
 	return dpos;
 }
 
-bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>> &funscript_data_maped)
+bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped)
 {
 	bool res = false;
 
@@ -1386,10 +1381,187 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 				if (funscript_data[id].second > funscript_data[id - 1].second)
 				{
+					prev_move_dirrection = 1;
+					prev_top_end_id = id - 1;
+				}
+				else
+				{
+					prev_move_dirrection = -1;
+					prev_top_end_id = id - 1;
+				}
+			}
+			else
+			{
+				if (funscript_data[id].second > funscript_data[id - 1].second)
+				{
+					cur_move_dirrection = 1;
+				}
+				else
+				{
+					cur_move_dirrection = -1;
+				}
+
+				if (cur_move_dirrection != prev_move_dirrection)
+				{
+					int min_pos, max_pos, min_id, max_id;
+
+					if (funscript_data[prev_top_end_id].second > funscript_data[id - 1].second)
+					{
+						max_pos = funscript_data[prev_top_end_id].second;
+						max_id = prev_top_end_id;
+						min_pos = funscript_data[id - 1].second;
+						min_id = id - 1;
+					}
+					else
+					{
+						max_pos = funscript_data[id - 1].second;
+						max_id = id - 1;
+						min_pos = funscript_data[prev_top_end_id].second;
+						min_id = prev_top_end_id;
+					}
+
+					if (max_pos - min_pos < g_min_funscript_relative_move)
+					{
+						int next_id, next_move_dirrection, prev_next_move_dirrection = cur_move_dirrection;
+
+						next_id = id + 1;
+						while (next_id < size)
+						{
+							if (funscript_data[next_id].second != funscript_data[next_id - 1].second)
+							{
+								if (funscript_data[next_id].second > funscript_data[next_id - 1].second)
+								{
+									next_move_dirrection = 1;
+								}
+								else
+								{
+									next_move_dirrection = -1;
+								}
+
+								if (next_move_dirrection != prev_next_move_dirrection)
+								{
+									if (funscript_data[next_id - 1].second > max_pos)
+									{
+										max_pos = funscript_data[next_id - 1].second;
+										max_id = next_id - 1;
+									}
+									else if (funscript_data[next_id - 1].second < min_pos)
+									{
+										min_pos = funscript_data[next_id - 1].second;
+										min_id = next_id - 1;
+									}
+
+									if (max_pos - min_pos >= g_min_funscript_relative_move)
+									{
+										break;
+									}
+
+									prev_next_move_dirrection = next_move_dirrection;
+								}
+							}
+
+							next_id++;
+						}
+
+						if (result_details.size() > 0)
+						{
+							result_details += "\n+\n";
+						}
+
+						int id1 = prev_top_end_id;
+						int id2 = max(min_id, max_id);
+
+						if (id2 != id1)
+						{
+							result_details += QString("Averaged %1 positions\n").arg(id2 - id1);
+
+							int total_move = 0;
+							std::vector<int> i_move(id2 - id1);
+							for (int i = id1 + 1; i <= id2; i++)
+							{
+								total_move += abs(funscript_data[i].second - funscript_data[i - 1].second);
+								i_move[i - (id1 + 1)] = total_move;
+							}
+							int rel_move = funscript_data[id2].second - funscript_data[id1].second;
+
+							for (int i = id1; i <= id2; i++)
+							{
+								result_details += QString("%1").arg(funscript_data[i].second);
+								if (i < id2)
+								{
+									result_details += " | ";
+								}
+							}
+
+							result_details += QString("\n%1 | ").arg(funscript_data[id1].second);
+							for (int i = id1 + 1; i <= id2; i++)
+							{
+								int res_inv_pos = funscript_data[id1].second + ((i_move[i - (id1 + 1)] * rel_move) / total_move);
+								result_details += QString("%1").arg(res_inv_pos);
+								if (i < id2)
+								{
+									result_details += " | ";
+								}
+							}
+
+							result_details += QString("\n[at:%1][inv_pos:%2] | ").arg(funscript_data[id1].first).arg(funscript_data[id1].second);
+							for (int i = id1 + 1; i <= id2; i++)
+							{
+								int res_inv_pos = funscript_data[id1].second + ((i_move[i - (id1 + 1)] * rel_move) / total_move);
+
+								if ((res_inv_pos > 100) || (res_inv_pos < 0))
+								{
+									show_msg("ERROR: unexpected case (res_inv_pos > 100) || (res_inv_pos < 0)");
+								}
+
+								result_details += QString("[at:%1][inv_pos:%2][res_inv_pos:%3]").arg(funscript_data[i].first).arg(funscript_data[i].second).arg(res_inv_pos);
+								if (i < id2)
+								{
+									result_details += " | ";
+								}
+
+								funscript_data[i].second = res_inv_pos;
+							}
+						}
+
+						if (next_id == size)
+						{
+							break;
+						}
+						else
+						{
+							id = 0;
+							found_first_move = 0;
+						}
+					}
+					else
+					{
+						prev_move_dirrection = cur_move_dirrection;
+						prev_top_end_id = id - 1;
+					}
+				}
+			}
+		}
+
+		id++;
+	}
+
+	id = 1;
+	found_first_move = 0;
+	while (id < size)
+	{
+		if (funscript_data[id].second != funscript_data[id - 1].second)
+		{
+			if (!found_first_move)
+			{
+				found_first_move = 1;
+
+				if (funscript_data[id].second > funscript_data[id - 1].second)
+				{
 					for (int i = 0; i <= id - 1; i++)
 					{
 						funscript_data_maped[i].first = funscript_data[i].first;
-						funscript_data_maped[i].second = 0;						
+						funscript_data_maped[i].second = 0;
 					}
 
 					last_set_id_data = id - 1;
@@ -1439,92 +1611,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 						min_id = prev_top_end_id;
 					}
 
-					if (max_pos - min_pos < g_min_funscript_relative_move)
-					{
-						int next_id, next_move_dirrection, prev_next_move_dirrection = cur_move_dirrection;
-						int total_move = 0;
-
-						for (int i = prev_top_end_id + 1; i <= id; i++)
-						{
-							total_move += abs(funscript_data[i].second - funscript_data[i - 1].second);
-						}
-
-						next_id = id + 1;
-						while (next_id < size)
-						{
-							if (funscript_data[next_id].second != funscript_data[next_id - 1].second)
-							{
-								if (funscript_data[next_id].second > funscript_data[next_id - 1].second)
-								{
-									next_move_dirrection = 1;
-								}
-								else
-								{
-									next_move_dirrection = -1;
-								}
-
-								if (next_move_dirrection != prev_next_move_dirrection)
-								{
-									if ((next_move_dirrection == cur_move_dirrection) &&
-										(total_move >= g_min_funscript_relative_move))
-									{
-										break;
-									}
-
-									prev_next_move_dirrection = next_move_dirrection;
-								}
-							}
-
-							total_move += abs(funscript_data[next_id].second - funscript_data[next_id - 1].second);
-							next_id++;
-						}
-
-						if (result_details.size() > 0)
-						{
-							result_details += "\n+\n";
-						}
-
-						int id1 = prev_top_end_id;
-						int id2 = next_id - 1;
-
-						result_details += QString("Averaged %1 positions\n").arg(id2 - id1);
-
-						total_move = 0;
-						std::vector<int> i_move(id2 - id1);
-						for (int i = id1 + 1; i <= id2; i++)
-						{
-							total_move += abs(funscript_data[i].second - funscript_data[i - 1].second);
-							i_move[i - (id1 + 1)] = total_move;
-						}
-
-						for (int i = id1 + 1; i <= id2; i++)
-						{
-							double rel_move = ((double)(i_move[i - (id1 + 1)]) * 100.0) / (double)total_move;
-							int dpos = rel_move_to_dpos(rel_move);
-							funscript_data_maped[i].first = funscript_data[i].first;
-							funscript_data_maped[i].second = funscript_data_maped[prev_top_end_id].second + dpos;
-
-							result_details += QString("at:%1,pos:%2,dpos:%3").arg(funscript_data[i].first).arg(funscript_data[i].second).arg(dpos);
-							if (i < id2)
-							{
-								result_details += " | ";
-							}
-						}
-
-						if (next_id == size)
-						{
-							last_set_id_data = next_id - 1;
-							break;
-						}
-						else
-						{	
-							last_set_id_data = next_id - 1;
-							prev_move_dirrection = cur_move_dirrection;
-							prev_top_end_id = next_id - 1;
-							id = next_id;							
-						}
-					}
-					else if (prev_move_dirrection == -1)
+					if (prev_move_dirrection == -1)
 					{
 						for (int i = prev_top_end_id + 1; i <= id - 1; i++)
 						{
@@ -1555,7 +1642,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 				}
 			}
 		}
-		
+
 		id++;
 	}
 
@@ -1592,7 +1679,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 	if (result_details.size() > 0)
 	{
-		save_text_to_file(g_root_dir + "\\res_data\\!get_parsed_funscript_data_results.txt",
+		save_text_to_file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt",
 			"File path: " + funscript_fname + "\n----------\n" + result_details + "\n----------\n\n",
 			QFile::WriteOnly | QFile::Text);
 
@@ -2922,6 +3009,38 @@ void disconnect_from_hismith()
 	}
 }
 
+bool get_devices_list()
+{
+	bool res = false;
+	//-----------------------------------------------------
+	// Connecting to Hismith
+	// NOTE: At first start: intiface central
+
+	if (!g_pClient)
+	{
+		g_pClient = new Client(g_intiface_central_client_url, g_intiface_central_client_port);
+		g_pClient->connect(callbackFunction);
+	}
+
+	g_pClient->requestDeviceList();
+	g_pClient->startScan();
+	while (1) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+		g_pClient->stopScan();
+		break;
+	}
+
+	g_myDevices = g_pClient->getDevices();
+
+	if (g_myDevices.size() == 0)
+	{
+		error_msg("ERROR: Looks \"Intiface Central\" not started or no any device connected to it");
+		return res;
+	}
+
+	return res;
+}
+
 bool connect_to_hismith()
 {
 	bool res = false;
@@ -2946,18 +3065,14 @@ bool connect_to_hismith()
 	g_myDevices = g_pClient->getDevices();
 
 	g_pMyDevice = NULL;
-	QStringList dev_names;
+	QString selected_device = pW->ui->Devices->itemText(pW->ui->Devices->currentIndex());
 	for (DeviceClass& dev : g_myDevices)
 	{
-		if (QString(dev.deviceName.c_str()).contains(g_hismith_device_name))
+		if (selected_device == dev.deviceName.c_str())
 		{
 			g_pMyDevice = &dev;
 			res = true;
 			break;
-		}
-		else
-		{
-			dev_names.push_back(dev.deviceName.c_str());
 		}
 	}
 
@@ -2969,7 +3084,7 @@ bool connect_to_hismith()
 
 	if (!g_pMyDevice)
 	{
-		error_msg(QString("ERROR: No one of connected devices %1:\n\"%2\"\nto \"Intiface Central\" contains \"%3\" in name").arg(g_myDevices.size()).arg(dev_names.join("\"\n\"")).arg(g_hismith_device_name));
+		error_msg(QString("ERROR: Selected Hismith device is not currently present"));
 		return res;
 	}
 
@@ -3117,13 +3232,16 @@ void SaveSettings()
 												.arg(g_G_range[2][0])
 												.arg(g_G_range[2][1]));
 
-	add_xml_element(document, root, "req_webcam_name", g_req_webcam_name);
+	QString selected_webcam = pW->ui->Webcams->itemText(pW->ui->Webcams->currentIndex());
+	QString selected_device = pW->ui->Devices->itemText(pW->ui->Devices->currentIndex());
+
+	add_xml_element(document, root, "req_webcam_name", selected_webcam);
 	add_xml_element(document, root, "webcam_frame_width", QString::number(g_webcam_frame_width));
 	add_xml_element(document, root, "webcam_frame_height", QString::number(g_webcam_frame_height));
 
 	add_xml_element(document, root, "intiface_central_client_url", g_intiface_central_client_url.c_str());
 	add_xml_element(document, root, "intiface_central_client_port", QString::number(g_intiface_central_client_port));
-	add_xml_element(document, root, "hismith_device_name", g_hismith_device_name);
+	add_xml_element(document, root, "hismith_device_name", selected_device);
 
 	add_xml_element(document, root, "vlc_url", g_vlc_url);
 	add_xml_element(document, root, "vlc_port", QString::number(g_vlc_port));
@@ -3225,6 +3343,36 @@ bool LoadSettings()
 	g_vlc_port = data_map["vlc_port"].toInt();
 	g_vlc_password = data_map["vlc_password"];
 
+
+	pW->ui->speedLimit->setText(QString::number(g_max_allowed_hismith_speed));
+	pW->ui->minRelativeMove->setText(QString::number(g_min_funscript_relative_move));
+
+	//--------------------
+
+	DeviceEnumerator de;
+	std::map<int, InputDevice> devices = de.getVideoDevicesMap();
+	for (auto const& device : devices) {
+		pW->ui->Webcams->addItem(device.second.deviceName.c_str());
+		if (QString(device.second.deviceName.c_str()).contains(g_req_webcam_name))
+		{
+			pW->ui->Webcams->setCurrentIndex(pW->ui->Webcams->count() - 1);
+		}
+	}
+	//--------------------
+
+	//--------------------
+	get_devices_list();
+
+	for (DeviceClass& dev : g_myDevices)
+	{
+		pW->ui->Devices->addItem(dev.deviceName.c_str());
+		if (QString(dev.deviceName.c_str()).contains(g_hismith_device_name))
+		{
+			pW->ui->Devices->setCurrentIndex(pW->ui->Devices->count() - 1);
+		}
+	}
+	//--------------------
+
 	res = true;
 
 	return res;
@@ -3234,14 +3382,16 @@ int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();
+	
+    MainWindow w;
+	pW = &w;
+    w.show();
 
 	if (!LoadSettings())
 	{
 		return 0;
 	}
 
-    MainWindow w;
-    w.show();
 
 	//SaveSettings();
 
