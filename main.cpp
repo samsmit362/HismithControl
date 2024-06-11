@@ -2088,6 +2088,8 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 				if (show_warning)
 				{
 					show_msg("Waiting for VLC is starded");
+					set_hithmith_speed(0);
+					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					show_warning = false;
 				}
 			}
@@ -2136,6 +2138,8 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 				if (show_warning)
 				{
 					show_msg("Waiting for VLC is starded");
+					set_hithmith_speed(0);
+					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					show_warning = false;
 				}
 			}
@@ -2496,9 +2500,7 @@ void run_funscript()
 	QByteArray data = concatenated.toLocal8Bit().toBase64();
 	QString headerData = "Basic " + data;
 	g_NetworkRequest.setRawHeader("Authorization", headerData.toLocal8Bit());	
-
-	cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-	last_play_video_filename = video_filename;
+	g_NetworkRequest.setTransferTimeout(1000);
 
 	{
 		QFile file(g_root_dir + "\\res_data\\!results.txt");
@@ -2517,6 +2519,9 @@ void run_funscript()
 			if (g_stop_run)
 				break;
 		}
+
+		cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+		last_play_video_filename = video_filename;
 
 		funscript_fname.clear();
 		QByteArray vlc_reply = get_vlc_reply(g_pNetworkAccessManager, g_NetworkRequest, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
@@ -2994,10 +2999,11 @@ void run_funscript()
 					break;
 				}
 				
-				if (g_stop_run || g_pause || is_video_paused || (cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first) ||
+				if (g_stop_run || g_pause || is_video_paused || 
+					(cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first + (is_vlc_time_in_milliseconds ? 0 : 1000)) ||
 					(cur_video_pos < prev_cur_video_pos) || (last_play_video_filename != video_filename))
 				{
-					if (cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first)
+					if (cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first + (is_vlc_time_in_milliseconds ? 0 : 1000))
 					{
 						actions_end_with = QString("cur_video_pos (%1) > funscript_data_maped[min(action_id + 1, actions_size - 1)].first (%2)").arg(cur_video_pos).arg(funscript_data_maped[min(action_id + 1, actions_size - 1)].first);
 					}
