@@ -2563,7 +2563,7 @@ void run_funscript()
 			{				
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-			} while (last_play_video_filename == video_filename);
+			} while (last_play_video_filename == video_filename && !g_stop_run);
 			last_play_video_filename = video_filename;
 			continue;
 		}
@@ -2582,7 +2582,7 @@ void run_funscript()
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
 					cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-				} while (last_play_video_filename == video_filename);
+				} while (last_play_video_filename == video_filename && !g_stop_run);
 				last_play_video_filename = video_filename;
 				continue;
 			}			
@@ -2625,7 +2625,7 @@ void run_funscript()
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-			} while ((last_play_video_filename == video_filename) && (cur_video_pos >= search_video_pos));
+			} while ((last_play_video_filename == video_filename) && (cur_video_pos >= search_video_pos) && !g_stop_run);
 			last_play_video_filename = video_filename;
 			continue;
 		}
@@ -2744,7 +2744,12 @@ void run_funscript()
 					cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
 					start_time = GetTickCount64();
 					start_video_pos = cur_video_pos;
-				} while (prev_video_pos / 1000 == cur_video_pos / 1000);
+				} while ((prev_video_pos / 1000 == cur_video_pos / 1000) && !g_stop_run);
+
+				if (g_stop_run)
+				{
+					break;
+				}
 
 				while (((funscript_data_maped[action_id - 1].first < cur_video_pos) || (funscript_data_maped[action_id - 1].second % 360 != 0)) && (action_id < actions_size))
 				{
