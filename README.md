@@ -39,8 +39,9 @@ By default it will start Hismith on mostly very low speed 5, which you can chang
 ...\
 <speed_data_average ... hismith_speed="100" ... rotation_speed_total_average="1611" .../></code>\
 For getting the best results it is greatly recommended to check all 5-100 speeds that rotation_speed_total_average are mostly the same or change them manually accordingly.
-5) You will need special VLC build with milliseconds support for get best results (standard VLC now not supported it can sync only by seconds) you can find it in latest artifact in 3rdParty VLC fork project:\
+5) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
 https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/artifacts \
+You can also use standard VLC but be aware that desynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds.\
 Also you will need to enabler HTTP request supports in VLC according\
 https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer \
 Don't forget to align used settings with settings.xml fields:\
@@ -86,5 +87,4 @@ Also program save result parsed funscript to "res_data" folder with same name as
 
 ## This project use next 3rdParty projects:
 https://github.com/dumbowumbo/buttplugCpp \
-https://github.com/studiosi/OpenCVDeviceEnumerator \
-https://code.videolan.org/skosnits/vlc-extended-playlist-support \
+https://github.com/studiosi/OpenCVDeviceEnumerator
