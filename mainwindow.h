@@ -51,6 +51,8 @@ extern QString g_req_webcam_name;
 extern QString g_hismith_device_name;
 extern std::vector<DeviceClass> g_myDevices;
 
+extern bool g_work_in_progress;
+
 //---------------------------------------------------------------
 
 void show_msg(QString msg, int timeout = 5000);
@@ -73,6 +75,7 @@ class Worker : public QObject
 
 public slots:
     void doWork() {
+        g_work_in_progress = true;
         run_funscript();
         emit resultReady();
     }
@@ -99,6 +102,7 @@ public:
         workerThread.quit();
         workerThread.wait();
     }
+
 public slots:
     void handleResults();
 signals:

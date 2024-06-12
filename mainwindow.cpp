@@ -12,6 +12,7 @@
 void Controller::handleResults()
 {
     g_stop_run = false;
+    g_work_in_progress = false;
     p_parent->show();
     p_parent->trayIcon->hide();
 }
@@ -146,10 +147,13 @@ void MainWindow::handleRefreshDevicesButton()
 
 void MainWindow::handleStopStart()
 {
-    std::lock_guard lk(g_stop_mutex);
-    show_msg("Stop pressed", 1000);
-    g_stop_run = true;
-    g_stop_cvar.notify_all();
+    if (g_work_in_progress)
+    {
+        std::lock_guard lk(g_stop_mutex);
+        show_msg("Stop pressed", 1000);
+        g_stop_run = true;
+        g_stop_cvar.notify_all();
+    }
 }
 
 void MainWindow::handlePauseStart()
@@ -175,23 +179,18 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
         WPARAM wp = msg->wParam;
         
         {
-            std::lock_guard lk(g_stop_mutex);
             if (wp == HOTKEY_PAUSE_ID)
             {
-                show_msg("Pause pressed", 1000);
-                g_pause = true;
+                handlePauseStart();
             }
             else if (wp == HOTKEY_RESUME_ID)
             {
-                show_msg("Resume pressed", 1000);
-                g_pause = false;
+                handleResumeStart();
             }
             else if (wp == HOTKEY_STOP_ID)
             {
-                show_msg("Stop pressed", 1000);
-                g_stop_run = true;
+                handleStopStart();
             }
-            g_stop_cvar.notify_all();
         }
         
         return(true);

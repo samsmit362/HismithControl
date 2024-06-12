@@ -54,6 +54,8 @@ MainWindow* pW = NULL;
 std::mutex g_stop_mutex;
 std::condition_variable g_stop_cvar;
 
+bool g_work_in_progress = false;
+
 //---------------------------------------------------------------
 
 void save_BGR_image(cv::Mat &frame, QString fpath)
@@ -232,7 +234,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 		draw_text(msg, *p_draw_frame, x1, y1, x2, y2);
 		save_BGR_image(*p_draw_frame, g_root_dir + "\\error_data\\" + time_str + "_frame_draw.bmp");
 		
-		show_frame_in_cv_window("w", p_draw_frame);
+		show_frame_in_cv_window("Error", p_draw_frame);
 		cv::waitKey(0);
 	}
 	else
@@ -240,6 +242,11 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 		MessageBoxPos(NULL, msg.toStdWString().c_str(), L"Error", MB_OK | MB_SETFOREGROUND | MB_SYSTEMMODAL | MB_ICONERROR);
 	}
 	cv::destroyAllWindows();	
+}
+
+void warning_msg(QString msg, QString title = "")
+{
+	MessageBoxPos(NULL, msg.toStdWString().c_str(), title.toStdWString().c_str(), MB_OK | MB_SETFOREGROUND | MB_SYSTEMMODAL | MB_ICONWARNING);
 }
 
 //---------------------------------------------------------------
@@ -271,8 +278,10 @@ int get_video_dev_id()
 	return video_dev_id;
 }
 
-
+bool _tmp_got_client_msg;
 void callbackFunction(const mhl::Messages msg) {
+	_tmp_got_client_msg = true;
+
 	if (msg.messageType == mhl::MessageTypes::DeviceList) {
 		std::cout << "Device List callback" << std::endl;
 	}
@@ -334,7 +343,7 @@ void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int er
 	}
 }
 
-bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, int* p_dt_get_speed = NULL, QString add_data = QString())
+bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, int* p_dt_get_speed = NULL, cv::String title = "", QString add_data = QString())
 {
 	bool res = false;
 	cv::Mat img, img_b, img_g, img_right;
@@ -621,7 +630,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		}
 
 		double g_to_r_distance = (int)sqrt((double)(pow2(g_cx - r_cx) + pow2(g_cy - r_cy)));
-		cv::String text = cv::format("Press 'Esc' for stop to show\n%s" "pos: %d, g_to_c_distance: %f\ng_to_r_distance: %f, r_to_c_distance: %f dt: %d dt_c: %d cur_speed: %d dt_get_speed: %d", add_data.toStdString().c_str(), pos, g_to_c_distance, g_to_r_distance, r_to_c_distance, dt, dt1, cur_speed, dt_get_speed);
+		cv::String text = cv::format("%s" "pos: %d, g_to_c_distance: %f\ng_to_r_distance: %f, r_to_c_distance: %f dt: %d dt_c: %d cur_speed: %d dt_get_speed: %d", add_data.toStdString().c_str(), pos, g_to_c_distance, g_to_r_distance, r_to_c_distance, dt, dt1, cur_speed, dt_get_speed);
 
 		draw_text(text.c_str(), img_res);
 
@@ -630,7 +639,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 			img_res.copyTo(*p_res_frame);
 		}
 
-		show_frame_in_cv_window("w", &img_res);
+		cv::imshow(title, img_res);
 	}
 
 	return res;
@@ -996,7 +1005,7 @@ void test_err_frame(QString fpath)
 			.arg(g_G_range[2][0])
 			.arg(g_G_range[2][1])
 			, img);
-		show_frame_in_cv_window("w", &img);
+		show_frame_in_cv_window("Test Error Frame", &img);
 
 		int key = cv::waitKey(0);
 
@@ -1119,11 +1128,21 @@ void test_camera()
 	if (capture.isOpened())
 	{
 		cv::Mat frame;
+		int B_range[3][2];
+		int G_range[3][2];
+		cv::String title("Test Webcam");
+
+		std::copy(&g_B_range[0][0], &g_B_range[0][0] + 3 * 2, &B_range[0][0]);
+		std::copy(&g_G_range[0][0], &g_G_range[0][0] + 3 * 2, &G_range[0][0]);
 
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
 
-		cv::namedWindow("w", 1);
+		cv::namedWindow(title, 1);
+		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
+		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
+		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
 
 		while (capture.read(frame))
 		{
@@ -1134,11 +1153,11 @@ void test_camera()
 			cv::cvtColor(frame, img, cv::COLOR_BGR2YUV);
 
 			concurrency::parallel_invoke(
-				[&img, &img_b, width, height] {
-					get_binary_image(img, g_B_range, img_b, 3);
+				[&img, &img_b, &B_range, width, height] {
+					get_binary_image(img, B_range, img_b, 3);
 				},
-				[&img, &img_g, width, height] {
-					get_binary_image(img, g_G_range, img_g, 3);
+				[&img, &img_g, &G_range, width, height] {
+					get_binary_image(img, G_range, img_g, 3);
 				}
 			);
 
@@ -1150,129 +1169,150 @@ void test_camera()
 			cv::bitwise_and(img_b, img_g, img_intersection);
 			img.setTo(cv::Scalar(0, 0, 255), img_intersection);
 
-			draw_text(QString("Press 'Esc' for stop to show\nCurent colors: b[%1-%2][%3-%4][%5-%6] | g[%7-%8][%9-%10][%11-%12]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors")
+			draw_text(QString("Press 'Enter' for use current as original colors. Current vs original colors:\nb[%1(%2)-%3(%4)][%5(%6)-%7(%8)][%9(%10)-%11(%12)]\ng[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors")
+				.arg(B_range[0][0])
 				.arg(g_B_range[0][0])
+				.arg(B_range[0][1])
 				.arg(g_B_range[0][1])
+				.arg(B_range[1][0])
 				.arg(g_B_range[1][0])
+				.arg(B_range[1][1])
 				.arg(g_B_range[1][1])
+				.arg(B_range[2][0])
 				.arg(g_B_range[2][0])
+				.arg(B_range[2][1])
 				.arg(g_B_range[2][1])
+				.arg(G_range[0][0])
 				.arg(g_G_range[0][0])
+				.arg(G_range[0][1])
 				.arg(g_G_range[0][1])
+				.arg(G_range[1][0])
 				.arg(g_G_range[1][0])
+				.arg(G_range[1][1])
 				.arg(g_G_range[1][1])
+				.arg(G_range[2][0])
 				.arg(g_G_range[2][0])
+				.arg(G_range[2][1])
 				.arg(g_G_range[2][1])
 				, img);
-			show_frame_in_cv_window("w", &img);
+			cv::imshow(title, img);
 
 			int key = cv::waitKey(1);
 
-			if (key == 27) // Esc key to stop
+			if ((key == 27 /* Esc key */) ||
+				((key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0)))
+			{
 				break;
+			}
+
+			else if (key == 13) // Enter key
+			{
+				std::copy(&B_range[0][0], &B_range[0][0] + 3 * 2, &g_B_range[0][0]);
+				std::copy(&G_range[0][0], &G_range[0][0] + 3 * 2, &g_G_range[0][0]);
+			}
 
 			else if (key == 'w')
 			{
-				g_B_range[0][0] = min(g_B_range[0][0] + 1, 255);
+				B_range[0][0] = min(B_range[0][0] + 1, 255);
 			}
 			else if (key == 'q')
 			{
-				g_B_range[0][0] = max(g_B_range[0][0] - 1, 0);
+				B_range[0][0] = max(B_range[0][0] - 1, 0);
 			}
 			else if (key == 'r')
 			{
-				g_B_range[0][1] = min(g_B_range[0][1] + 1, 255);
+				B_range[0][1] = min(B_range[0][1] + 1, 255);
 			}
 			else if (key == 'e')
 			{
-				g_B_range[0][1] = max(g_B_range[0][1] - 1, 0);
+				B_range[0][1] = max(B_range[0][1] - 1, 0);
 			}
 
 			else if (key == 's')
 			{
-				g_B_range[1][0] = min(g_B_range[1][0] + 1, 255);
+				B_range[1][0] = min(B_range[1][0] + 1, 255);
 			}
 			else if (key == 'a')
 			{
-				g_B_range[1][0] = max(g_B_range[1][0] - 1, 0);
+				B_range[1][0] = max(B_range[1][0] - 1, 0);
 			}
 			else if (key == 'f')
 			{
-				g_B_range[1][1] = min(g_B_range[1][1] + 1, 255);
+				B_range[1][1] = min(B_range[1][1] + 1, 255);
 			}
 			else if (key == 'd')
 			{
-				g_B_range[1][1] = max(g_B_range[1][1] - 1, 0);
+				B_range[1][1] = max(B_range[1][1] - 1, 0);
 			}
 
 			else if (key == 'x')
 			{
-				g_B_range[2][0] = min(g_B_range[2][0] + 1, 255);
+				B_range[2][0] = min(B_range[2][0] + 1, 255);
 			}
 			else if (key == 'z')
 			{
-				g_B_range[2][0] = max(g_B_range[2][0] - 1, 0);
+				B_range[2][0] = max(B_range[2][0] - 1, 0);
 			}
 			else if (key == 'v')
 			{
-				g_B_range[2][1] = min(g_B_range[2][1] + 1, 255);
+				B_range[2][1] = min(B_range[2][1] + 1, 255);
 			}
 			else if (key == 'c')
 			{
-				g_B_range[2][1] = max(g_B_range[2][1] - 1, 0);
+				B_range[2][1] = max(B_range[2][1] - 1, 0);
 			}
 			
 			//-----------------------
 
 			else if (key == 'y')
 			{
-				g_G_range[0][0] = min(g_G_range[0][0] + 1, 255);
+				G_range[0][0] = min(G_range[0][0] + 1, 255);
 			}
 			else if (key == 't')
 			{
-				g_G_range[0][0] = max(g_G_range[0][0] - 1, 0);
+				G_range[0][0] = max(G_range[0][0] - 1, 0);
 			}
 			else if (key == 'i')
 			{
-				g_G_range[0][1] = min(g_G_range[0][1] + 1, 255);
+				G_range[0][1] = min(G_range[0][1] + 1, 255);
 			}
 			else if (key == 'u')
 			{
-				g_G_range[0][1] = max(g_G_range[0][1] - 1, 0);
+				G_range[0][1] = max(G_range[0][1] - 1, 0);
 			}
 
 			else if (key == 'h')
 			{
-				g_G_range[1][0] = min(g_G_range[1][0] + 1, 255);
+				G_range[1][0] = min(G_range[1][0] + 1, 255);
 			}
 			else if (key == 'g')
 			{
-				g_G_range[1][0] = max(g_G_range[1][0] - 1, 0);
+				G_range[1][0] = max(G_range[1][0] - 1, 0);
 			}
 			else if (key == 'k')
 			{
-				g_G_range[1][1] = min(g_G_range[1][1] + 1, 255);
+				G_range[1][1] = min(G_range[1][1] + 1, 255);
 			}
 			else if (key == 'j')
 			{
-				g_G_range[1][1] = max(g_G_range[1][1] - 1, 0);
+				G_range[1][1] = max(G_range[1][1] - 1, 0);
 			}
 
 			else if (key == 'n')
 			{
-				g_G_range[2][0] = min(g_G_range[2][0] + 1, 255);
+				G_range[2][0] = min(G_range[2][0] + 1, 255);
 			}
 			else if (key == 'b')
 			{
-				g_G_range[2][0] = max(g_G_range[2][0] - 1, 0);
+				G_range[2][0] = max(G_range[2][0] - 1, 0);
 			}
 			else if (key == ',')
 			{
-				g_G_range[2][1] = min(g_G_range[2][1] + 1, 255);
+				G_range[2][1] = min(G_range[2][1] + 1, 255);
 			}
 			else if (key == 'm')
 			{
-				g_G_range[2][1] = max(g_G_range[2][1] - 1, 0);
+				G_range[2][1] = max(G_range[2][1] - 1, 0);
 			}
 		}
 
@@ -1902,7 +1942,7 @@ void shift_get_next_frame_and_cur_speed_data(int dpos)
 
 bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, cv::Mat& prev_frame*/,
 	int& abs_cur_pos, int& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
-	__int64& msec_video_prev_pos, int& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, QString add_data = QString())
+	__int64& msec_video_prev_pos, int& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString())
 {
 	int prev_pos, res, dpos;
 	int dt;
@@ -1930,7 +1970,7 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 	}
 
 	dt = (int)(msec_video_cur_pos - msec_video_prev_pos);
-	if (!get_hismith_pos_by_image(frame, cur_pos, show_results, p_res_frame, &cur_speed, &dt, add_data))
+	if (!get_hismith_pos_by_image(frame, cur_pos, show_results, p_res_frame, &cur_speed, &dt, title, add_data))
 	{
 		return false;
 	}
@@ -3105,7 +3145,8 @@ bool get_devices_list()
 		g_pClient = new Client(g_intiface_central_client_url, g_intiface_central_client_port);
 		g_pClient->connect(callbackFunction);
 	}
-
+	
+	_tmp_got_client_msg = false;
 	g_pClient->requestDeviceList();
 	g_pClient->startScan();
 	while (1) {
@@ -3118,8 +3159,18 @@ bool get_devices_list()
 
 	if (g_myDevices.size() == 0)
 	{
-		error_msg("ERROR: Looks \"Intiface Central\" not started or no any device connected to it");
-		return res;
+		if (!_tmp_got_client_msg)
+		{
+			warning_msg(QString("It looks \"Intiface Central\" not started\nor has another client URL: %1 or port: %2\nPlease start and \"Refresh Devices List\"").arg(g_intiface_central_client_url.c_str()).arg(g_intiface_central_client_port), "Getting Devices List");
+		}
+		else
+		{
+			warning_msg("It Looks no any device connected to \"Intiface Central\".\nPlease connect and \"Refresh Devices List\"", "Getting Devices List");
+		}
+	}
+	else
+	{
+		res = true;
 	}
 
 	return res;
@@ -3224,13 +3275,20 @@ void test_hismith(int hismith_speed)
 
 		std::vector<QPair<__int64, int>> collected_data;
 		QString add_data;
+		cv::String title("Test Webcam+Hismith");
+
+		cv::namedWindow(title, 1);
+		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
+		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
+		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
 
 		while (1)
 		{
 			last_msec_video_prev_pos = msec_video_cur_pos;
 			if (!get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-				msec_video_prev_pos, abs_prev_pos, true, &res_frame, add_data))
+				msec_video_prev_pos, abs_prev_pos, true, &res_frame, title, add_data))
 			{
 				capture.release();
 				break;
@@ -3250,10 +3308,11 @@ void test_hismith(int hismith_speed)
 
 			int key = cv::waitKey(1);
 
-			if (key == 27)  // Esc key to stop
+			if ( (key == 27 /* Esc key */) || 
+				( (key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0) ) )
 			{
 				save_BGR_image(frame, g_root_dir + "\\res_data\\orig.bmp");
-				save_BGR_image(res_frame, g_root_dir + "\\res_data\\res.bmp");				
+				save_BGR_image(res_frame, g_root_dir + "\\res_data\\res.bmp");
 				break;
 			}
 		}

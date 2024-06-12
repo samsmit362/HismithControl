@@ -14,9 +14,10 @@ I'm using very chip Web Camera but with Full HD support (1080p) 30fps (camera fr
 I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it .
 
 ## How to use
-If you have a camera with external or integrated backlight you will need only to add color markers.\
-I'm using for this blue and green insulating tapes (Multi Coloured Electrical Tape) which can be removed at any time. Also you will need that used colors mostly will not be present on Web Camera scenes.\
-Example how to do this you can see in "example_images" folder.
+**If you have a camera with external or integrated backlight you will need only to add color markers.\
+I'm using for this blue and green insulating tapes (Multi Coloured Electrical Tape) which can be removed at any time.\
+Also you will need that used colors mostly will not be present on Web Camera scenes.\
+Example how to do this you can see in "example_images" folder.**\
 So after getting all of this you will need:
 1) to start Intiface Central https://intiface.com/central/ => https://github.com/intiface/intiface-central/releases/download/v2.6.0/intiface-central-v2.6.0-win-x64.exe
 check that it can find your Hismith and you can change speed by using it.
