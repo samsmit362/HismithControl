@@ -24,6 +24,8 @@ int g_B_range[3][2];
 int g_G_range[3][2];
 
 double g_max_telescopic_motor_rocker_arm_proportions;
+double g_min_telescopic_motor_rocker_arm_center_x_proportions;
+double g_max_telescopic_motor_rocker_arm_center_x_proportions;
 
 QString g_req_webcam_name;
 int g_webcam_frame_width;
@@ -95,10 +97,22 @@ void save_text_to_file(QString fpath, QString text, QFlags<QIODeviceBase::OpenMo
 
 void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame)
 {
-	if (!capture.read(frame))
+	cv::Mat prev_frame;
+	frame.copyTo(prev_frame);
+
+	do
 	{
-		error_msg(QString("ERROR: capture.read(frame) failed"));
-	}
+		if (!capture.read(frame))
+		{
+			error_msg(QString("ERROR: capture.read(frame) failed"));
+		}
+		
+	} 
+	while (	(prev_frame.size == frame.size) && 
+			(prev_frame.channels() == frame.channels()) && 
+			(memcmp(prev_frame.data, frame.data, frame.channels() * frame.size[0] * frame.size[1]) == 0) &&
+			!g_stop_run && 
+			!g_pause );
 }
 
 double set_hithmith_speed(double speed)
@@ -352,6 +366,8 @@ void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int er
 
 bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "", QString add_data = QString())
 {
+	static double ccxlcx_lh_ratio = -1.0;
+
 	bool res = false;
 	cv::Mat img, img_b, img_g, img_right;
 	custom_buffer<CMyClosedFigure> figures_b;
@@ -509,19 +525,31 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	int l_cy = l_y + (l_h / 2);
 	int r_cx = r_x + (r_w / 2);
 	int r_cy = r_y + (r_h / 2);
-	double exp_c_cx_ratio = (double)225.0 / 830.0;
-	int exp_c_cx = l_cx + (int)((double)(r_cx - l_cx) * exp_c_cx_ratio);
 	int c_cx;
 	int c_cy;
 
+	double ccxlcx_lh_ratio_prev = ccxlcx_lh_ratio;
+
 	if (c_x == -1)
 	{
-		c_cx = exp_c_cx;
-		c_w = max(r_w, r_h);
-		c_h = c_w;
-		c_x = c_cx - (c_w / 2);
-		c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
-		c_y = c_cy - (c_h / 2);
+		if (ccxlcx_lh_ratio > 0)
+		{
+			c_cx = l_cx + (int)(ccxlcx_lh_ratio * (double)l_h);
+			c_w = max(r_w, r_h);
+			c_h = c_w;
+			c_x = c_cx - (c_w / 2);
+			c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
+			c_y = c_cy - (c_h / 2);
+		}
+		else
+		{
+			cv::Mat img_res;
+			frame.copyTo(img_res);
+			img_res.setTo(cv::Scalar(255, 0, 0), img_b);
+			cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+			cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+			error_msg(QString("ERROR: failed to get telescopic motor rocker arm center x position\n"), &frame, &img_res);
+		}
 	}
 	else
 	{
@@ -530,15 +558,36 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		c_h = max((c_cy - c_y) * 2, (c_y + c_h - 1 - c_cy) * 2);
 		c_y = c_cy - (c_h / 2);
 
-		double c_cx_ratio = (double)(c_cx - l_cx) / (double)(r_cx - l_cx);
-		double diff = (abs(c_cx_ratio - exp_c_cx_ratio) * 100.0) / exp_c_cx_ratio;
+		ccxlcx_lh_ratio = (double)(c_cx - l_cx) / (double)l_h;
 
-		if (diff > 30)
+		if ( (ccxlcx_lh_ratio < g_min_telescopic_motor_rocker_arm_center_x_proportions) ||
+			(ccxlcx_lh_ratio > g_max_telescopic_motor_rocker_arm_center_x_proportions) )
 		{
-			cv::Mat frame_upd;
-			frame.copyTo(frame_upd);
-			frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
-			error_msg("ERROR: got strange center position", &frame, &frame_upd, NULL, c_x, c_y, c_x + c_w - 1, c_y + c_h - 1);
+			cv::Mat img_res;
+			frame.copyTo(img_res);
+
+			img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
+			img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
+			for (CMyClosedFigure* c_figure : c_figures)
+			{
+				img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(c_figure, width, height));
+			}
+
+			cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+			cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+			cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
+
+			cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
+			cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+
+			error_msg(QString(	"ERROR: got strange center position:\n"
+								"telescopic_motor_rocker_arm_center_x_proportions:%1\n"
+								"min_telescopic_motor_rocker_arm_center_x_proportions:%2\n"
+								"max_telescopic_motor_rocker_arm_center_x_proportions:%3\n")
+								.arg(ccxlcx_lh_ratio)
+								.arg(g_min_telescopic_motor_rocker_arm_center_x_proportions)
+								.arg(g_max_telescopic_motor_rocker_arm_center_x_proportions),
+								&frame, &img_res);
 		}
 	}
 
@@ -626,6 +675,18 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		cv::line(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), cv::Scalar(0, 170, 0), 5);
 		cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
 
+		if (ccxlcx_lh_ratio_prev > 0)
+		{
+			int c_cx_exp = l_cx + (int)(ccxlcx_lh_ratio_prev * (double)l_h);
+			int c_w_exp = max(r_w, r_h);
+			int c_h_exp = c_w;
+			int c_x_exp = c_cx_exp - (c_w_exp / 2);
+			int c_cy_exp = l_cy + (((r_cy - l_cy) * (c_cx_exp - l_cx)) / (r_cx - l_cx));
+			int c_y_exp = c_cy_exp - (c_h_exp / 2);
+			cv::rectangle(img_res, cv::Rect(c_x_exp, c_y_exp, c_w_exp, c_h_exp), cv::Scalar(0, 0, 255), 1);
+			cv::line(img_res, cv::Point(c_cx_exp, c_cy_exp - 4), cv::Point(c_cx_exp, c_cy_exp + 4), cv::Scalar(0, 0, 255), 1);
+		}
+
 		int cur_speed = -1;
 		int dt_get_speed = -1;
 		if (p_cur_speed)
@@ -633,8 +694,11 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 			cur_speed = *p_cur_speed;
 		}
 
+		double g_to_c_distance = (int)sqrt((double)(pow2(g_cx - c_cx) + pow2(g_cy - c_cy)));
 		double g_to_r_distance = (int)sqrt((double)(pow2(g_cx - r_cx) + pow2(g_cy - r_cy)));
-		cv::String text = cv::format("%s" "pos: %d cur_speed: %d\nperformance data: dt_get_pos_total: %d dt_get_pos_conversion: %d", add_data.toStdString().c_str(), pos, cur_speed, dt, dt1);
+		double telescopic_motor_rocker_arm_proportions = g_to_c_distance / g_to_r_distance;
+
+		cv::String text = cv::format("%s" "pos: %d cur_speed: %d\ntelescopic_motor_rocker_arm_proportions: %f\ntelescopic_motor_rocker_arm_center_x_proportions: %f\nperformance data: dt_get_pos_total: %d dt_get_pos_conversion: %d", add_data.toStdString().c_str(), pos, cur_speed, telescopic_motor_rocker_arm_proportions, ccxlcx_lh_ratio, dt, dt1);
 
 		draw_text(text.c_str(), img_res);
 
@@ -706,6 +770,40 @@ void get_performance_with_video()
 		save_BGR_image(bad_frame, g_root_dir + "\\error_data\\" + time_str + QString("_slow_frame_orig_dt_%1.bmp").arg(max_dt));
 
 		show_msg(QString("%1_%2").arg((double)1000.0 / ((double)(GetTickCount64() - start_time) / cnt)).arg(max_dt), 10000);
+	}
+
+	capture.release();
+}
+
+void test_by_video()
+{
+	cv::String video_file_name = g_root_dir.toStdString() + "\\data\\speed_100.mp4";
+	cv::VideoCapture capture(video_file_name);
+	cv::Mat frame, bad_frame;
+
+	if (capture.isOpened())
+	{
+		capture.read(frame);
+
+		cv::String title("Test By Video");
+
+		cv::namedWindow(title, 1);
+		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
+		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
+		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
+
+		int pos;
+		while (capture.read(frame))
+		{
+			if (!get_hismith_pos_by_image(frame, pos, true, NULL, NULL, title))
+			{
+				capture.release();
+				return;
+			}
+
+			int key = cv::waitKey(0);
+		}		
 	}
 
 	capture.release();
@@ -971,11 +1069,18 @@ void test_err_frame(QString fpath)
 	
 	int pos, dt;
 	__int64 start_time = GetTickCount64();
-	if (!get_hismith_pos_by_image(frame, pos))
+	if (!get_hismith_pos_by_image(frame, pos, true))
 	{
 		return;
 	}
 	dt = (int)(GetTickCount64() - start_time);
+
+	cv::String title("Test Error Frame");
+	cv::namedWindow(title, 1);
+	cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+	int sw = (int)GetSystemMetrics(SM_CXSCREEN);
+	int sh = (int)GetSystemMetrics(SM_CYSCREEN);
+	cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
 
 	while (1)
 	{
@@ -1019,12 +1124,15 @@ void test_err_frame(QString fpath)
 			.arg(dt)
 			.arg(pos)
 			, img);
-		show_frame_in_cv_window("Test Error Frame", &img);
+		cv::imshow(title, img);
 
 		int key = cv::waitKey(0);
 
-		if (key == Qt::Key_Escape)
+		if ((key == 27 /* Esc key */) ||
+			((key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0)))
+		{
 			break;
+		}
 
 		else if (key == 'w')
 		{
@@ -1151,6 +1259,7 @@ void test_camera()
 
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 		cv::namedWindow(title, 1);
 		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
@@ -2389,8 +2498,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 		SetWindowPos(hwnd, NULL, (screen_w - (total_text_size.cx + 20))/2, (screen_h - (total_text_size.cy + 10))/2, total_text_size.cx + 20, total_text_size.cy + 10, SWP_NOREDRAW);
 		GetClientRect(hwnd, &rc);
 
-		HBRUSH brush = CreateSolidBrush(RGB(255, 255, 255));
+		HBRUSH brush;
+		int thickness = 2;
+
+		brush = CreateSolidBrush(RGB(0, 0, 0));
+		FrameRect(hdc, &rc, brush);
+		DeleteObject(brush);
+
+		rc.left += thickness;
+		rc.top += thickness;
+		rc.right -= thickness;
+		rc.bottom -= thickness;
+		brush = CreateSolidBrush(RGB(255, 222, 108));
 		FillRect(hdc, &rc, brush);
+		DeleteObject(brush);
 
 		rt.left = 0;
 		rt.right = total_text_size.cx + 20;
@@ -2533,8 +2654,14 @@ void run_funscript()
 	{
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
-		get_new_camera_frame(capture, frame/*, prev_frame*/);
+		// geting first 30 frames for get better camera focus
+		for (int i = 0; i < 30; i++)
+		{
+			get_new_camera_frame(capture, frame/*, prev_frame*/);
+		}
+
 		msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
@@ -3205,7 +3332,8 @@ bool connect_to_hismith()
 		g_pClient = new Client(g_intiface_central_client_url, g_intiface_central_client_port);
 		g_pClient->connect(callbackFunction);
 	}
-		
+
+	_tmp_got_client_msg = false;
 	g_pClient->requestDeviceList();
 	g_pClient->startScan();
 	while (1) {
@@ -3230,14 +3358,18 @@ bool connect_to_hismith()
 
 	if (g_myDevices.size() == 0)
 	{
-		error_msg("ERROR: Looks \"Intiface Central\" not started or no any device connected to it");
-		return res;
+		if (!_tmp_got_client_msg)
+		{
+			error_msg(QString("It looks \"Intiface Central\" not started\nor has another client URL: %1 or port: %2\nPlease start and \"Refresh Devices List\"").arg(g_intiface_central_client_url.c_str()).arg(g_intiface_central_client_port));
+		}
+		else
+		{
+			error_msg("It Looks no any device connected to \"Intiface Central\".\nPlease connect and \"Refresh Devices List\"");
+		}
 	}
-
-	if (!g_pMyDevice)
+	else if (!g_pMyDevice)
 	{
 		error_msg(QString("ERROR: Selected Hismith device is not currently present"));
-		return res;
 	}
 
 	return res;
@@ -3278,7 +3410,12 @@ void get_performance_with_hismith(int hismith_speed)
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
 
-		get_new_camera_frame(capture, frame/*, prev_frame*/);
+		// geting first 30 frames for get better camera focus
+		for (int i = 0; i < 30; i++)
+		{
+			get_new_camera_frame(capture, frame/*, prev_frame*/);
+		}
+
 		last_msec_video_prev_pos = msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
@@ -3391,8 +3528,13 @@ void test_hismith(int hismith_speed)
 	{
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
-		get_new_camera_frame(capture, frame/*, prev_frame*/);
+		// geting first 30 frames for get better camera focus
+		for (int i = 0; i < 30; i++)
+		{
+			get_new_camera_frame(capture, frame/*, prev_frame*/);
+		}
 		last_msec_video_prev_pos = msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
@@ -3512,6 +3654,8 @@ void SaveSettings()
 												.arg(g_G_range[2][1]));
 
 	add_xml_element(document, root, "max_telescopic_motor_rocker_arm_proportions", QString::number(g_max_telescopic_motor_rocker_arm_proportions));
+	add_xml_element(document, root, "min_telescopic_motor_rocker_arm_center_x_proportions", QString::number(g_min_telescopic_motor_rocker_arm_center_x_proportions));
+	add_xml_element(document, root, "max_telescopic_motor_rocker_arm_center_x_proportions", QString::number(g_max_telescopic_motor_rocker_arm_center_x_proportions));
 
 	QString selected_webcam = pW->ui->Webcams->itemText(pW->ui->Webcams->currentIndex());
 	QString selected_device = pW->ui->Devices->itemText(pW->ui->Devices->currentIndex());
@@ -3612,6 +3756,8 @@ bool LoadSettings()
 	}
 
 	g_max_telescopic_motor_rocker_arm_proportions = data_map["max_telescopic_motor_rocker_arm_proportions"].toDouble();
+	g_min_telescopic_motor_rocker_arm_center_x_proportions = data_map["min_telescopic_motor_rocker_arm_center_x_proportions"].toDouble();
+	g_max_telescopic_motor_rocker_arm_center_x_proportions = data_map["max_telescopic_motor_rocker_arm_center_x_proportions"].toDouble();
 
 	g_req_webcam_name = data_map["req_webcam_name"];
 	g_webcam_frame_width = data_map["webcam_frame_width"].toInt();
@@ -3684,7 +3830,8 @@ int main(int argc, char *argv[])
 
 	//test_camera();
 
-	//test_err_frame(g_root_dir + "\\res_data\\orig.bmp");
+	//test_by_video();
+	//test_err_frame(g_root_dir + "\\error_data\\13_06_2024_01_25_24_frame_orig.bmp");
 
 	//test_hismith(5);
 
