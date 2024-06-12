@@ -29,9 +29,9 @@ check that it can find your Hismith and you can change speed by using it.
 **B_range of colors (highlighted as Blue during test) is used for detection:**
 - left corner edge of Hismith
 - center of rotation (for detect it's placement)
-- and for right connection of moving rocker arm\
+- and for right connection of moving telescopic motor rocker arm\
 **G_range of colors (highlighted as Green during test) is used for detection:**
-- rotation part of rocker arm which perform circular movements.\
+- rotation part of telescopic motor rocker arm which perform circular movements.\
 If all is highlighted well you will need to go to next step
 4) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
 By default it will start Hismith on mostly very low speed 5, which you can change to any other for check how good it can track all without errors.\

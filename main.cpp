@@ -23,6 +23,8 @@ int g_B_range[3][2];
 //YUV:
 int g_G_range[3][2];
 
+double g_max_telescopic_motor_rocker_arm_proportions;
+
 QString g_req_webcam_name;
 int g_webcam_frame_width;
 int g_webcam_frame_height;
@@ -249,6 +251,11 @@ void warning_msg(QString msg, QString title = "")
 	MessageBoxPos(NULL, msg.toStdWString().c_str(), title.toStdWString().c_str(), MB_OK | MB_SETFOREGROUND | MB_SYSTEMMODAL | MB_ICONWARNING);
 }
 
+void show_msg(QString msg, QString title)
+{
+	MessageBoxPos(NULL, msg.toStdWString().c_str(), title.toStdWString().c_str(), MB_OK | MB_SETFOREGROUND | MB_SYSTEMMODAL | MB_ICONINFORMATION);
+}
+
 //---------------------------------------------------------------
 
 int get_video_dev_id()
@@ -343,7 +350,7 @@ void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int er
 	}
 }
 
-bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, int* p_dt_get_speed = NULL, cv::String title = "", QString add_data = QString())
+bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "", QString add_data = QString())
 {
 	bool res = false;
 	cv::Mat img, img_b, img_g, img_right;
@@ -379,8 +386,6 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	{
 		t1 = GetTickCount64();
 	}
-
-	double max_rad_prop = 8.0 / 23;
 
 	int c_x = -1, c_y = -1, c_w = -1, c_h = -1;
 	CMyClosedFigure* p_best_match_l_figure = NULL;
@@ -545,7 +550,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 
 		int g_to_c_distance_pow2 = pow2((x + (w / 2)) - c_cx) + pow2((y + (h / 2)) - c_cy);
 		int g_to_r_distance_pow2 = pow2((x + (w / 2)) - r_cx) + pow2((y + (h / 2)) - r_cy);
-		if ((double)g_to_c_distance_pow2 / g_to_r_distance_pow2 <= max_rad_prop * max_rad_prop)
+		if ((double)g_to_c_distance_pow2 / g_to_r_distance_pow2 <= g_max_telescopic_motor_rocker_arm_proportions * g_max_telescopic_motor_rocker_arm_proportions)
 		{
 			if (size > max_size_g)
 			{
@@ -618,19 +623,18 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
 		cv::circle(img_res, cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), int(max(g_w / 2, g_h / 2)), cv::Scalar(0, 0, 255), 3);
 
+		cv::line(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), cv::Scalar(0, 170, 0), 5);
+		cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+
 		int cur_speed = -1;
 		int dt_get_speed = -1;
 		if (p_cur_speed)
 		{
 			cur_speed = *p_cur_speed;
 		}
-		if (p_dt_get_speed)
-		{
-			dt_get_speed = *p_dt_get_speed;
-		}
 
 		double g_to_r_distance = (int)sqrt((double)(pow2(g_cx - r_cx) + pow2(g_cy - r_cy)));
-		cv::String text = cv::format("%s" "pos: %d, g_to_c_distance: %f\ng_to_r_distance: %f, r_to_c_distance: %f dt: %d dt_c: %d cur_speed: %d dt_get_speed: %d", add_data.toStdString().c_str(), pos, g_to_c_distance, g_to_r_distance, r_to_c_distance, dt, dt1, cur_speed, dt_get_speed);
+		cv::String text = cv::format("%s" "pos: %d cur_speed: %d\nperformance data: dt_get_pos_total: %d dt_get_pos_conversion: %d", add_data.toStdString().c_str(), pos, cur_speed, dt, dt1);
 
 		draw_text(text.c_str(), img_res);
 
@@ -663,7 +667,7 @@ cv::String VideoTimeToStr(__int64 pos)
 	return str;
 }
 
-void get_performance()
+void get_performance_with_video()
 {
 	cv::String video_file_name = g_root_dir.toStdString() + "\\data\\speed_100.mp4";
 	cv::VideoCapture capture(video_file_name);
@@ -689,7 +693,7 @@ void get_performance()
 			if (dt > max_dt)
 			{
 				max_dt = dt;
-				frame.copyTo(bad_frame);				
+				frame.copyTo(bad_frame);
 			}
 			cnt++;
 		}
@@ -965,6 +969,14 @@ void test_err_frame(QString fpath)
 	memcpy(data.data, blob.data(), size);
 	cv::Mat frame = cv::imdecode(data, cv::IMREAD_COLOR); // load in BGR format
 	
+	int pos, dt;
+	__int64 start_time = GetTickCount64();
+	if (!get_hismith_pos_by_image(frame, pos))
+	{
+		return;
+	}
+	dt = (int)(GetTickCount64() - start_time);
+
 	while (1)
 	{
 		int width = frame.cols;
@@ -991,7 +1003,7 @@ void test_err_frame(QString fpath)
 		cv::bitwise_and(img_b, img_g, img_intersection);
 		img.setTo(cv::Scalar(0, 0, 255), img_intersection);
 
-		draw_text(QString("b[%1-%2][%3-%4][%5-%6] g[%7-%8][%9-%10][%11-%12]")
+		draw_text(QString("b[%1-%2][%3-%4][%5-%6] g[%7-%8][%9-%10][%11-%12]\ndt:%13 pos:%14")
 			.arg(g_B_range[0][0])
 			.arg(g_B_range[0][1])
 			.arg(g_B_range[1][0])
@@ -1004,6 +1016,8 @@ void test_err_frame(QString fpath)
 			.arg(g_G_range[1][1])
 			.arg(g_G_range[2][0])
 			.arg(g_G_range[2][1])
+			.arg(dt)
+			.arg(pos)
 			, img);
 		show_frame_in_cv_window("Test Error Frame", &img);
 
@@ -1169,7 +1183,7 @@ void test_camera()
 			cv::bitwise_and(img_b, img_g, img_intersection);
 			img.setTo(cv::Scalar(0, 0, 255), img_intersection);
 
-			draw_text(QString("Press 'Enter' for use current as original colors. Current vs original colors:\nb[%1(%2)-%3(%4)][%5(%6)-%7(%8)][%9(%10)-%11(%12)]\ng[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors")
+			draw_text(QString("Press 'Enter' for use current colors as original colors. Current vs original colors:\nb[%1(%2)-%3(%4)][%5(%6)-%7(%8)][%9(%10)-%11(%12)]\ng[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors")
 				.arg(B_range[0][0])
 				.arg(g_B_range[0][0])
 				.arg(B_range[0][1])
@@ -1944,7 +1958,7 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 	int& abs_cur_pos, int& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
 	__int64& msec_video_prev_pos, int& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString())
 {
-	int prev_pos, res, dpos;
+	int prev_pos, dpos;
 	int dt;
 
 	prev_pos = cur_pos;
@@ -1970,7 +1984,8 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 	}
 
 	dt = (int)(msec_video_cur_pos - msec_video_prev_pos);
-	if (!get_hismith_pos_by_image(frame, cur_pos, show_results, p_res_frame, &cur_speed, &dt, title, add_data))
+
+	if (!get_hismith_pos_by_image(frame, cur_pos, show_results, p_res_frame, &cur_speed, title, add_data))
 	{
 		return false;
 	}
@@ -2004,6 +2019,8 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 		_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
 		_num_prev_poss++;
 	}
+
+	return true;
 }
 //------------------------------------------
 
@@ -3226,6 +3243,125 @@ bool connect_to_hismith()
 	return res;
 }
 
+
+void get_performance_with_hismith(int hismith_speed)
+{
+	int cur_pos, res;
+	__int64 msec_video_cur_pos = -1, last_msec_video_prev_pos;
+	int abs_cur_pos, abs_prev_pos = 0;
+	__int64 msec_video_prev_pos = -1, start_time, cur_time, prev_time, msec_video_start_pos;
+	int dpos = 0;
+	double cur_speed = -1;
+	int max_dt_according_webcam_to_get_new_frame_and_speed = 0;
+	int max_dt_according_GetTickCount = 0;
+
+	show_msg("It can takes about 10 seconds, please wait...", 2000);
+
+	//-----------------------------------------------------
+	// Connecting to Hismith
+	// NOTE: At first start: intiface central
+
+	if (!connect_to_hismith())
+		return;
+
+	//-----------------------------------------------------
+	// Connecting to Web Camera	
+
+	cv::Mat frame, bad_frame, prev_frame, res_frame;
+	int video_dev_id = get_video_dev_id();
+	if (video_dev_id == -1)
+		return;
+	cv::VideoCapture capture(video_dev_id);
+
+	if (capture.isOpened())
+	{
+		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
+		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+
+		get_new_camera_frame(capture, frame/*, prev_frame*/);
+		last_msec_video_prev_pos = msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
+		if (!get_hismith_pos_by_image(frame, cur_pos))
+		{
+			capture.release();
+			return;
+		}
+		abs_cur_pos = get_abs_pos(cur_pos);
+
+		hismith_speed = (int)(set_hithmith_speed((double)hismith_speed / 100.0) * 100.0);		
+
+		get_next_frame_and_cur_speed(capture, frame,
+			abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
+			msec_video_prev_pos, abs_prev_pos);
+
+		start_time = cur_time = GetTickCount64();
+		msec_video_start_pos = msec_video_cur_pos;
+
+		int num_frames = 0, num_frame_video, num_frame_gtc;
+		bool last_get_frame_status = false;
+
+		while (1)
+		{			
+			last_msec_video_prev_pos = msec_video_cur_pos;
+			last_get_frame_status = get_next_frame_and_cur_speed(capture, frame,
+				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
+				msec_video_prev_pos, abs_prev_pos);
+			if (!last_get_frame_status)
+			{
+				capture.release();
+				break;
+			}
+			prev_time = cur_time;
+			cur_time = GetTickCount64();
+			num_frames++;			
+
+			if (msec_video_cur_pos - last_msec_video_prev_pos > max_dt_according_webcam_to_get_new_frame_and_speed)
+			{
+				max_dt_according_webcam_to_get_new_frame_and_speed = msec_video_cur_pos - last_msec_video_prev_pos;
+				num_frame_video = num_frames;
+			}
+
+			if ((int)(cur_time - prev_time) > max_dt_according_GetTickCount)
+			{
+				max_dt_according_GetTickCount = (int)(cur_time - prev_time);
+				num_frame_gtc = num_frames;
+				//frame.copyTo(bad_frame);
+			}
+
+			if (cur_time - start_time > 5000)
+			{
+				break;
+			}
+		}		
+
+		set_hithmith_speed(0);
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+		//auto t = std::time(nullptr);
+		//auto tm = *std::localtime(&t);
+		//std::ostringstream oss;
+		//oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
+		//QString time_str = oss.str().c_str();
+		//save_BGR_image(bad_frame, g_root_dir + "\\error_data\\" + time_str + QString("_slow_frame_gtc_dt_%1.bmp").arg(max_dt_according_GetTickCount));
+
+		show_msg(QString(	"last_get_frame_status: %1\n"
+							"max_dt_according_webcam_to_get_new_frame_and_speed:%2 frame_number:%3\n"
+							"max_dt_according_GetTickCount:%4 frame_number:%5\n"
+							"avg_dt_according_webcam_to_get_new_frame_and_speed:%6\n"
+							"avg_dt_according_GetTickCount:%7")
+			.arg(last_get_frame_status)
+			.arg(max_dt_according_webcam_to_get_new_frame_and_speed)
+			.arg(num_frame_video)
+			.arg(max_dt_according_GetTickCount)
+			.arg(num_frame_gtc)
+			.arg((int)(msec_video_cur_pos - msec_video_start_pos)/ num_frames)
+			.arg((int)(cur_time - start_time) / num_frames)
+			,
+			"Performance Results");		
+	}
+
+	disconnect_from_hismith();
+}
+
 void test_hismith(int hismith_speed)
 {
 	int cur_pos, res;
@@ -3375,6 +3511,8 @@ void SaveSettings()
 												.arg(g_G_range[2][0])
 												.arg(g_G_range[2][1]));
 
+	add_xml_element(document, root, "max_telescopic_motor_rocker_arm_proportions", QString::number(g_max_telescopic_motor_rocker_arm_proportions));
+
 	QString selected_webcam = pW->ui->Webcams->itemText(pW->ui->Webcams->currentIndex());
 	QString selected_device = pW->ui->Devices->itemText(pW->ui->Devices->currentIndex());
 
@@ -3473,6 +3611,8 @@ bool LoadSettings()
 		g_G_range[2][1] = match.captured(6).toInt();
 	}
 
+	g_max_telescopic_motor_rocker_arm_proportions = data_map["max_telescopic_motor_rocker_arm_proportions"].toDouble();
+
 	g_req_webcam_name = data_map["req_webcam_name"];
 	g_webcam_frame_width = data_map["webcam_frame_width"].toInt();
 	g_webcam_frame_height = data_map["webcam_frame_height"].toInt();
@@ -3540,11 +3680,11 @@ int main(int argc, char *argv[])
 
 	//get_initial_data();
 
-	//get_performance();
+	//get_performance_with_hismith(5);
 
 	//test_camera();
 
-	//test_err_frame(g_root_dir + "\\error_data\\05_06_2024_19_30_22_frame_orig.bmp");
+	//test_err_frame(g_root_dir + "\\res_data\\orig.bmp");
 
 	//test_hismith(5);
 

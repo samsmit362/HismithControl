@@ -58,6 +58,7 @@ extern bool g_work_in_progress;
 void show_msg(QString msg, int timeout = 5000);
 void run_funscript();
 void test_hismith(int hismith_speed);
+void get_performance_with_hismith(int hismith_speed);
 void test_camera();
 void disconnect_from_hismith();
 bool connect_to_hismith();
@@ -127,6 +128,7 @@ public:
 private slots:
     void handleStartButton();
     void handleTestButton();
+    void handleGetPerformance();
     void handleTestCameraButton();
     void handleStopStart();
     void handlePauseStart();

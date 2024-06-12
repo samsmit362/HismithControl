@@ -8,8 +8,9 @@
  <slowdown_hismith_speed_change_multiplier>0.2</slowdown_hismith_speed_change_multiplier>
  <speed_change_delay>200</speed_change_delay>
  <cpu_freezes_timeout>300</cpu_freezes_timeout>
- <B_range>[10-160][150-205][60-120]</B_range>
+ <B_range>[5-160][150-205][60-120]</B_range>
  <G_range>[50-210][120-150][10-110]</G_range>
+ <max_telescopic_motor_rocker_arm_proportions>0.35</max_telescopic_motor_rocker_arm_proportions>
  <req_webcam_name>Full HD webcam</req_webcam_name>
  <webcam_frame_width>1920</webcam_frame_width>
  <webcam_frame_height>1080</webcam_frame_height>
