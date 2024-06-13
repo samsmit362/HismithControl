@@ -8,7 +8,7 @@ For minimize complexity of used computer vision algorithms, also as for increase
 
 ## What is required for its work
 You will need:\
-Hismith with remote control support + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)\
+Hismith with remote control support (or possibly any other similar form Fucking Machine) + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)\
 About Web Camera:\
 I'm using very chip Web Camera but with Full HD support (1080p) 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision) 
 I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it .

@@ -47,6 +47,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->testCameraButton, &QPushButton::released, this, &MainWindow::handleTestCameraButton);
     connect(ui->refreshDevices, &QPushButton::released, this, &MainWindow::handleRefreshDevicesButton);
     connect(ui->getPerformance, &QPushButton::released, this, &MainWindow::handleGetPerformance);
+    connect(ui->getStatistics, &QPushButton::released, this, &MainWindow::handleGetStatistics);
 
     connect(ui->actionSave_Settings, &QAction::triggered, this, &MainWindow::handleSaveSettings);
 
@@ -102,6 +103,11 @@ void MainWindow::handleTestButton()
 void MainWindow::handleGetPerformance()
 {
     get_performance_with_hismith(ui->testSpeed->text().toInt());
+}
+
+void MainWindow::handleGetStatistics()
+{
+    get_statistics_with_hismith();
 }
 
 void MainWindow::handleTestCameraButton()

@@ -104,6 +104,19 @@
       <string>Test Performance</string>
      </property>
     </widget>
+    <widget class="QPushButton" name="getStatistics">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>260</y>
+       <width>161</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Get Statistics Data</string>
+     </property>
+    </widget>
    </widget>
    <widget class="QGroupBox" name="groupBox_2">
     <property name="geometry">

@@ -67,6 +67,7 @@ int make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req
 QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl);
 bool get_devices_list();
 void SaveSettings();
+void get_statistics_with_hismith();
 
 //---------------------------------------------------------------
 
@@ -129,6 +130,7 @@ private slots:
     void handleStartButton();
     void handleTestButton();
     void handleGetPerformance();
+    void handleGetStatistics();
     void handleTestCameraButton();
     void handleStopStart();
     void handlePauseStart();
