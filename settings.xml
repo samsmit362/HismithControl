@@ -12,7 +12,7 @@
  <G_range>[50-210][120-150][10-110]</G_range>
  <max_telescopic_motor_rocker_arm_proportions>0.35</max_telescopic_motor_rocker_arm_proportions>
  <min_telescopic_motor_rocker_arm_center_x_proportions>0.5</min_telescopic_motor_rocker_arm_center_x_proportions>
- <max_telescopic_motor_rocker_arm_center_x_proportions>1.0</max_telescopic_motor_rocker_arm_center_x_proportions>
+ <max_telescopic_motor_rocker_arm_center_x_proportions>1</max_telescopic_motor_rocker_arm_center_x_proportions>
  <req_webcam_name>Full HD webcam</req_webcam_name>
  <webcam_frame_width>1920</webcam_frame_width>
  <webcam_frame_height>1080</webcam_frame_height>

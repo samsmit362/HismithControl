@@ -1892,24 +1892,47 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 	return res;
 }
 
+int get_avg_hismith_speed(speeds_data& all_speeds_data, int speed)
+{
+	int h_speed = 0;
+
+	if (speed > 0)
+	{
+		h_speed = 1;
+		while (h_speed <= 100)
+		{
+			if (speed <= all_speeds_data.speed_data_vector[h_speed - 1].total_average_speed)
+			{
+				break;
+			}
+			h_speed++;
+		}
+	}
+
+	return h_speed;
+}
+
 int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int cur_speed, int dpos, int dt)
 {	
 	int h_speed = 0;
 	int avg_req_speed = (dpos * 1000) / dt;
 
-	h_speed = 1;
-	while (h_speed <= 100)
+	if (avg_req_speed > 0)
 	{
-		if (avg_req_speed <= all_speeds_data.speed_data_vector[h_speed - 1].total_average_speed)
+		h_speed = 1;
+		while (h_speed <= 100)
 		{
-			break;
+			if (avg_req_speed <= all_speeds_data.speed_data_vector[h_speed - 1].total_average_speed)
+			{
+				break;
+			}
+			h_speed++;
 		}
-		h_speed++;
-	}
 
-	if (h_speed > g_max_allowed_hismith_speed)
-	{
-		h_speed = g_max_allowed_hismith_speed;
+		if (h_speed > g_max_allowed_hismith_speed)
+		{
+			h_speed = g_max_allowed_hismith_speed;
+		}
 	}
 
 	return h_speed;
@@ -2545,7 +2568,7 @@ void run_funscript()
 	double dt = 0, dmove = 0;
 	int abs_cur_pos = 0, abs_prev_pos = 0;
 	int dpos;
-	double cur_speed, prev_cur_speed = 0;
+	double cur_speed, prev_cur_speed = 0, action_start_speed;
 	__int64 cur_time, start_time;
 	int cur_video_pos, start_video_pos;
 	bool is_video_paused = false;
@@ -2758,8 +2781,11 @@ void run_funscript()
 				int abs_cur_pos;				
 				int req_speed;				
 				int got_avg_speed;
-				int cur_speed;
-				int set_speed;
+				int start_speed;
+				int end_speed;
+				int hismith_speed_prev;
+				int avg_hismith_speed_prev;
+				int optimal_hismith_speed;
 				int optimal_hismith_start_speed;
 				QString action_start_video_time;
 				QString hismith_speed_changed;
@@ -2814,12 +2840,12 @@ void run_funscript()
 
 			int action_id;
 
-			__int64 action_start_time, action_start_speed, avg_speed_start_time, speed_change_time, prev_get_speed_time = start_time;
+			__int64 action_start_time, avg_speed_start_time, speed_change_time, prev_get_speed_time = start_time;
 			int start_abs_pos, avg_speed_start_abs_cur_pos, exp_abs_cur_pos_to_req_time, tmp_val, dif_cur_vs_req_action_start_time, last_set_action_id_for_dif_cur_vs_req_exp_pos;
 
 			int exp_abs_pos_before_speed_change, action_start_abs_pos;
 			int req_speed, req_cur_speed, got_avg_speed, req_new_speed;
-			double optimal_hismith_speed = 0, optimal_hismith_speed_prev = 0, optimal_hismith_start_speed = 0;
+			double optimal_hismith_speed = 0, hismith_speed_prev = 0, optimal_hismith_start_speed = 0, avg_hismith_speed_prev = 0;
 			QString actions_end_with = "success";
 			int prev_cur_video_pos = cur_video_pos;
 			bool speed_change_was_obtained = false;
@@ -2909,22 +2935,24 @@ void run_funscript()
 
 				dpos = funscript_data_maped[action_id].second - abs_cur_pos;
 				req_speed = ((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt;
-				optimal_hismith_speed_prev = cur_set_hismith_speed;
+				hismith_speed_prev = cur_set_hismith_speed;
 				//exp_abs_pos_before_speed_change = abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0);
-				optimal_hismith_speed = (double)get_optimal_hismith_speed(all_speeds_data, (int)(optimal_hismith_speed_prev*100.0), cur_speed, dpos, dt) / 100.0;
-				
+				optimal_hismith_speed = (double)get_optimal_hismith_speed(all_speeds_data, (int)(hismith_speed_prev*100.0), cur_speed, dpos, dt) / 100.0;				
+				avg_hismith_speed_prev = (double)get_avg_hismith_speed(all_speeds_data, action_start_speed)/100.0;
 				int optimal_hismith_start_speed_int;
 				
-				if (optimal_hismith_speed >= optimal_hismith_speed_prev)
+				if (action_start_speed <= req_speed)
 				{
-					optimal_hismith_start_speed_int = (int)((min(max(optimal_hismith_speed_prev +
-						((optimal_hismith_speed - optimal_hismith_speed_prev) * g_increase_hismith_speed_start_multiplier), 0.0),
+					double val = min(avg_hismith_speed_prev, hismith_speed_prev);
+					optimal_hismith_start_speed_int = (int)((min(max(val +
+						((optimal_hismith_speed - val) * g_increase_hismith_speed_start_multiplier), 0.0),
 						(double)g_max_allowed_hismith_speed / 100.0)) * 100.0);
 				}
 				else
 				{
-					optimal_hismith_start_speed_int = (int)((min(max(optimal_hismith_speed_prev +
-						((optimal_hismith_speed - optimal_hismith_speed_prev) * g_slowdown_hismith_speed_start_multiplier), 0.0),
+					double val = max(avg_hismith_speed_prev, hismith_speed_prev);
+					optimal_hismith_start_speed_int = (int)((min(max(val +
+						((optimal_hismith_speed - val) * g_slowdown_hismith_speed_start_multiplier), 0.0),
 						(double)g_max_allowed_hismith_speed / 100.0)) * 100.0);
 				}
 
@@ -2959,7 +2987,7 @@ void run_funscript()
 					{
 						dt = funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time));
 						req_cur_speed = max(((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt, 0);
-						hismith_speed_changed += QString("[set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
+						hismith_speed_changed += QString("[set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 act_start_spd: %5 req_pos_vs_cur: %6]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(action_start_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
 					}
 
 					if ((int)(cur_time - prev_get_speed_time) > g_cpu_freezes_timeout)
@@ -3019,54 +3047,61 @@ void run_funscript()
 							hismith_speed_changed += QString("[spd_change: set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
 						}
 					}
-					else if ((!speed_change_was_obtained) &&
-						(((action_start_speed > req_speed) && (cur_speed <= req_speed + ((action_start_speed - req_speed) / 4))) ||
-							((action_start_speed < req_speed) && (cur_speed >= req_speed - ((req_speed - action_start_speed) / 4)))))
+					else
 					{
+						int exp_avg_speed = cur_set_hismith_speed > 0 ? all_speeds_data.speed_data_vector[cur_set_hismith_speed-1].total_average_speed : 0;
+						if ( (!speed_change_was_obtained) &&
+							( ((action_start_speed > req_speed) && (cur_speed <= req_speed + abs(action_start_speed - req_speed) / 4)) ||
+							  ((action_start_speed < req_speed) && (cur_speed >= req_speed - abs(req_speed - action_start_speed) / 2)) ) )
+						{
 
-						//dt = funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time));
-						//req_speed = max(((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt, 0);
-						//optimal_hismith_speed = (double)get_optimal_hismith_speed(speed_data_vector, req_speed, funscript_data_maped[action_id].second, exp_abs_pos_before_speed_change) / 100.0;
-						//set_hithmith_speed(optimal_hismith_speed);
-						//cur_set_hismith_speed = optimal_hismith_speed;
-						speed_change_time = cur_time;
-						speed_change_was_obtained = true;
+							//dt = funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time));
+							//req_speed = max(((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt, 0);
+							//optimal_hismith_speed = (double)get_optimal_hismith_speed(speed_data_vector, req_speed, funscript_data_maped[action_id].second, exp_abs_pos_before_speed_change) / 100.0;
+							//set_hithmith_speed(optimal_hismith_speed);
+							//cur_set_hismith_speed = optimal_hismith_speed;
+							speed_change_time = cur_time;
+							speed_change_was_obtained = true;
+						}
+						
+						if (speed_change_was_obtained)
+						{
+							dt = funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time));
+							dpos = funscript_data_maped[action_id].second - abs_cur_pos;
+							req_cur_speed = max((dpos * 1000) / dt, 0);
+
+							//if (cur_speed > req_cur_speed)
+							//{
+							//	//double _optimal_hismith_speed_cur = (double)get_optimal_hismith_speed(speed_data_vector, cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
+							//	//double _optimal_hismith_speed_req = (double)get_optimal_hismith_speed(speed_data_vector, req_cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
+							//	//cur_set_hismith_speed = cur_set_hismith_speed * (_optimal_hismith_speed_req / _optimal_hismith_speed_cur);
+
+							//	tmp_val = (int)(cur_set_hismith_speed * 100.0);
+							//	tmp_val = max(tmp_val - max((int)((double)tmp_val * g_slowdown_hismith_speed_change_multiplier), 1), 0); //-%5
+							//	cur_set_hismith_speed = (double)(tmp_val) / 100.0;
+
+							//	cur_set_hismith_speed = set_hithmith_speed(cur_set_hismith_speed);
+
+							//	hismith_speed_changed += QString("[spd_change: set_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
+							//}
+							//else
+							{
+								cur_set_hismith_speed = (double)get_optimal_hismith_speed(all_speeds_data, (int)(cur_set_hismith_speed * 100.0), cur_speed, dpos, dt) / 100.0;
+
+								//double _optimal_hismith_speed_cur = (double)get_optimal_hismith_speed(all_speeds_data, cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
+								//double _optimal_hismith_speed_req = (double)get_optimal_hismith_speed(speed_data_vector, req_cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
+								//cur_set_hismith_speed = cur_set_hismith_speed * (_optimal_hismith_speed_req / _optimal_hismith_speed_cur);
+
+								//tmp_val = (int)(cur_set_hismith_speed * 100.0);
+								//tmp_val = min(tmp_val + max((int)((double)tmp_val * g_increase_hismith_speed_change_multiplier), 1), g_max_allowed_hismith_speed); //+%5
+								//cur_set_hismith_speed = (double)(tmp_val) / 100.0;
+
+								cur_set_hismith_speed = set_hithmith_speed(cur_set_hismith_speed);
+
+								hismith_speed_changed += QString("[spd_change: set_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
+							}
+						}
 					}
-					else if (speed_change_was_obtained)
-					{
-						dt = funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time));
-						req_cur_speed = max(((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt, 0);
-
-						if (cur_speed > req_cur_speed)
-						{
-							//double _optimal_hismith_speed_cur = (double)get_optimal_hismith_speed(speed_data_vector, cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
-							//double _optimal_hismith_speed_req = (double)get_optimal_hismith_speed(speed_data_vector, req_cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
-							//cur_set_hismith_speed = cur_set_hismith_speed * (_optimal_hismith_speed_req / _optimal_hismith_speed_cur);
-
-							tmp_val = (int)(cur_set_hismith_speed * 100.0);
-							tmp_val = max(tmp_val - max((int)((double)tmp_val * g_slowdown_hismith_speed_change_multiplier), 1), 0); //-%5
-							cur_set_hismith_speed = (double)(tmp_val) / 100.0;
-
-							cur_set_hismith_speed = set_hithmith_speed(cur_set_hismith_speed);
-
-							hismith_speed_changed += QString("[spd_change: set_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
-						}
-						else if (cur_speed < req_cur_speed)
-						{
-							//double _optimal_hismith_speed_cur = (double)get_optimal_hismith_speed(speed_data_vector, cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
-							//double _optimal_hismith_speed_req = (double)get_optimal_hismith_speed(speed_data_vector, req_cur_speed, funscript_data_maped[action_id].second, abs_cur_pos) / 100.0;
-							//cur_set_hismith_speed = cur_set_hismith_speed * (_optimal_hismith_speed_req / _optimal_hismith_speed_cur);
-
-							tmp_val = (int)(cur_set_hismith_speed * 100.0);
-							tmp_val = min(tmp_val + max((int)((double)tmp_val * g_increase_hismith_speed_change_multiplier), 1), g_max_allowed_hismith_speed); //+%5
-							cur_set_hismith_speed = (double)(tmp_val) / 100.0;
-
-							cur_set_hismith_speed = set_hithmith_speed(cur_set_hismith_speed);
-
-							hismith_speed_changed += QString("[spd_change: set_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]").arg(cur_set_hismith_speed).arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time))).arg(cur_speed).arg(req_cur_speed).arg(funscript_data_maped[action_id].second - abs_cur_pos);
-						}
-					}					
-
 					if (avg_speed_start_time == -1)
 					{
 						avg_speed_start_time = cur_time;
@@ -3098,8 +3133,11 @@ void run_funscript()
 				results[action_id - 1].abs_cur_pos = abs_cur_pos;
 				results[action_id - 1].req_speed = req_speed;
 				results[action_id - 1].got_avg_speed = got_avg_speed;
-				results[action_id - 1].cur_speed = (int)cur_speed;
-				results[action_id - 1].set_speed = (speed_change_time == -1) ?  -1: (int)(optimal_hismith_speed * 100.0);
+				results[action_id - 1].start_speed = (int)action_start_speed;
+				results[action_id - 1].end_speed = (int)cur_speed;
+				results[action_id - 1].hismith_speed_prev = (int)(hismith_speed_prev * 100.0);
+				results[action_id - 1].avg_hismith_speed_prev = (int)(avg_hismith_speed_prev * 100.0);
+				results[action_id - 1].optimal_hismith_speed = (int)(optimal_hismith_speed * 100.0);
 				results[action_id - 1].optimal_hismith_start_speed = (int)(optimal_hismith_start_speed * 100.0);
 				results[action_id - 1].hismith_speed_changed = hismith_speed_changed;
 
@@ -3145,22 +3183,21 @@ void run_funscript()
 			QString result_str;
 			for (int i = 0; i < actions_size; i++)
 			{
-				result_str += QString("dif_end_pos:%1 req_dpos:%2+(%3) len:%4 dif_start_t:%5 dif_end_t:%6 start_t:%7 dif_spd_ch:%8 req_pos:%9 last_cur_pos:%10 "
-									"req_spd:%11 got_avg_spd:%12 cur_spd:%13 set_h_spd:%14 opt_start_spd:%15 spd_changed:%16\n")
+				result_str += QString("dif_end_pos:%1 start_t:%2 len:%3 req_dpos:%4+(%5) dif_start_t:%6 dif_end_t:%7 "
+									"start_spd:%8 end_spd:%9 req_avg_speed:%10 prev_h_spd:%11 prev_avg_h_spd:%12 opt_h_spd:%13 opt_start_spd:%14 add_info:%15\n")
 					.arg(results[i].dif_cur_vs_req_exp_pos)
-					.arg(results[i].req_dpos)
-					.arg(results[i].req_dpos_add)
-					.arg(results[i].action_length_time)
-					.arg(results[i].dif_cur_vs_req_action_start_time)
-					.arg(results[i].dif_cur_vs_req_action_end_time)					
 					.arg(results[i].action_start_video_time)
-					.arg(results[i].dif_speed_changed_vs_req_action_start_time)					
-					.arg(results[i].req_abs_cur_pos)
-					.arg(results[i].abs_cur_pos)
+					.arg(results[i].action_length_time)
+					.arg(results[i].req_dpos)
+					.arg(results[i].req_dpos_add)					
+					.arg(results[i].dif_cur_vs_req_action_start_time)
+					.arg(results[i].dif_cur_vs_req_action_end_time)
+					.arg(results[i].start_speed)
+					.arg(results[i].end_speed)
 					.arg(results[i].req_speed)
-					.arg(results[i].got_avg_speed)
-					.arg(results[i].cur_speed)
-					.arg(results[i].set_speed)
+					.arg(results[i].hismith_speed_prev)
+					.arg(results[i].avg_hismith_speed_prev)
+					.arg(results[i].optimal_hismith_speed)
 					.arg(results[i].optimal_hismith_start_speed)
 					.arg(results[i].hismith_speed_changed);
 			}

@@ -35,12 +35,13 @@ check that it can find your Hismith and you can change speed by using it.
 If all is highlighted well you will need to go to next step
 4) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
 By default it will start Hismith on mostly very low speed 5, which you can change to any other for check how good it can track all without errors.\
-**After 10 seconds it will show in top average speed value which you can then manually update in: data\data.xml** (now is used only rotation_speed_total_average which is most important but others still required for load settings but not used)\
-<code><speed_data_average ... hismith_speed="5" ... rotation_speed_total_average="183" .../>\
-...\
-<speed_data_average ... hismith_speed="100" ... rotation_speed_total_average="1611" .../></code>\
-For getting the best results it is greatly recommended to check all 5-100 speeds that rotation_speed_total_average are mostly the same or change them manually accordingly.
-5) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
+After 10 seconds it will show in top average speed value.
+5) If you plan to use other device or for getting the best results **it is highly recommended to run "Get Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
+In this case it will automatically run Hismith from 1-2-3-to-"Hismith Speed Limit" (max_allowed_hismith_speed in settings.xml) (by default 50) for about 3+7 seconds on each speed.\
+So if you plan to use a higher speed than 50 you need to set "Hismith Speed Limit" to 100 or lower.
+6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
+Than low values than more accurate and often application will can control the device.
+7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
 https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/artifacts \
 You can also use standard VLC but be aware that desynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds.\
 Also you will need to enabler HTTP request supports in VLC according\
@@ -51,7 +52,7 @@ Don't forget to align used settings with settings.xml fields:\
 <vlc_password>1234</vlc_password></code>\
 If you correctly configured VLC you will can check this in Firefox by using http://127.0.0.1:8080/requests/status.xml \
 (in my case Chrome doesn't open it)
-6) So if all is done now you can simply press button "Start".\
+8) So if all is done now you can simply press button "Start".\
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
 If VLC does not found it will show a message that it's waiting for it.\
