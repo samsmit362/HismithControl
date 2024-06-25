@@ -15,6 +15,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QDir>
 
 #include <iostream>
 #include <map>

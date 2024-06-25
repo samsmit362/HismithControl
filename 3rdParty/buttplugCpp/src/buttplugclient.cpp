@@ -283,8 +283,10 @@ void Client::sendScalar(DeviceClass dev, double str) {
 				json j = json::array({ messageHandler.handleClientRequest(req) });
 				std::cout << j << std::endl;
 
-				std::thread sendHandler(&Client::sendMessage, this, j, messageHandler.messageType);
-				sendHandler.detach();
+				// NOTE: Forcing send message especially required when need to stop device
+				sendMessage(j, messageHandler.messageType);
+				//std::thread sendHandler(&Client::sendMessage, this, j, messageHandler.messageType);
+				//sendHandler.detach();
 			}
 		}
 	}

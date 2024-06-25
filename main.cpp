@@ -1298,13 +1298,15 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		}
 		pos = match.captured(1).toInt();
 
-		funscript_data[id].first = at;
-		funscript_data[id].second = 100 - pos;
 		if (!((pos >= 0) && (pos <= 100)))
 		{
 			show_msg(QString("ERROR: Strange pose:%1 in funscript file: %2 it should be in range 0-100").arg(pos).arg(funscript_fname));
 			return res;
 		}
+
+		funscript_data[id].first = at;
+		funscript_data[id].second = 100 - pos;
+		
 		id++;
 	}
 
@@ -1429,25 +1431,25 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 							for (int i = id1; i <= id2; i++)
 							{
-								result_details += QString("%1").arg(funscript_data[i].second);
+								result_details += QString("%1").arg(100 - funscript_data[i].second);
 								if (i < id2)
 								{
 									result_details += " | ";
 								}
 							}
 
-							result_details += QString("\n%1 | ").arg(funscript_data[id1].second);
+							result_details += QString("\n%1 | ").arg(100 - funscript_data[id1].second);
 							for (int i = id1 + 1; i <= id2; i++)
 							{
 								int res_inv_pos = funscript_data[id1].second + ((i_move[i - (id1 + 1)] * rel_move) / total_move);
-								result_details += QString("%1").arg(res_inv_pos);
+								result_details += QString("%1").arg(100 - res_inv_pos);
 								if (i < id2)
 								{
 									result_details += " | ";
 								}
 							}
 
-							result_details += QString("\n[at:%1][inv_pos:%2] | ").arg(funscript_data[id1].first).arg(funscript_data[id1].second);
+							result_details += QString("\n[at:%1(%2)][pos:%3] | ").arg(funscript_data[id1].first).arg(VideoTimeToStr(funscript_data[id1].first).c_str()).arg(100 - funscript_data[id1].second);
 							for (int i = id1 + 1; i <= id2; i++)
 							{
 								int res_inv_pos = funscript_data[id1].second + ((i_move[i - (id1 + 1)] * rel_move) / total_move);
@@ -1455,9 +1457,10 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 								if ((res_inv_pos > 100) || (res_inv_pos < 0))
 								{
 									show_msg("ERROR: unexpected case (res_inv_pos > 100) || (res_inv_pos < 0)");
+									return res;
 								}
 
-								result_details += QString("[at:%1][inv_pos:%2][res_inv_pos:%3]").arg(funscript_data[i].first).arg(funscript_data[i].second).arg(res_inv_pos);
+								result_details += QString("[at:%1(%2)][pos:%3][res_pos:%4]").arg(funscript_data[i].first).arg(VideoTimeToStr(funscript_data[i].first).c_str()).arg(100 - funscript_data[i].second).arg(100 - res_inv_pos);
 								if (i < id2)
 								{
 									result_details += " | ";
@@ -1629,7 +1632,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		QString result_funscript = "{\"actions\":[";
 		for (id = 0; id < size; id++)
 		{
-			result_funscript += QString("{\"at\":%1,\"pos\":%1}").arg(funscript_data[id].first).arg(funscript_data[id].second);
+			result_funscript += QString("{\"at\":%1,\"pos\":%2}").arg(funscript_data[id].first).arg(100 - funscript_data[id].second);
 			if (id < size - 1)
 			{
 				result_funscript += ",";
@@ -2566,7 +2569,7 @@ void run_funscript()
 	int d_from_search_start_pos, cur_pos, search_start_pos;
 	__int64 msec_video_cur_pos, msec_video_prev_pos;
 	double dt = 0, dmove = 0;
-	int abs_cur_pos = 0, abs_prev_pos = 0;
+	int abs_cur_pos = 0, abs_prev_pos = 0, last_abs_prev_pos = 0;
 	int dpos;
 	double cur_speed, prev_cur_speed = 0, action_start_speed;
 	__int64 cur_time, start_time;
@@ -2674,7 +2677,7 @@ void run_funscript()
 						QString fpath = QUrl(uri).toLocalFile();
 						QFileInfo info(fpath);
 						QString fname = info.fileName();					
-						funscript_fname = info.path() + "/" + info.completeBaseName() + ".funscript";
+						funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
 						break;
 					}
 				}
@@ -2973,6 +2976,7 @@ void run_funscript()
 						break;
 					}
 					
+					last_abs_prev_pos = abs_cur_pos;
 					get_next_frame_and_cur_speed_res = get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 						msec_video_prev_pos, abs_prev_pos);
@@ -3024,7 +3028,8 @@ void run_funscript()
 							if (((start_video_pos + (int)(prev_get_speed_time - start_time)) - funscript_data_maped[_id].first <= 0) &&
 								((start_video_pos + (int)(cur_time - start_time)) - funscript_data_maped[_id].first >= 0))
 							{
-								exp_abs_cur_pos_to_req_time = abs_cur_pos - ((((cur_speed + prev_cur_speed) / 2) * (double)((start_video_pos + (int)(cur_time - start_time) - funscript_data_maped[_id].first))) / 1000.0);
+								dpos = abs_cur_pos - last_abs_prev_pos;
+								exp_abs_cur_pos_to_req_time = abs_cur_pos - ((dpos * (start_video_pos + (int)(cur_time - start_time) - funscript_data_maped[_id].first)) / (cur_time - prev_get_speed_time));
 								results[_id - 1].dif_cur_vs_req_exp_pos = exp_abs_cur_pos_to_req_time - funscript_data_maped[_id].second;
 								last_set_action_id_for_dif_cur_vs_req_exp_pos = _id;
 							}
