@@ -62,23 +62,28 @@ bool g_work_in_progress = false;
 
 int g_avg_time_delay = 0;
 
+int g_save_images = true;
+
 //---------------------------------------------------------------
 
 void save_BGR_image(cv::Mat &frame, QString fpath)
 {
-	std::vector<uchar> write_data;
-	cv::imencode(".bmp", frame, write_data);
-
-	QFile f(fpath);
-	if (!f.open(QFile::WriteOnly))
+	if (g_save_images)
 	{
+		std::vector<uchar> write_data;
+		cv::imencode(".bmp", frame, write_data);
+
+		QFile f(fpath);
+		if (!f.open(QFile::WriteOnly))
+		{
+			f.close();
+			show_msg(QString("ERROR: failed to open file: %1").arg(fpath));
+		}
+		QDataStream fs(&f);
+		fs.writeRawData((char*)(write_data.data()), write_data.size());
+		f.flush();
 		f.close();
-		show_msg(QString("ERROR: failed to open file: %1").arg(fpath));
 	}
-	QDataStream fs(&f);
-	fs.writeRawData((char*)(write_data.data()), write_data.size());
-	f.flush();
-	f.close();
 }
 
 void save_text_to_file(QString fpath, QString text, QFlags<QIODeviceBase::OpenModeFlag> flags)
@@ -373,6 +378,8 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	bool res = false;
 	cv::Mat img, img_b, img_g, img_right;
 	custom_buffer<CMyClosedFigure> figures_b;
+	simple_buffer<CMyClosedFigure*> p_figures_b;
+	int figures_b_N;
 	custom_buffer<CMyClosedFigure> figures_g;
 	__int64 start_time, t1;
 
@@ -386,11 +393,71 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	int height = img.rows;
 
 	concurrency::parallel_invoke(
-		[&img, &img_b, &figures_b, width, height] {
+		[&img, &img_b, &figures_b, &p_figures_b, &figures_b_N, width, height] {
 			get_binary_image(img, g_B_range, img_b, 3);
 			simple_buffer<u8> Im(width * height);
 			GreyscaleMatToImage(img_b, width, height, Im);
 			SearchClosedFigures(Im, width, height, (u8)255, figures_b);
+
+			figures_b_N = figures_b.size();
+
+			if (figures_b_N > 0)
+			{
+				p_figures_b.set_size(figures_b_N);
+				for (int i = 0; i < figures_b_N; i++)
+				{
+					p_figures_b[i] = &(figures_b[i]);
+				}
+
+				int id1 = 0;
+				while (id1 < figures_b_N - 1)
+				{
+					CMyClosedFigure* pFigure1 = p_figures_b[id1];
+
+					int id2 = id1 + 1;
+
+					while (id2 < figures_b_N)
+					{
+						CMyClosedFigure* pFigure2 = p_figures_b[id2];
+
+						int cx1 = (pFigure1->m_minX + pFigure1->m_maxX) / 2;
+						int cy1 = (pFigure1->m_minY + pFigure1->m_maxY) / 2;
+
+						int cx2 = (pFigure2->m_minX + pFigure2->m_maxX) / 2;
+						int cy2 = (pFigure2->m_minY + pFigure2->m_maxY) / 2;
+
+						int min_x = min(pFigure1->m_minX, pFigure2->m_minX);
+						int max_x = max(pFigure1->m_maxX, pFigure2->m_maxX);
+						int min_y = min(pFigure1->m_minY, pFigure2->m_minY);
+						int max_y = max(pFigure1->m_maxY, pFigure2->m_maxY);
+
+						// intersect by x
+						if (max_x - min_x + 1 < pFigure1->width() + pFigure2->width())
+						{
+							int dist_by_y = (max_y - min_y + 1) - pFigure1->height() - pFigure2->height();
+							int max_h = max(pFigure1->height(), pFigure2->height());
+
+							if (dist_by_y < max_h)
+							{
+								// join two figures
+								*pFigure1 += *pFigure2;
+
+								for (int id3 = id2; id3 < figures_b_N - 1; id3++)
+								{
+									p_figures_b[id3] = p_figures_b[id3 + 1];
+								}
+
+								figures_b_N--;
+								continue;
+							}
+						}
+
+						id2++;
+					}
+
+					id1++;
+				}
+			}
 		},
 		[&img, &img_g, &figures_g, width, height] {
 			get_binary_image(img, g_G_range, img_g, 3);
@@ -416,9 +483,9 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	int g_x = -1, g_y = -1, g_w = -1, g_h = -1;
 	int max_size_g = 0;
 
-	for (int id = 0; id < figures_b.m_size; id++)
+	for (int id = 0; id < figures_b_N; id++)
 	{
-		CMyClosedFigure* pFigure = &(figures_b[id]);
+		CMyClosedFigure* pFigure = p_figures_b[id];
 		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
 		int size = pFigure->m_PointsArray.m_size;
 
@@ -441,13 +508,14 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		cv::Mat frame_upd;
 		frame.copyTo(frame_upd);
 		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
 		error_msg("ERROR: Failed to find big left vertical border blue color figure", &frame, &frame_upd, NULL, 0, height / 4, (2 * width) / 3, (3 * height) / 4);
 		return res;
 	}
 
-	for (int id = 0; id < figures_b.m_size; id++)
+	for (int id = 0; id < figures_b_N; id++)
 	{
-		CMyClosedFigure* pFigure = &(figures_b[id]);
+		CMyClosedFigure* pFigure = p_figures_b[id];
 		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
 		int size = pFigure->m_PointsArray.m_size;
 
@@ -475,6 +543,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		cv::Mat frame_upd;
 		frame.copyTo(frame_upd);
 		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
 		error_msg("ERROR: Failed to find big right blue color figure", &frame, &frame_upd, NULL, l_x + ((3 * l_h) / 2), l_y - (l_h / 2), width, l_y + ((4 * l_h) / 2));
 		return res;
 	}
@@ -484,9 +553,9 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	int max_sy = max(l_y + ((3 * l_h) / 4), r_y + r_h);
 	std::vector<CMyClosedFigure*> c_figures;
 
-	for (int id = 0; id < figures_b.m_size; id++)
+	for (int id = 0; id < figures_b_N; id++)
 	{
-		CMyClosedFigure* pFigure = &(figures_b[id]);
+		CMyClosedFigure* pFigure = p_figures_b[id];
 		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
 		int size = pFigure->m_PointsArray.m_size;
 
@@ -545,12 +614,13 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		}
 		else
 		{
-			cv::Mat img_res;
-			frame.copyTo(img_res);
-			img_res.setTo(cv::Scalar(255, 0, 0), img_b);
-			cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-			cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-			error_msg(QString("ERROR: failed to get telescopic motor rocker arm center x position\n"), &frame, &img_res);
+			cv::Mat frame_upd;
+			frame.copyTo(frame_upd);
+			frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+			frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
+			cv::rectangle(frame_upd, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+			cv::circle(frame_upd, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+			error_msg(QString("ERROR: failed to get telescopic motor rocker arm center x position\n"), &frame, &frame_upd);
 		}
 	}
 	else
@@ -619,7 +689,8 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 	{
 		cv::Mat frame_upd;
 		frame.copyTo(frame_upd);
-		frame_upd.setTo(cv::Scalar(255, 0, 0), img_g);
+		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
 		error_msg("ERROR: Failed to find green color figure", &frame, &frame_upd, NULL, l_x, min(l_y, r_y), r_x, min(l_y + l_h, r_y + r_h));
 		return res;
 	}
@@ -847,12 +918,11 @@ void test_err_frame(QString fpath)
 	memcpy(data.data, blob.data(), size);
 	cv::Mat frame = cv::imdecode(data, cv::IMREAD_COLOR); // load in BGR format
 	
+	g_save_images = false;
+
 	int pos, dt;
 	__int64 start_time = GetTickCount64();
-	if (!get_hismith_pos_by_image(frame, pos, true))
-	{
-		return;
-	}
+	get_hismith_pos_by_image(frame, pos, true);
 	dt = (int)(GetTickCount64() - start_time);
 
 	cv::String title("Test Error Frame");
@@ -862,21 +932,25 @@ void test_err_frame(QString fpath)
 	int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 	cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
 
+	int B_range[3][2];
+	int G_range[3][2];
+	std::copy(&g_B_range[0][0], &g_B_range[0][0] + 3 * 2, &B_range[0][0]);
+	std::copy(&g_G_range[0][0], &g_G_range[0][0] + 3 * 2, &G_range[0][0]);
+
 	while (1)
 	{
 		int width = frame.cols;
 		int height = frame.rows;
 
 		cv::Mat img, img_b, img_g, img_intersection;
-				
 		cv::cvtColor(frame, img, cv::COLOR_BGR2YUV);
 
 		concurrency::parallel_invoke(
-			[&img, &img_b, width, height] {
-				get_binary_image(img, g_B_range, img_b, 3);
+			[&img, &img_b, &B_range, width, height] {
+				get_binary_image(img, B_range, img_b, 3);
 			},
-			[&img, &img_g, width, height] {
-				get_binary_image(img, g_G_range, img_g, 3);
+			[&img, &img_g, &G_range, width, height] {
+				get_binary_image(img, G_range, img_g, 3);
 			}
 			);
 
@@ -888,21 +962,31 @@ void test_err_frame(QString fpath)
 		cv::bitwise_and(img_b, img_g, img_intersection);
 		img.setTo(cv::Scalar(0, 0, 255), img_intersection);
 
-		draw_text(QString("b[%1-%2][%3-%4][%5-%6] g[%7-%8][%9-%10][%11-%12]\ndt:%13 pos:%14")
+		draw_text(QString("Press 'Enter' for use current colors as original colors. Current vs original colors:\nb[%1(%2)-%3(%4)][%5(%6)-%7(%8)][%9(%10)-%11(%12)]\ng[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors")
+			.arg(B_range[0][0])
 			.arg(g_B_range[0][0])
+			.arg(B_range[0][1])
 			.arg(g_B_range[0][1])
+			.arg(B_range[1][0])
 			.arg(g_B_range[1][0])
+			.arg(B_range[1][1])
 			.arg(g_B_range[1][1])
+			.arg(B_range[2][0])
 			.arg(g_B_range[2][0])
+			.arg(B_range[2][1])
 			.arg(g_B_range[2][1])
+			.arg(G_range[0][0])
 			.arg(g_G_range[0][0])
+			.arg(G_range[0][1])
 			.arg(g_G_range[0][1])
+			.arg(G_range[1][0])
 			.arg(g_G_range[1][0])
+			.arg(G_range[1][1])
 			.arg(g_G_range[1][1])
+			.arg(G_range[2][0])
 			.arg(g_G_range[2][0])
+			.arg(G_range[2][1])
 			.arg(g_G_range[2][1])
-			.arg(dt)
-			.arg(pos)
 			, img);
 		cv::imshow(title, img);
 
@@ -914,110 +998,118 @@ void test_err_frame(QString fpath)
 			break;
 		}
 
+		else if (key == 13) // Enter key
+		{
+			std::copy(&B_range[0][0], &B_range[0][0] + 3 * 2, &g_B_range[0][0]);
+			std::copy(&G_range[0][0], &G_range[0][0] + 3 * 2, &g_G_range[0][0]);
+		}
+
 		else if (key == 'w')
 		{
-			g_B_range[0][0] = min(g_B_range[0][0] + 1, 255);
+			B_range[0][0] = min(B_range[0][0] + 1, 255);
 		}
 		else if (key == 'q')
 		{
-			g_B_range[0][0] = max(g_B_range[0][0] - 1, 0);
+			B_range[0][0] = max(B_range[0][0] - 1, 0);
 		}
 		else if (key == 'r')
 		{
-			g_B_range[0][1] = min(g_B_range[0][1] + 1, 255);
+			B_range[0][1] = min(B_range[0][1] + 1, 255);
 		}
 		else if (key == 'e')
 		{
-			g_B_range[0][1] = max(g_B_range[0][1] - 1, 0);
+			B_range[0][1] = max(B_range[0][1] - 1, 0);
 		}
 
 		else if (key == 's')
 		{
-			g_B_range[1][0] = min(g_B_range[1][0] + 1, 255);
+			B_range[1][0] = min(B_range[1][0] + 1, 255);
 		}
 		else if (key == 'a')
 		{
-			g_B_range[1][0] = max(g_B_range[1][0] - 1, 0);
+			B_range[1][0] = max(B_range[1][0] - 1, 0);
 		}
 		else if (key == 'f')
 		{
-			g_B_range[1][1] = min(g_B_range[1][1] + 1, 255);
+			B_range[1][1] = min(B_range[1][1] + 1, 255);
 		}
 		else if (key == 'd')
 		{
-			g_B_range[1][1] = max(g_B_range[1][1] - 1, 0);
+			B_range[1][1] = max(B_range[1][1] - 1, 0);
 		}
 
 		else if (key == 'x')
 		{
-			g_B_range[2][0] = min(g_B_range[2][0] + 1, 255);
+			B_range[2][0] = min(B_range[2][0] + 1, 255);
 		}
 		else if (key == 'z')
 		{
-			g_B_range[2][0] = max(g_B_range[2][0] - 1, 0);
+			B_range[2][0] = max(B_range[2][0] - 1, 0);
 		}
 		else if (key == 'v')
 		{
-			g_B_range[2][1] = min(g_B_range[2][1] + 1, 255);
+			B_range[2][1] = min(B_range[2][1] + 1, 255);
 		}
 		else if (key == 'c')
 		{
-			g_B_range[2][1] = max(g_B_range[2][1] - 1, 0);
+			B_range[2][1] = max(B_range[2][1] - 1, 0);
 		}
 
 		//-----------------------
 
 		else if (key == 'y')
 		{
-			g_G_range[0][0] = min(g_G_range[0][0] + 1, 255);
+			G_range[0][0] = min(G_range[0][0] + 1, 255);
 		}
 		else if (key == 't')
 		{
-			g_G_range[0][0] = max(g_G_range[0][0] - 1, 0);
+			G_range[0][0] = max(G_range[0][0] - 1, 0);
 		}
 		else if (key == 'i')
 		{
-			g_G_range[0][1] = min(g_G_range[0][1] + 1, 255);
+			G_range[0][1] = min(G_range[0][1] + 1, 255);
 		}
 		else if (key == 'u')
 		{
-			g_G_range[0][1] = max(g_G_range[0][1] - 1, 0);
+			G_range[0][1] = max(G_range[0][1] - 1, 0);
 		}
 
 		else if (key == 'h')
 		{
-			g_G_range[1][0] = min(g_G_range[1][0] + 1, 255);
+			G_range[1][0] = min(G_range[1][0] + 1, 255);
 		}
 		else if (key == 'g')
 		{
-			g_G_range[1][0] = max(g_G_range[1][0] - 1, 0);
+			G_range[1][0] = max(G_range[1][0] - 1, 0);
 		}
 		else if (key == 'k')
 		{
-			g_G_range[1][1] = min(g_G_range[1][1] + 1, 255);
+			G_range[1][1] = min(G_range[1][1] + 1, 255);
 		}
 		else if (key == 'j')
 		{
-			g_G_range[1][1] = max(g_G_range[1][1] - 1, 0);
+			G_range[1][1] = max(G_range[1][1] - 1, 0);
 		}
 
 		else if (key == 'n')
 		{
-			g_G_range[2][0] = min(g_G_range[2][0] + 1, 255);
+			G_range[2][0] = min(G_range[2][0] + 1, 255);
 		}
 		else if (key == 'b')
 		{
-			g_G_range[2][0] = max(g_G_range[2][0] - 1, 0);
+			G_range[2][0] = max(G_range[2][0] - 1, 0);
 		}
 		else if (key == ',')
 		{
-			g_G_range[2][1] = min(g_G_range[2][1] + 1, 255);
+			G_range[2][1] = min(G_range[2][1] + 1, 255);
 		}
 		else if (key == 'm')
 		{
-			g_G_range[2][1] = max(g_G_range[2][1] - 1, 0);
+			G_range[2][1] = max(G_range[2][1] - 1, 0);
 		}
 	}
+
+	g_save_images = true;
 }
 
 void test_camera()
@@ -3985,7 +4077,7 @@ int main(int argc, char *argv[])
 	//test_camera();
 
 	//test_by_video();
-	//test_err_frame(g_root_dir + "\\error_data\\13_06_2024_01_25_24_frame_orig.bmp");
+	//test_err_frame(g_root_dir + "\\error_data\\12_07_2024_17_16_36_frame_orig.bmp");
 
 	//test_hismith(5);
 

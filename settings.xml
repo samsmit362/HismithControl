@@ -1,6 +1,6 @@
 <settings>
  <max_allowed_hismith_speed>50</max_allowed_hismith_speed>
- <min_funscript_relative_move>10</min_funscript_relative_move>
+ <min_funscript_relative_move>20</min_funscript_relative_move>
  <dt_for_get_cur_speed>120</dt_for_get_cur_speed>
  <increase_hismith_speed_start_multiplier>1.25</increase_hismith_speed_start_multiplier>
  <slowdown_hismith_speed_start_multiplier>1.5</slowdown_hismith_speed_start_multiplier>
