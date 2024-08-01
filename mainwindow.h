@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QDir>
+#include <QFileDialog>
 
 #include <iostream>
 #include <map>
@@ -69,6 +70,7 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 bool get_devices_list();
 void SaveSettings();
 void get_statistics_with_hismith();
+bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, QString* p_res_details = NULL);
 
 //---------------------------------------------------------------
 
@@ -136,19 +138,25 @@ private slots:
     void handleStopStart();
     void handlePauseStart();
     void handleResumeStart();
+    void handleTrayExit();
     void handleRefreshDevicesButton();
     void handleSaveSettings();
+    void handleExit();
     void handleSpeedLimitChanged();
     void handleMinRelativeMoveChanged();
+    void handleOpenFunscript();
+    void handleCheckFunscript();
 
 protected:
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result);
 
 public:
+    QString funscript;
     Ui::MainWindow *ui;
     QAction* stopStartAction;
     QAction* pauseStartAction;
     QAction* resumeStartAction;
+    QAction* exitAction;
     QMenu* trayIconMenu;    
 };
 #endif // MAINWINDOW_H

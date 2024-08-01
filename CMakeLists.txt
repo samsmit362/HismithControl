@@ -97,10 +97,10 @@ set_target_properties(HismithControl PROPERTIES
 	VS_DEBUGGER_ENVIRONMENT "PATH=C:\\Qt\\6.2.4\\msvc2019_64\\bin;$ENV{OPENCV_BUILD_PATH_X64}\\x64\\vc16\\bin;%PATH%"
 )
 
-
 # Resources:
 set(systray_resource_files
-    "images/icon.png"
+	"images/icon.png"
+	"images/folder.png"
 )
 
 qt6_add_resources(HismithControl "systray"

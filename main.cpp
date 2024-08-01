@@ -102,6 +102,16 @@ void save_text_to_file(QString fpath, QString text, QFlags<QIODeviceBase::OpenMo
 	file.close();
 }
 
+QString get_cur_time_str()
+{
+	auto t = std::time(nullptr);
+	auto tm = *std::localtime(&t);
+	std::ostringstream oss;
+	oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
+	QString time_str = oss.str().c_str();
+	return time_str;
+}
+
 void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame)
 {
 	cv::Mat prev_frame;
@@ -1336,7 +1346,7 @@ int rel_move_to_dpos(double rel_move)
 	return dpos;
 }
 
-bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped)
+bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, QString *p_res_details)
 {
 	bool res = false;
 
@@ -1715,10 +1725,17 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		}
 	}
 
+	QString cur_time_str = get_cur_time_str();
+
+	if (p_res_details)
+	{
+		*p_res_details = result_details;
+	}
+
 	if (result_details.size() > 0)
 	{
 		save_text_to_file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt",
-			"File path: " + funscript_fname + "\n----------\n" + result_details + "\n----------\n\n",
+			cur_time_str + "\nFile path: " + funscript_fname + "\n----------\n" + result_details + "\n----------\n\n",
 			QFile::WriteOnly | QFile::Append | QFile::Text);
 
 		QString result_funscript = "{\"actions\":[";
@@ -1736,6 +1753,12 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		QString fname = info.fileName();
 
 		save_text_to_file(g_root_dir + "\\res_data\\" + fname, result_funscript, QFile::WriteOnly | QFile::Text);
+	}
+	else
+	{
+		save_text_to_file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt",
+			cur_time_str + "\nFile path: " + funscript_fname + "\n----------\nLoaded successfully without changes\n----------\n\n",
+			QFile::WriteOnly | QFile::Append | QFile::Text);
 	}
 
 	res = true;

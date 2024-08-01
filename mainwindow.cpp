@@ -50,6 +50,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->getStatistics, &QPushButton::released, this, &MainWindow::handleGetStatistics);
 
     connect(ui->actionSave_Settings, &QAction::triggered, this, &MainWindow::handleSaveSettings);
+    connect(ui->actionExit, &QAction::triggered, this, &MainWindow::handleExit);
 
     connect(ui->speedLimit, SIGNAL(textChanged(const QString&)), this, SLOT(handleSpeedLimitChanged()));
     connect(ui->minRelativeMove, SIGNAL(textChanged(const QString&)), this, SLOT(handleMinRelativeMoveChanged()));
@@ -70,6 +71,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(resumeStartAction, &QAction::triggered, this, &MainWindow::handleResumeStart);
     trayIconMenu->addAction(resumeStartAction);
 
+    exitAction = new QAction(tr("Exit"), this);
+    connect(exitAction, &QAction::triggered, this, &MainWindow::handleTrayExit);
+    trayIconMenu->addAction(exitAction);
+
     trayIcon = new QSystemTrayIcon(this);
     trayIcon->setContextMenu(trayIconMenu);
 
@@ -79,6 +84,44 @@ MainWindow::MainWindow(QWidget *parent)
 
     trayIcon->setToolTip("Hismith Control With Funscript");
     setWindowTitle("Hismith Control With Funscript");
+
+    QIcon iconOpenFunscript(":/images/folder.png");
+    ui->openFunscript->setIcon(iconOpenFunscript);
+    connect(ui->openFunscript, &QToolButton::released, this, &MainWindow::handleOpenFunscript);
+
+    connect(ui->checkFunscript, &QPushButton::released, this, &MainWindow::handleCheckFunscript);
+}
+
+void MainWindow::handleOpenFunscript()
+{
+    funscript = QDir::toNativeSeparators(QFileDialog::getOpenFileName(this,
+        tr("Open Funscript"), "", tr("Funscripts (*.funscript)")));
+    ui->funscriptPathEdit->setText(funscript);
+}
+
+void MainWindow::handleCheckFunscript()
+{
+    std::vector<QPair<int, int>> funscript_data_maped_full;
+    QString result_details;
+
+    if (funscript.size() > 0)
+    {
+        if (get_parsed_funscript_data(funscript, funscript_data_maped_full, &result_details))
+        {
+            if (result_details.size() > 0)
+            {
+                result_details = QString("File path: ") + funscript + "\n----------\n" + result_details + "\n----------\n";                
+            }
+            else
+            {
+                result_details = QString("File path: ") + funscript + "\n----------\nLoaded successfully without changes\n----------\n";
+            }
+
+            QMessageBox msgBox;
+            msgBox.setText(result_details);
+            msgBox.exec();
+        }
+    }
 }
 
 MainWindow::~MainWindow()
@@ -118,6 +161,11 @@ void MainWindow::handleTestCameraButton()
 void MainWindow::handleSaveSettings()
 {
     SaveSettings();
+}
+
+void MainWindow::handleExit()
+{
+    QApplication::quit();
 }
 
 void MainWindow::handleSpeedLimitChanged()
@@ -182,6 +230,12 @@ void MainWindow::handleResumeStart()
     show_msg("Resume pressed", 1000);
     g_pause = false;
     g_stop_cvar.notify_all();
+}
+
+void MainWindow::handleTrayExit()
+{
+    handleStopStart();
+    handleExit();
 }
 
 bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
