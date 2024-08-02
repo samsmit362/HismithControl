@@ -499,7 +499,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
 		int size = pFigure->m_PointsArray.m_size;
 
-		if (((x + w) < (2 * width) / 3) && (h > 2 * w) && (h > (2 * height) / 15) && ((y + h / 2) < (3 * height) / 4) && (y + ((2 * h) / 3) >= height / 4))
+		if (((x + w) < (2 * width) / 3) && (h > 2 * w) && (h > (2 * height) / 15) && ((y + h / 2) < (3 * height) / 4))
 		{
 			if (size > max_size_l)
 			{
@@ -519,7 +519,8 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		frame.copyTo(frame_upd);
 		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
 		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
-		error_msg("ERROR: Failed to find big left vertical border blue color figure", &frame, &frame_upd, NULL, 0, height / 4, (2 * width) / 3, (3 * height) / 4);
+		cv::rectangle(frame_upd, cv::Point(0, 0), cv::Point(max(5, ((2 * height) / 15)/10), (2 * height) / 15), cv::Scalar(0, 255, 0));
+		error_msg("ERROR: Failed to find big left vertical border blue color figure\n(min search size in top left green rectangle)", &frame, &frame_upd, NULL, 0, 0, (2 * width) / 3, (3 * height) / 4);
 		return res;
 	}
 
@@ -4100,7 +4101,7 @@ int main(int argc, char *argv[])
 	//test_camera();
 
 	//test_by_video();
-	//test_err_frame(g_root_dir + "\\error_data\\12_07_2024_17_16_36_frame_orig.bmp");
+	//test_err_frame(g_root_dir + "\\error_data\\01_08_2024_23_03_20_frame_orig.bmp");
 
 	//test_hismith(5);
 
