@@ -37,6 +37,7 @@
 #include "MyClosedFigure.h"
 
 class MainWindow;
+struct speeds_data;
 
 //---------------------------------------------------------------
 
@@ -48,6 +49,11 @@ extern std::condition_variable g_stop_cvar;
 
 extern int g_max_allowed_hismith_speed;
 extern int g_min_funscript_relative_move;
+
+extern bool g_modify_funscript;
+extern QString g_modify_funscript_function_move_variants;
+extern QString g_modify_funscript_function_move_in_variants;
+extern QString g_modify_funscript_function_move_out_variants;
 
 extern QString g_req_webcam_name;
 extern QString g_hismith_device_name;
@@ -70,9 +76,35 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 bool get_devices_list();
 void SaveSettings();
 void get_statistics_with_hismith();
-bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, QString* p_res_details = NULL);
+bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
+bool get_speed_statistics_data(speeds_data& all_speeds_data);
 
 //---------------------------------------------------------------
+
+struct statistics_data
+{
+    int dpos;
+    int dt_video;
+    int dt_gtc;
+    int avg_cur_speed;
+};
+
+struct speed_data
+{
+    int total_average_speed;
+    double average_rate_of_change_of_speed;
+    int time_delay;
+    std::vector<statistics_data> speed_statistics_data;
+};
+
+struct speeds_data
+{
+    std::vector<speed_data> speed_data_vector;
+    double min_average_rate_of_change_of_speed;
+    double max_average_rate_of_change_of_speed;
+
+    speeds_data() : speed_data_vector(100) {}
+};
 
 class Worker : public QObject
 {
@@ -146,6 +178,10 @@ private slots:
     void handleMinRelativeMoveChanged();
     void handleOpenFunscript();
     void handleCheckFunscript();
+    void handleModifyFunscriptChanged();
+    void handleFunctionsMoveVariantsChanged();
+    void handleFunctionsMoveInChanged();
+    void handleFunctionsMoveOutChanged();
 
 protected:
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result);

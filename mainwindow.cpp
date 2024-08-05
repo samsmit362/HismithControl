@@ -55,6 +55,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->speedLimit, SIGNAL(textChanged(const QString&)), this, SLOT(handleSpeedLimitChanged()));
     connect(ui->minRelativeMove, SIGNAL(textChanged(const QString&)), this, SLOT(handleMinRelativeMoveChanged()));
 
+    connect(ui->modifyFunscript, SIGNAL(stateChanged(int)), this, SLOT(handleModifyFunscriptChanged()));
+    connect(ui->functionsMoveVariants, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveVariantsChanged()));
+    connect(ui->functionsMoveIn, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveInChanged()));
+    connect(ui->functionsMoveOut, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveOutChanged()));
+
     //-------------------
 
     trayIconMenu = new QMenu(this);
@@ -104,9 +109,14 @@ void MainWindow::handleCheckFunscript()
     std::vector<QPair<int, int>> funscript_data_maped_full;
     QString result_details;
 
+    funscript = ui->funscriptPathEdit->text();
+
     if (funscript.size() > 0)
     {
-        if (get_parsed_funscript_data(funscript, funscript_data_maped_full, &result_details))
+        speeds_data all_speeds_data;
+        get_speed_statistics_data(all_speeds_data);
+
+        if (get_parsed_funscript_data(funscript, funscript_data_maped_full, all_speeds_data, &result_details))
         {
             if (result_details.size() > 0)
             {
@@ -176,6 +186,26 @@ void MainWindow::handleSpeedLimitChanged()
 void MainWindow::handleMinRelativeMoveChanged()
 {
     g_min_funscript_relative_move = ui->minRelativeMove->text().toInt();
+}
+
+void MainWindow::handleModifyFunscriptChanged()
+{
+    g_modify_funscript = ui->modifyFunscript->isChecked();
+}
+
+void MainWindow::handleFunctionsMoveVariantsChanged()
+{
+    g_modify_funscript_function_move_variants = ui->functionsMoveVariants->text();
+}
+
+void MainWindow::handleFunctionsMoveInChanged()
+{
+    g_modify_funscript_function_move_in_variants = ui->functionsMoveIn->text();
+}
+
+void MainWindow::handleFunctionsMoveOutChanged()
+{
+    g_modify_funscript_function_move_out_variants = ui->functionsMoveOut->text();
 }
 
 void MainWindow::handleRefreshDevicesButton()

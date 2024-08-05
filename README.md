@@ -56,22 +56,27 @@ If you correctly configured VLC you will can check this in Firefox by using http
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
 If VLC does not found it will show a message that it's waiting for it.\
-When you select or open a video file (in playlist) which has funscript located near a video with the same name it will show "Ready to go" or "Running" depending from is video on pause or not.\
+When you select or open a video file (in playlist) which has funscript located near a video file with the same base name it will show "Ready to go" or "Running" depending from is video on pause or not.\
 See available hotkeys and actions in the tray menu where the app will be hidden.\
 **ALt+B - pause\
 ALt+N - continue\
 ALt+Q - stop**\
 Also after play (Alt+Q) you can open new generated res_data\\!results.txt for check results:\
-<code>dif_end_pos:5 req_dpos:180+(257) len:360 ... start_t:0:07:51:464 ...\
-dif_end_pos:27 req_dpos:180+(135) len:238 ... start_t:0:07:51:824 ...\
-dif_end_pos:-26 req_dpos:180+(147) len:320 ... start_t:0:07:52:062 ...\
-dif_end_pos:-65 req_dpos:180+(83) len:240 ... start_t:0:07:52:382 ...\
-dif_end_pos:-35 req_dpos:180+(183) len:360 ... start_t:0:07:52:622 ...\
+<code>**dif_end_pos:-19** start_t:0:07:50:424 len:280 req_dpos:180+(52) ...\
+**dif_end_pos:-15** start_t:0:07:50:704 len:400 req_dpos:180+(114) ...\
+**dif_end_pos:-6** start_t:0:07:51:104 len:360 req_dpos:180+(87) ...\
+**dif_end_pos:4** start_t:0:07:51:464 len:360 req_dpos:180+(94) ...\
+**dif_end_pos:-12** start_t:0:07:51:824 len:238 req_dpos:180+(55) ...\
+**dif_end_pos:0** start_t:0:07:52:062 len:320 req_dpos:180+(137) ...\
+**dif_end_pos:-15** start_t:0:07:52:382 len:240 req_dpos:180+(75) ...\
+**dif_end_pos:-10** start_t:0:07:52:622 len:360 req_dpos:180+(122) ...\
+**dif_end_pos:-24** start_t:0:07:52:982 len:320 req_dpos:180+(47) ...\
+**dif_end_pos:0** start_t:0:07:53:302 len:361 req_dpos:180+(113) ...\
 ...</code>\
 **dif_end_pos** is the most important part it show difference with what should be and what was gotten in angle of rotation, where '360' is full circle of rotation. \
  '-' means that movement was end later then it was in scene. \
  '+' means that movement was end early then it was in scene. \
- '-90' -- '90' are mostly very good results especially if they belo '45'.
+ '-90' -- '90' are mostly good results especially if they below '45'.
 
 ## <font color="red">! WARNING !</font>
 **<font color="red">Be aware to stop Hismith by power button or hotkeys (alt+b or alt+q) to stop running.</font>**\
@@ -79,13 +84,57 @@ Due to different reasons like computer freeze or "Intiface Central" becoming uns
 If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI.\
 So I highly recommend checking each scene before usage.\
 **To minimize risks I have initially set "Hismith Speed Limit" to 50 by default, but you can get less good experience in this case.**\
-You can simply play video with turned on program or use OpenFunscripter https://github.com/OpenFunscripter/OFS
+You can simply play video with turned on program for check how it work or use OpenFunscripter https://github.com/OpenFunscripter/OFS to check script on high intensity moves.
 
 ## Notes
 Min Funscript Relative Move - is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"
 it will try to find the first next move with which min to max positions will be >= "Min Funscript Relative Move" if such found it will combine from min to max all actions with averaging values in move.
 For more details which actions was averaged you can see in "res_data\\!results_for_get_parsed_funscript_data.txt"\
 Also program save result parsed funscript to "res_data" folder with same name as original file used.
+
+## Modify Funscript Functions
+You can use this option for get better experience on simple moves.\
+In most cases funscripts use simple patterns for "in"(going inside) and "out"(going outside) moves without details how to make it (without additional points inside such moves).\
+In case of turn on this feature ("Use Modify Funscript Functions" CheckBox) it will automatically replace such simple moves by adding additional move detail points inside moves.\
+\
+Variants of such added points are defined in "Functions move variants:" GUI (<functions_move_variants> in settings.xml).\
+Its format is:\
+[ddt(0.0-1.0):ddpos[0.0-1.0]|ddt(0.0-1.0):ddpos[0.0-1.0]|...],[ddt(0.0-1.0):ddpos[0.0-1.0]|ddt(0.0-1.0):ddpos[0.0-1.0]|...],...\
+where:\
+ddt is relative time offset in percents from "move start time" to "move end time" and whose value should be in range (0.0, 1.0)\
+ddpos is relative move offset in percents from "move start position" to "move end position" and whose value should be in range [0.0, 1.0]\
+For example:\
+<functions_move_variants>[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]</functions_move_variants>\
+Define two move variants:\
+First variant (id==0): [0.25:0.38|0.75:0.62] which by adding two inside points defines move details pattern like: [fast:slow:fast]\
+Second variant (id==1): [0.25:0.12|0.75:0.87] which by adding two inside points defines move details pattern like: [slow:fast:slow]\
+\
+For define which variant to use for concrete move types "in"(going inside) or "out"(going outside) are used\
+"Functions move in:" in GUI (<functions_move_in> in settings.xml) and "Functions move out:" in GUI (<functions_move_out> in settings.xml)\
+Their format is:\
+[min_speed_in_rpm_1-max_speed_in_rpm_1:move_variant_id_1_1|(or)move_variant_id_1_2|...],[min_speed_in_rpm_2-max_speed_in_rpm_2:move_variant_id_2_1|(or)move_variant_id_2_2|...],...\
+if simple move has average speed in rpm in range \[min_speed_in_rpm_\"id\", max_speed_in_rpm_\"id\"\] then random move variant id will be used from \[move_variant_id_\"id\"\_1|(or)move_variant_id_\"id\"\_2|...\]\
+where:\
+speed in rpm - is number of strokes per minute\
+min_speed_in_rpm_\"id\" should be >= 0\
+max_speed_in_rpm_\"id\" should be > 0 and can be set to "maximum"\
+move_variant_id_\"id\"\_\"sub_id\" should take value from 0 to "number_of_move_variants_in_<functions_move_variants> - 1" or set to "random"\
+For example:\
+<functions_move_in>[0-200:0],[200-maximum:1]</functions_move_in>\
+If simple move type is "in"(going inside) and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then\
+additional detail points will be added from move variant with id == 0 (First move variant (id==0): [0.25:0.38|0.75:0.62] => [fast:slow:fast])\
+If simple move type is "in"(going inside) and its average speed in rpm > 200 (in range [200, maximum]) then\
+additional detail points will be added from move variant with id == 1 (Second move variant (id==1): [0.25:0.12|0.75:0.87] => [slow:fast:slow])\
+Other examples:\
+<functions_move_out>[0-200:0|1],[200-maximum:1|2|5]</functions_move_out>\
+<functions_move_in>[0-200:random],[200-maximum:1]</functions_move_in>\
+<functions_move_out>[0-maximum:random]</functions_move_out>
+
+## Known issues
+Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
+\
+The most complex in case of automatic Hismith device control is to stop its rotation, according experiments there is a time delay about 150 milliseconds between setting speed change and real device speed changes appearance.
+Also if device is run on high speed it can takes about a half of second for full stop even when speed is set to 0. In these cases **dif_end_pos** can be more 90 and some times more 180.
 
 ## This project use next 3rdParty projects:
 https://github.com/dumbowumbo/buttplugCpp \
