@@ -3446,9 +3446,8 @@ void run_funscript()
 				cur_set_hismith_speed = optimal_hismith_start_speed;
 				do
 				{
-
-					if (g_stop_run || g_pause || is_video_paused || (cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first) ||
-						(cur_video_pos < prev_cur_video_pos - 200) || (last_play_video_filename != video_filename))
+					if (g_stop_run || g_pause || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 					{
 						break;
 					}
@@ -3655,20 +3654,27 @@ void run_funscript()
 				}
 				
 				if (g_stop_run || g_pause || is_video_paused || 
-					(cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first + (is_vlc_time_in_milliseconds ? dtime : 1000)) ||
-					(cur_video_pos < prev_cur_video_pos - 200) || (last_play_video_filename != video_filename))
+					(cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 				{
-					if (cur_video_pos > funscript_data_maped[min(action_id + 1, actions_size - 1)].first + (is_vlc_time_in_milliseconds ? dtime : 1000))
+					if (last_play_video_filename != video_filename)
 					{
-						actions_end_with = QString("cur_video_pos (%1) > funscript_data_maped[min(action_id + 1, actions_size - 1)].first (%2) + (is_vlc_time_in_milliseconds ? dtime : 1000)").arg(cur_video_pos).arg(funscript_data_maped[min(action_id + 1, actions_size - 1)].first);
+						show_msg("Played video was changed");
+						actions_end_with = QString("last_play_video_filename (%1) != video_filename (%1)").arg(last_play_video_filename).arg(video_filename);
 					}
-					else if ((action_id > 1) && (cur_video_pos < prev_cur_video_pos - 200))
+					else if (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000))
 					{
-						actions_end_with = QString("cur_video_pos (%1) < prev_cur_video_pos (%2) - 200").arg(cur_video_pos).arg(prev_cur_video_pos);
+						show_msg("Video time was jumped forward");
+						actions_end_with = QString("cur_video_pos (%1) > (start_video_pos + (int)(cur_time - start_time))(%2) + %3").arg(cur_video_pos).arg(start_video_pos + (int)(cur_time - start_time)).arg(is_vlc_time_in_milliseconds ? 300 : 1000);
+					}
+					else if ((action_id > 1) && (cur_video_pos < prev_cur_video_pos - 300))
+					{
+						show_msg("Video time was jumped backward");
+						actions_end_with = QString("cur_video_pos (%1) < prev_cur_video_pos (%2) - 300").arg(cur_video_pos).arg(prev_cur_video_pos);
 					}
 					else
 					{
-						actions_end_with = QString("g_stop_run || g_pause || is_video_paused || (last_play_video_filename != video_filename)");
+						actions_end_with = QString("g_stop_run || g_pause || is_video_paused");
 					}
 
 					//show_msg(actions_end_with);

@@ -97,6 +97,12 @@ set_target_properties(HismithControl PROPERTIES
 	VS_DEBUGGER_ENVIRONMENT "PATH=C:\\Qt\\6.2.4\\msvc2019_64\\bin;$ENV{OPENCV_BUILD_PATH_X64}\\x64\\vc16\\bin;%PATH%"
 )
 
+add_custom_command(
+  TARGET HismithControl POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy 
+    ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+    $<TARGET_FILE_DIR:HismithControl>)
+
 # Resources:
 set(systray_resource_files
 	"images/icon.png"

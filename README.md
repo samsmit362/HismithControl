@@ -80,11 +80,12 @@ Also after play (Alt+Q) you can open new generated res_data\\!results.txt for ch
 
 ## <font color="red">! WARNING !</font>
 **<font color="red">Be aware to stop Hismith by power button or hotkeys (alt+b or alt+q) to stop running.</font>**\
-Due to different reasons like computer freeze or "Intiface Central" becoming unstable or "Funscript - some of which has very fast stroking on scenes where they are totally missed or not".\
+Due to different reasons like computer freeze or "Intiface Central" lose Hismith device or "Funscript - some of which has very fast stroking on scenes where they are totally missed or not".\
 If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI.\
 So I highly recommend checking each scene before usage.\
-**To minimize risks I have initially set "Hismith Speed Limit" to 50 by default, but you can get less good experience in this case.**\
-You can simply play video with turned on program for check how it work or use OpenFunscripter https://github.com/OpenFunscripter/OFS to check script on high intensity moves.
+**To minimize risks I have initially set "Hismith Speed Limit" to 50 (50%) by default, but you will get less good experience in this case.**\
+You can simply play video with turned on program for check how it work or use OpenFunscripter https://github.com/OpenFunscripter/OFS to check script on high intensity moves.\
+**For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
 ## Notes
 Min Funscript Relative Move - is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"
@@ -133,8 +134,8 @@ Other examples:\
 ## Known issues
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
 \
-The most complex in case of automatic Hismith device control is to stop its rotation, according experiments there is a time delay about 150 milliseconds between setting speed change and real device speed changes appearance.
-Also if device is run on high speed it can takes about a half of second for full stop even when speed is set to 0. In these cases **dif_end_pos** can be more 90 and some times more 180.
+The most complex in case of automatic Hismith device control is to stop its rotation, according experiments there is a time delay ~150 milliseconds between setting speed change and real device speed changes appearance.
+Also if device is run on high speed it can takes about a half of second for full stop even when speed is set to 0. In these cases **dif_end_pos** can be > 90 and some times > 180.
 
 ## This project use next 3rdParty projects:
 https://github.com/dumbowumbo/buttplugCpp \
