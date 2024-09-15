@@ -3282,10 +3282,8 @@ void run_funscript()
 			else
 			{
 				show_msg("Runing!", 1000);
-			}			
+			}
 
-			
-			start_time = GetTickCount64();
 			start_video_pos = cur_video_pos;
 			QString start_video_name = video_filename;
 			//waiting for video unpaused
@@ -3327,7 +3325,6 @@ void run_funscript()
 			int req_speed, req_cur_speed, got_avg_speed, req_new_speed;
 			double optimal_hismith_speed = 0, hismith_speed_prev = 0, optimal_hismith_start_speed = 0, avg_hismith_speed_prev = 0;
 			QString actions_end_with = "success";
-			int prev_cur_video_pos = cur_video_pos;
 			bool speed_change_was_obtained = false;
 			QString hismith_speed_changed;
 
@@ -3343,6 +3340,8 @@ void run_funscript()
 			if (is_vlc_time_in_milliseconds)
 			{
 				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+				start_time = GetTickCount64();
+				start_video_pos = cur_video_pos;
 			}
 			else
 			{
@@ -3380,6 +3379,8 @@ void run_funscript()
 			QString _tmp_video_filename;
 			bool _tmp_is_vlc_time_in_milliseconds;
 			double cur_set_hismith_speed = 0;
+			int prev_cur_video_pos = cur_video_pos;
+			std::thread* p_get_vlc_status = NULL;
 
 			// required for check computer freezes
 			prev_get_speed_time = GetTickCount64();
@@ -3408,10 +3409,13 @@ void run_funscript()
 					continue;
 				}
 
-				std::thread *p_get_vlc_status = new std::thread( [&_tmp_cur_video_pos, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds] {
-					_tmp_cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds);
-					}
-				);
+				if (start_video_pos + (int)(cur_time - start_time) - cur_video_pos >= 250)
+				{
+					p_get_vlc_status = new std::thread([&_tmp_cur_video_pos, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds] {
+						_tmp_cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds);
+						}
+					);
+				}
 
 				dpos = funscript_data_maped[action_id].second - abs_cur_pos;
 				req_speed = ((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt;
@@ -3480,23 +3484,27 @@ void run_funscript()
 					
 					if (funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time)) > 1000)
 					{
-						int dt_prev_from_action_start = ((start_video_pos + (int)(prev_get_speed_time - start_time)) - funscript_data_maped[action_id - 1].first);
-						int dt_cur_from_action_start = ((start_video_pos + (int)(cur_time - start_time)) - funscript_data_maped[action_id - 1].first);						
-
-						if ( (dt_cur_from_action_start >= 1000) &&
-							 (dt_prev_from_action_start <= ((dt_cur_from_action_start / 1000) * 1000)) )
+						if (start_video_pos + (int)(cur_time - start_time) - cur_video_pos >= 1000)
 						{
-							p_get_vlc_status->join();
-							delete p_get_vlc_status;
-							cur_video_pos = _tmp_cur_video_pos;
-							is_video_paused = _tmp_is_paused;
-							video_filename = _tmp_video_filename;
-							is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
+							if (p_get_vlc_status)
+							{
+								p_get_vlc_status->join();
+								delete p_get_vlc_status;
+								p_get_vlc_status = NULL;
+								prev_cur_video_pos = cur_video_pos;
+								cur_video_pos = _tmp_cur_video_pos;
+								is_video_paused = _tmp_is_paused;
+								video_filename = _tmp_video_filename;
+								is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
+							}
 
-							p_get_vlc_status = new std::thread([&_tmp_cur_video_pos, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds] {
-								_tmp_cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds);
-								}
-							);
+							if (start_video_pos + (int)(cur_time - start_time) - cur_video_pos >= 1000)
+							{
+								p_get_vlc_status = new std::thread([&_tmp_cur_video_pos, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds] {
+									_tmp_cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds);
+									}
+								);
+							}
 						}
 					}
 
@@ -3611,12 +3619,17 @@ void run_funscript()
 					got_avg_speed = ((abs_cur_pos - avg_speed_start_abs_cur_pos) * 1000) / (int)(cur_time - avg_speed_start_time);					
 				}
 				
-				p_get_vlc_status->join();
-				delete p_get_vlc_status;
-				cur_video_pos = _tmp_cur_video_pos;
-				is_video_paused = _tmp_is_paused;
-				video_filename = _tmp_video_filename;
-				is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
+				if (p_get_vlc_status)
+				{
+					p_get_vlc_status->join();
+					delete p_get_vlc_status;
+					p_get_vlc_status = NULL;
+					prev_cur_video_pos = cur_video_pos;
+					cur_video_pos = _tmp_cur_video_pos;
+					is_video_paused = _tmp_is_paused;
+					video_filename = _tmp_video_filename;
+					is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
+				}
 				
 				results[action_id - 1].action_start_video_time = VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str();
 				results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)(cur_time - start_time)) - funscript_data_maped[action_id].first;
@@ -3682,11 +3695,6 @@ void run_funscript()
 					last_play_video_filename = video_filename;
 					actions_size = action_id;
 					break;
-				}
-
-				if ((action_id > 1) && (cur_video_pos >= prev_cur_video_pos))
-				{
-					prev_cur_video_pos = cur_video_pos;
 				}
 				
 				action_id++;
@@ -3851,7 +3859,6 @@ bool connect_to_hismith()
 
 	return res;
 }
-
 
 void get_performance_with_hismith(int hismith_speed)
 {
