@@ -56,7 +56,19 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->minRelativeMove, SIGNAL(textChanged(const QString&)), this, SLOT(handleMinRelativeMoveChanged()));
 
     connect(ui->modifyFunscript, SIGNAL(stateChanged(int)), this, SLOT(handleModifyFunscriptChanged()));
-    connect(ui->functionsMoveVariants, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveVariantsChanged()));
+    connect(ui->functionsMoveVariants, SIGNAL(editTextChanged(const QString&)), this, SLOT(handleFunctionsMoveVariantsChanged(const QString&)));
+    connect(ui->functionsMoveVariants, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(handleFunctionsMoveVariantsContextMenuRequested(QPoint)));
+    connect(ui->functionsMoveVariants->lineEdit(), SIGNAL(editingFinished()), SLOT(handleFunctionsMoveVariantsEditingFinished()));
+    ui->functionsMoveVariants->installEventFilter(this);
+
+    chart = new QChart();
+    chart->legend()->hide();    
+    chart->setTitle("Modify Funscript Function");
+    QChartView* chartView = new QChartView(chart);
+    chartView->setRenderHint(QPainter::Antialiasing);
+    QVBoxLayout* layout = new QVBoxLayout(ui->chartFrame);
+    layout->addWidget(chartView);
+
     connect(ui->functionsMoveIn, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveInChanged()));
     connect(ui->functionsMoveOut, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveOutChanged()));
 
@@ -193,9 +205,146 @@ void MainWindow::handleModifyFunscriptChanged()
     g_modify_funscript = ui->modifyFunscript->isChecked();
 }
 
-void MainWindow::handleFunctionsMoveVariantsChanged()
+void MainWindow::handleFunctionsMoveVariantsContextMenuRequested(QPoint pos)
 {
-    g_modify_funscript_function_move_variants = ui->functionsMoveVariants->text();
+    QMenu menu;
+    menu.addAction(QString("delete current item"));
+    menu.addAction(QString("add item before current item"));
+    menu.addAction(QString("add item after current item"));
+    QAction *pAction = menu.exec(ui->functionsMoveVariants->mapToGlobal(pos));
+
+    if (pAction)
+    {
+        if (pAction->text() == QString("delete current item"))
+        {
+            int cur_id = ui->functionsMoveVariants->currentIndex();
+
+            if (cur_id != -1)
+            {
+                ui->functionsMoveVariants->removeItem(cur_id);
+            }
+        }
+        else if (pAction->text() == QString("add item before current item"))
+        {
+            int cur_id = ui->functionsMoveVariants->currentIndex();
+            int insert_id = (cur_id == -1) ? 0 : cur_id;
+            ui->functionsMoveVariants->insertItem(insert_id, QString("[]"));
+            handleFunctionsMoveVariantsChanged(ui->functionsMoveVariants->itemText(ui->functionsMoveVariants->currentIndex()));
+        }
+        else if (pAction->text() == QString("add item after current item"))
+        {
+            int cur_id = ui->functionsMoveVariants->currentIndex();
+            int insert_id = (cur_id == -1) ? 0 : cur_id + 1;
+            ui->functionsMoveVariants->insertItem(insert_id, QString("[]"));
+            handleFunctionsMoveVariantsChanged(ui->functionsMoveVariants->itemText(ui->functionsMoveVariants->currentIndex()));
+        }
+    }
+}
+
+void MainWindow::handleFunctionsMoveVariantsEditingFinished()
+{
+    int cur_id = ui->functionsMoveVariants->currentIndex();
+    ui->functionsMoveVariants->setItemText(cur_id, ui->functionsMoveVariants->lineEdit()->text());
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == ui->functionsMoveVariants && event->type() == QEvent::KeyPress)
+    {
+        QKeyEvent* key = static_cast<QKeyEvent*>(event);
+        int ikey = key->key();
+        
+        if ((ikey == Qt::Key_Up) || (ikey == Qt::Key_Down))
+        {
+            handleFunctionsMoveVariantsEditingFinished();
+        }
+    }
+
+    return QObject::eventFilter(obj, event);
+}
+
+void MainWindow::handleFunctionsMoveVariantsChanged(const QString& str)
+{
+    int cur_id = ui->functionsMoveVariants->currentIndex();
+
+    g_modify_funscript_function_move_variants = "";    
+    for (int id = 0; id < ui->functionsMoveVariants->count(); id++)
+    {
+        if (id > 0)
+        {
+            g_modify_funscript_function_move_variants += ",";
+        }
+
+        if (id == cur_id)
+        {
+            g_modify_funscript_function_move_variants += str;
+        }
+        else
+        {
+            g_modify_funscript_function_move_variants += ui->functionsMoveVariants->itemText(id);
+        }
+    }
+
+    std::vector<QPair<double, double>> modify_funscript_move_function;
+    bool pars_passed = true;
+
+    if (str != QString("[unchanged]"))
+    {
+        QStringList modify_funscript_function_move_variant_actions = str.mid(1, str.size() - 2).split("|");
+        for (QString& modify_funscript_function_move_variant_action : modify_funscript_function_move_variant_actions)
+        {
+            QRegularExpression re_modify_funscript_function_move_variant_action("^([\\d\\.]+):([\\d\\.]+)$");
+            QRegularExpressionMatch match;
+
+            match = re_modify_funscript_function_move_variant_action.match(modify_funscript_function_move_variant_action);
+            if (!match.hasMatch())
+            {
+                pars_passed = false;
+                break;
+            }
+            else
+            {
+                double ddt = match.captured(1).toDouble();
+                double ddpos = match.captured(2).toDouble();
+
+                if (!((ddt > 0) && (ddt < 1)))
+                {
+                    pars_passed = false;
+                    break;
+                }
+
+                if (!((ddpos >= 0) && (ddpos <= 1)))
+                {
+                    pars_passed = false;
+                    break;
+                }
+
+                modify_funscript_move_function.push_back(QPair<double, double>(ddt, ddpos));
+            }
+        }
+    }
+
+    chart->removeAllSeries();
+
+    if (pars_passed)
+    {
+        QLineSeries* series = new QLineSeries();
+        series->append(0, 0);
+        for (QPair<double, double>& pair : modify_funscript_move_function)
+        {
+            // ddt, ddpos
+            series->append(pair.first, pair.second);
+        }
+        series->append(1, 1);
+
+
+        chart->addSeries(series);
+
+        chart->createDefaultAxes();
+
+        chart->axisX()->setTitleText("ddt");
+        chart->axisY()->setTitleText("ddpos");
+    }   
 }
 
 void MainWindow::handleFunctionsMoveInChanged()

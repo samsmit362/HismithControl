@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>710</width>
+    <width>869</width>
     <height>580</height>
    </rect>
   </property>
@@ -17,8 +17,8 @@
    <widget class="QPushButton" name="startButton">
     <property name="geometry">
      <rect>
-      <x>540</x>
-      <y>260</y>
+      <x>620</x>
+      <y>130</y>
       <width>131</width>
       <height>51</height>
      </rect>
@@ -278,19 +278,6 @@
     <property name="title">
      <string>Modify Funscript Functions</string>
     </property>
-    <widget class="QLineEdit" name="functionsMoveVariants">
-     <property name="geometry">
-      <rect>
-       <x>10</x>
-       <y>50</y>
-       <width>221</width>
-       <height>24</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-    </widget>
     <widget class="QLineEdit" name="functionsMoveIn">
      <property name="geometry">
       <rect>
@@ -350,12 +337,28 @@
       <string>Functions move out:</string>
      </property>
     </widget>
+    <widget class="QComboBox" name="functionsMoveVariants">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>50</y>
+       <width>221</width>
+       <height>24</height>
+      </rect>
+     </property>
+     <property name="contextMenuPolicy">
+      <enum>Qt::CustomContextMenu</enum>
+     </property>
+     <property name="editable">
+      <bool>true</bool>
+     </property>
+    </widget>
    </widget>
    <widget class="QCheckBox" name="modifyFunscript">
     <property name="geometry">
      <rect>
-      <x>510</x>
-      <y>230</y>
+      <x>590</x>
+      <y>90</y>
       <width>191</width>
       <height>22</height>
      </rect>
@@ -364,13 +367,29 @@
      <string>Use Modify Funscript Functions</string>
     </property>
    </widget>
+   <widget class="QFrame" name="chartFrame">
+    <property name="geometry">
+     <rect>
+      <x>520</x>
+      <y>200</y>
+      <width>331</width>
+      <height>331</height>
+     </rect>
+    </property>
+    <property name="frameShape">
+     <enum>QFrame::StyledPanel</enum>
+    </property>
+    <property name="frameShadow">
+     <enum>QFrame::Raised</enum>
+    </property>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>710</width>
+     <width>869</width>
      <height>21</height>
     </rect>
    </property>

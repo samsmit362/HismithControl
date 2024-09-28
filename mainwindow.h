@@ -17,6 +17,9 @@
 #include <QLineEdit>
 #include <QDir>
 #include <QFileDialog>
+#include <QChart>
+#include <QChartView>
+#include <QLineSeries>
 
 #include <iostream>
 #include <map>
@@ -161,6 +164,8 @@ public:
     Controller ctrl;
     QSystemTrayIcon* trayIcon;
 
+    bool eventFilter(QObject* obj, QEvent* event);
+
 private slots:
     void handleStartButton();
     void handleTestButton();
@@ -179,7 +184,9 @@ private slots:
     void handleOpenFunscript();
     void handleCheckFunscript();
     void handleModifyFunscriptChanged();
-    void handleFunctionsMoveVariantsChanged();
+    void handleFunctionsMoveVariantsChanged(const QString& str);
+    void handleFunctionsMoveVariantsContextMenuRequested(QPoint pos);
+    void handleFunctionsMoveVariantsEditingFinished();
     void handleFunctionsMoveInChanged();
     void handleFunctionsMoveOutChanged();
 
@@ -193,6 +200,7 @@ public:
     QAction* pauseStartAction;
     QAction* resumeStartAction;
     QAction* exitAction;
-    QMenu* trayIconMenu;    
+    QMenu* trayIconMenu;
+    QChart* chart;
 };
 #endif // MAINWINDOW_H

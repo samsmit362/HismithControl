@@ -25,7 +25,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(OpenCV_INCLUDE_DIRS "$ENV{OPENCV_BUILD_PATH_X64}/include" CACHE STRING "Paths to OpenCV include dirs")
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Xml Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Xml Network Core Gui Charts)
 
 file(GLOB BUTTPLUGCPP_SRC_FILES    
     "3rdParty/buttplugCpp/src/*.cpp"
@@ -85,7 +85,7 @@ set_target_properties(OpenCVLib PROPERTIES
              IMPORTED_LOCATION_RELEASE "$ENV{OPENCV_BUILD_PATH_X64}/x64/vc16/lib/opencv_world$ENV{OPENCV_LIBS_VER}.lib")
 
 target_link_libraries(HismithControl
-					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network
+					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt::Charts Qt::Core Qt::Gui
 					PUBLIC ixwebsocket::ixwebsocket nlohmann_json::nlohmann_json Threads::Threads OpenCVLib)
 
 set_target_properties(HismithControl PROPERTIES

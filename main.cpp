@@ -67,7 +67,7 @@ int g_save_images = true;
 
 bool g_modify_funscript = false;
 
-// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]"; // [fast:slow:fast],[slow:fast:slow]
+// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87],[unchanged]"; // [fast:slow:fast],[slow:fast:slow],[unchanged]
 QString g_modify_funscript_function_move_variants;
 
 //"[0-200:0],[200-maximum:1]";
@@ -1649,46 +1649,53 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		std::vector<QPair<QPair<int, int>, std::vector<int>>> modify_funscript_move_in_functions;
 		std::vector<QPair<QPair<int, int>, std::vector<int>>> modify_funscript_move_out_functions;
 
-		// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]"; // [fast:slow:fast],[slow:fast:slow]
+		// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87],[unchanged]"; // [fast:slow:fast],[slow:fast:slow],[unchanged]
 		QStringList modify_funscript_function_move_variants = g_modify_funscript_function_move_variants.mid(1, g_modify_funscript_function_move_variants.size() - 2).split("],[");
 		for (QString& modify_funscript_function_move_variant : modify_funscript_function_move_variants)
 		{
 			std::vector<QPair<double, double>> modify_funscript_move_function;
 
-			QStringList modify_funscript_function_move_variant_actions = modify_funscript_function_move_variant.split("|");
-			for (QString& modify_funscript_function_move_variant_action : modify_funscript_function_move_variant_actions)
+			if (modify_funscript_function_move_variant == QString("unchanged"))
 			{
-				QRegularExpression re_modify_funscript_function_move_variant_action("^([\\d\\.]+):([\\d\\.]+)$");
-				QRegularExpressionMatch match;
-
-				match = re_modify_funscript_function_move_variant_action.match(modify_funscript_function_move_variant_action);
-				if (!match.hasMatch())
-				{
-					error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_variant_action: %1, it should be ddt(0.0-1.0):ddpos[0.0-1.0]").arg(modify_funscript_function_move_variant_action));
-					return res;
-				}
-				else
-				{
-					double ddt = match.captured(1).toDouble();
-					double ddpos = match.captured(2).toDouble();
-
-					if (!((ddt > 0) && (ddt < 1)))
-					{
-						error_msg(QString("ERROR: incorrect format of ddt: %1 in modify_funscript_function_move_variant_action: %2, ddt should be: (ddt > 0) && (ddt < 1)").arg(ddt).arg(modify_funscript_function_move_variant_action));
-						return res;
-					}
-
-					if (!((ddpos >= 0) && (ddpos <= 1)))
-					{
-						error_msg(QString("ERROR: incorrect format of ddpos: %1 in modify_funscript_function_move_variant_action: %2, ddpos should be: (ddt > 0) && (ddt < 1)").arg(ddpos).arg(modify_funscript_function_move_variant_action));
-						return res;
-					}
-
-					modify_funscript_move_function.push_back(QPair<double, double>(ddt, ddpos));
-				}
+				modify_funscript_move_functions.push_back(modify_funscript_move_function);
 			}
+			else
+			{
+				QStringList modify_funscript_function_move_variant_actions = modify_funscript_function_move_variant.split("|");
+				for (QString& modify_funscript_function_move_variant_action : modify_funscript_function_move_variant_actions)
+				{
+					QRegularExpression re_modify_funscript_function_move_variant_action("^([\\d\\.]+):([\\d\\.]+)$");
+					QRegularExpressionMatch match;
 
-			modify_funscript_move_functions.push_back(modify_funscript_move_function);
+					match = re_modify_funscript_function_move_variant_action.match(modify_funscript_function_move_variant_action);
+					if (!match.hasMatch())
+					{
+						error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_variant_action: %1, it should be ddt(0.0-1.0):ddpos[0.0-1.0] or 'unchanged'").arg(modify_funscript_function_move_variant_action));
+						return res;
+					}
+					else
+					{
+						double ddt = match.captured(1).toDouble();
+						double ddpos = match.captured(2).toDouble();
+
+						if (!((ddt > 0) && (ddt < 1)))
+						{
+							error_msg(QString("ERROR: incorrect format of ddt: %1 in modify_funscript_function_move_variant_action: %2, ddt should be: (ddt > 0) && (ddt < 1)").arg(ddt).arg(modify_funscript_function_move_variant_action));
+							return res;
+						}
+
+						if (!((ddpos >= 0) && (ddpos <= 1)))
+						{
+							error_msg(QString("ERROR: incorrect format of ddpos: %1 in modify_funscript_function_move_variant_action: %2, ddpos should be: (ddt > 0) && (ddt < 1)").arg(ddpos).arg(modify_funscript_function_move_variant_action));
+							return res;
+						}
+
+						modify_funscript_move_function.push_back(QPair<double, double>(ddt, ddpos));
+					}
+				}
+
+				modify_funscript_move_functions.push_back(modify_funscript_move_function);
+			}
 		}		
 
 		auto get_move_functions = [&modify_funscript_move_functions](QString modify_funscript_function_move_variants, QString modify_funscript_function_move_variants_type, std::vector<QPair<QPair<int, int>, std::vector<int>>>& _modify_funscript_move_functions) {
@@ -4459,7 +4466,15 @@ bool LoadSettings()
 	pW->ui->minRelativeMove->setText(QString::number(g_min_funscript_relative_move));
 
 	pW->ui->modifyFunscript->setChecked(g_modify_funscript);
-	pW->ui->functionsMoveVariants->setText(g_modify_funscript_function_move_variants);
+
+	QString tmp_modify_funscript_function_move_variants = g_modify_funscript_function_move_variants;
+	QStringList modify_funscript_function_move_variants = g_modify_funscript_function_move_variants.mid(1, g_modify_funscript_function_move_variants.size() - 2).split("],[");
+	for (QString& modify_funscript_function_move_variant : modify_funscript_function_move_variants)
+	{
+		pW->ui->functionsMoveVariants->addItem("[" + modify_funscript_function_move_variant + "]");
+	}
+	g_modify_funscript_function_move_variants = tmp_modify_funscript_function_move_variants;
+
 	pW->ui->functionsMoveIn->setText(g_modify_funscript_function_move_in_variants);
 	pW->ui->functionsMoveOut->setText(g_modify_funscript_function_move_out_variants);
 
