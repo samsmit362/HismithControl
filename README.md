@@ -101,35 +101,40 @@ In case of turn on this feature ("Use Modify Funscript Functions" CheckBox) it w
 Variants of such added points are defined in "Functions move variants:" GUI (<functions_move_variants> in settings.xml).\
 Its format is:\
 [ddt(0.0-1.0):ddpos[0.0-1.0]|ddt(0.0-1.0):ddpos[0.0-1.0]|...],[ddt(0.0-1.0):ddpos[0.0-1.0]|ddt(0.0-1.0):ddpos[0.0-1.0]|...],...\
+or\
+[unchanged],...\
 where:\
 ddt is relative time offset in percents from "move start time" to "move end time" and whose value should be in range (0.0, 1.0)\
 ddpos is relative move offset in percents from "move start position" to "move end position" and whose value should be in range [0.0, 1.0]\
+unchanged is used in case of random move generation and allow to randomly skip changes for some moves.\
 For example:\
-<functions_move_variants>[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]</functions_move_variants>\
-Define two move variants:\
-First variant (id==0): [0.25:0.38|0.75:0.62] which by adding two inside points defines move details pattern like: [fast:slow:fast]\
-Second variant (id==1): [0.25:0.12|0.75:0.87] which by adding two inside points defines move details pattern like: [slow:fast:slow]\
+<functions_move_variants>[unchanged],[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]</functions_move_variants>\
+Define three move variants:\
+First variant (id == 0): [unchanged] use move variant without changes\
+Second variant (id == 1): [0.25:0.38|0.75:0.62] which by adding two inside points defines move details pattern like: [fast:slow:fast]\
+Third variant (id == 2): [0.25:0.12|0.75:0.87] which by adding two inside points defines move details pattern like: [slow:fast:slow]\
 \
 For define which variant to use for concrete move types "in"(going inside) or "out"(going outside) are used\
-"Functions move in:" in GUI (<functions_move_in> in settings.xml) and "Functions move out:" in GUI (<functions_move_out> in settings.xml)\
-Their format is:\
-[min_speed_in_rpm_1-max_speed_in_rpm_1:move_variant_id_1_1|(or)move_variant_id_1_2|...],[min_speed_in_rpm_2-max_speed_in_rpm_2:move_variant_id_2_1|(or)move_variant_id_2_2|...],...\
-if simple move has average speed in rpm in range \[min_speed_in_rpm_\"id\", max_speed_in_rpm_\"id\"\] then random move variant id will be used from \[move_variant_id_\"id\"\_1|(or)move_variant_id_\"id\"\_2|...\]\
+"Functions move in/out:" in GUI (<functions_move_in_out> in settings.xml)\
+Its format is:\
+[min_speed_in_rpm_1-max_speed_in_rpm_1:move_in_variant_id_1_1/move_out_variant_id_1_1|(or)move_in_variant_id_1_2/move_out_variant_id_1_2|...],
+[min_speed_in_rpm_2-max_speed_in_rpm_2:move_in_variant_id_2_1/move_out_variant_id_2_1|(or)move_in_variant_id_2_2/move_out_variant_id_2_2|...],...\
+if simple move has average speed in rpm in range \[min_speed_in_rpm_\"id\", max_speed_in_rpm_\"id\"\] then random "in/out" move variant pair\
+will be used from \[move_in_variant_id_\"id\"\_1/move_out_variant_id_\"id\"\_1|(or)move_in_variant_id_\"id\"\_2/move_out_variant_id_\"id\"\_2|...\]\
 where:\
 speed in rpm - is number of strokes per minute\
 min_speed_in_rpm_\"id\" should be >= 0\
 max_speed_in_rpm_\"id\" should be > 0 and can be set to "maximum"\
-move_variant_id_\"id\"\_\"sub_id\" should take value from 0 to "number_of_move_variants_in_<functions_move_variants> - 1" or set to "random"\
+move_(in(or)out)_variant_id_\"id\"\_\"sub_id\" should take value from 0 to "number_of_move_variants_in_<functions_move_variants> - 1" or set to "random"\
 For example:\
-<functions_move_in>[0-200:0],[200-maximum:1]</functions_move_in>\
-If simple move type is "in"(going inside) and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then\
-additional detail points will be added from move variant with id == 0 (First move variant (id==0): [0.25:0.38|0.75:0.62] => [fast:slow:fast])\
-If simple move type is "in"(going inside) and its average speed in rpm > 200 (in range [200, maximum]) then\
-additional detail points will be added from move variant with id == 1 (Second move variant (id==1): [0.25:0.12|0.75:0.87] => [slow:fast:slow])\
-Other examples:\
-<functions_move_out>[0-200:0|1],[200-maximum:1|2|5]</functions_move_out>\
-<functions_move_in>[0-200:random],[200-maximum:1]</functions_move_in>\
-<functions_move_out>[0-maximum:random]</functions_move_out>
+<functions_move_in_out>[0-200:1/2|2/1|random/random],[200-maximum:0/0]</functions_move_in_out>\
+If simple move type is "in" and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then\
+additional detail points will be added from move variant with id == 1 (according pair: 1/2) or id == 2 (according pair: 2/1) or 'random' (according pair: random/random) randomly.\
+If simple move type is "out" and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then:
+- if previous was simple move "in" with average speed in range [0, 200] and was selected move variant from pair '2/1' then\
+additional detail points will be added from move variant with id == 1 (according pair: 2/1)
+- if previous move was not "simple move 'in' with average speed in range [0, 200]" then\
+additional detail points will be added from move variant with id == 2 (according pair: 1/2) or id == 1 (according pair: 2/1) or 'random' (according pair: random/random) randomly.
 
 ## Known issues
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\

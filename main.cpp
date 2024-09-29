@@ -74,8 +74,7 @@ QString g_modify_funscript_function_move_variants;
 //"[0-200:0|1],[200-maximum:1]";
 //"[0-200:random],[200-maximum:1]";
 //"[0-maximum:random]";
-QString g_modify_funscript_function_move_in_variants;
-QString g_modify_funscript_function_move_out_variants;
+QString g_modify_funscript_function_move_in_out_variants;
 
 //---------------------------------------------------------------
 
@@ -102,7 +101,7 @@ void save_BGR_image(cv::Mat &frame, QString fpath)
 void save_text_to_file(QString fpath, QString text, QFlags<QIODeviceBase::OpenModeFlag> flags)
 {
 	QFile file(fpath);
-	
+
 	if (!file.open(flags))
 	{
 		file.close();
@@ -136,12 +135,12 @@ void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame)
 		{
 			error_msg(QString("ERROR: capture.read(frame) failed"));
 		}
-		
-	} 
-	while (	(prev_frame.size == frame.size) && 
-			(prev_frame.channels() == frame.channels()) && 
+
+	}
+	while (	(prev_frame.size == frame.size) &&
+			(prev_frame.channels() == frame.channels()) &&
 			(memcmp(prev_frame.data, frame.data, frame.channels() * frame.size[0] * frame.size[1]) == 0) &&
-			!g_stop_run && 
+			!g_stop_run &&
 			!g_pause );
 }
 
@@ -150,7 +149,7 @@ double set_hithmith_speed(double speed)
 	double res_speed = -1.0;
 	if (g_pClient && g_pMyDevice)
 	{
-		int speed_int = speed > 0 ? speed * 100.0 : 0;		
+		int speed_int = speed > 0 ? speed * 100.0 : 0;
 		if (speed_int > g_max_allowed_hismith_speed)
 		{
 			speed_int = g_max_allowed_hismith_speed;
@@ -279,7 +278,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 	{
 		draw_text(msg, *p_draw_frame, x1, y1, x2, y2);
 		save_BGR_image(*p_draw_frame, g_root_dir + "\\error_data\\" + time_str + "_frame_draw.bmp");
-		
+
 		show_frame_in_cv_window("Error", p_draw_frame);
 		cv::waitKey(0);
 	}
@@ -287,7 +286,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 	{
 		MessageBoxPos(NULL, msg.toStdWString().c_str(), L"Error", MB_OK | MB_SETFOREGROUND | MB_SYSTEMMODAL | MB_ICONERROR);
 	}
-	cv::destroyAllWindows();	
+	cv::destroyAllWindows();
 }
 
 void warning_msg(QString msg, QString title = "")
@@ -928,7 +927,7 @@ void test_by_video()
 			}
 
 			int key = cv::waitKey(0);
-		}		
+		}
 	}
 
 	capture.release();
@@ -969,7 +968,7 @@ void test_err_frame(QString fpath)
 	data.reserveBuffer(size);
 	memcpy(data.data, blob.data(), size);
 	cv::Mat frame = cv::imdecode(data, cv::IMREAD_COLOR); // load in BGR format
-	
+
 	g_save_images = false;
 
 	int pos, dt;
@@ -1308,7 +1307,7 @@ void test_camera()
 			{
 				B_range[2][1] = max(B_range[2][1] - 1, 0);
 			}
-			
+
 			//-----------------------
 
 			else if (key == 'y')
@@ -1449,7 +1448,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 		funscript_data[id].first = at;
 		funscript_data[id].second = 100 - pos;
-		
+
 		id++;
 	}
 
@@ -1641,13 +1640,14 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		id++;
 	}
 
+
+
 	if (g_modify_funscript)
 	{
 		std::srand(std::time(nullptr)); // use current time as seed for random generator
 
 		std::vector<std::vector<QPair<double, double>>> modify_funscript_move_functions;
-		std::vector<QPair<QPair<int, int>, std::vector<int>>> modify_funscript_move_in_functions;
-		std::vector<QPair<QPair<int, int>, std::vector<int>>> modify_funscript_move_out_functions;
+		std::vector<QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>> modify_funscript_move_in_out_functions;
 
 		// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87],[unchanged]"; // [fast:slow:fast],[slow:fast:slow],[unchanged]
 		QStringList modify_funscript_function_move_variants = g_modify_funscript_function_move_variants.mid(1, g_modify_funscript_function_move_variants.size() - 2).split("],[");
@@ -1696,93 +1696,104 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 				modify_funscript_move_functions.push_back(modify_funscript_move_function);
 			}
-		}		
-
-		auto get_move_functions = [&modify_funscript_move_functions](QString modify_funscript_function_move_variants, QString modify_funscript_function_move_variants_type, std::vector<QPair<QPair<int, int>, std::vector<int>>>& _modify_funscript_move_functions) {
-			bool res = false;
-			//"[0-200:0],[200-maximum:1]";
-			//"[0-200:0|1],[200-maximum:1]";
-			//"[0-200:random],[200-maximum:1]";
-			//"[0-maximum:random]";
-			QStringList _modify_funscript_function_move_variants = modify_funscript_function_move_variants.mid(1, modify_funscript_function_move_variants.size() - 2).split("],[");
-			for (QString& sub_modify_funscript_function_move_variant : _modify_funscript_function_move_variants)
-			{
-				QRegularExpression re_modify_funscript_move_in_function("^(\\d+)\\-(\\d+|maximum):([\\d\\|]+|random)$");
-				QRegularExpressionMatch match;
-
-				match = re_modify_funscript_move_in_function.match(sub_modify_funscript_function_move_variant);
-				if (!match.hasMatch())
-				{
-					error_msg(QString("ERROR: incorrect format of g_modify_funscript_function_move_%1_variants: %2,\nit should be :\n"\
-						"[min_speed_in_rpm_1-max_speed_in_rpm_1:variant_1_1|(or)variant_1_2|...],[min_speed_in_rpm_2-max_speed_in_rpm_2:variant_2_1|(or)variant_2_2|...],...\n"\
-						"Regexp: [(\\d+)\\-(\\d+|maximum):([\\d\\|]+|random)],[(\\d+)\\-(\\d+|maximum):([\\d\\|]+|random)],...\nFor example:\n" \
-						"[0-200:0],[200-maximum:1]\n"\
-						"[0-200:0|1],[200-maximum:1]\n"\
-						"[0-200:random],[200-maximum:1]\n"\
-						"[0-maximum:random]").arg(modify_funscript_function_move_variants_type).arg(modify_funscript_function_move_variants));
-					return res;
-				}
-				else
-				{
-					QString val;
-					int min_speed = match.captured(1).toInt();
-
-					val = match.captured(2);
-					int max_speed = (val == "maximum") ? -1 : val.toInt();
-
-					if ((max_speed != -1) && (max_speed <= min_speed))
-					{
-						error_msg(QString("ERROR: incorrect format of max_speed: %1 in sub_modify_funscript_function_move_%2_variant: %3, max_speed should be > min_speed").arg(max_speed).arg(modify_funscript_function_move_variants_type).arg(sub_modify_funscript_function_move_variant));
-						return res;
-					}
-
-					val = match.captured(3);
-					std::vector<int> variants;
-					if (val == "random")
-					{
-						for (int variant = 0; variant < modify_funscript_move_functions.size(); variant++)
-						{
-							variants.push_back(variant);
-						}
-					}
-					else
-					{
-						QStringList _variants = val.split("|");
-						for (QString& _variant : _variants)
-						{
-							int variant = _variant.toInt();
-
-							if (!((variant >= 0) && (variant < modify_funscript_move_functions.size())))
-							{
-								error_msg(QString("ERROR: incorrect format of variant: %1 in sub_modify_funscript_function_move_%2_variant: %3, it should be >= 0, < modify_funscript_move_functions.size() (%4)").arg(variant).arg(modify_funscript_function_move_variants_type).arg(sub_modify_funscript_function_move_variant).arg(modify_funscript_move_functions.size()));
-								return res;
-							}
-
-							variants.push_back(variant);
-						}
-					}
-
-					_modify_funscript_move_functions.push_back(QPair<QPair<int, int>, std::vector<int>>(QPair<int, int>(min_speed, max_speed), variants));
-				}
-			}
-
-			res = true;
-			return res;
-		};
-
-		res = get_move_functions(g_modify_funscript_function_move_in_variants, "in", modify_funscript_move_in_functions);
-		if (!res)
-		{
-			return res;
 		}
 
-		res = get_move_functions(g_modify_funscript_function_move_out_variants, "out", modify_funscript_move_out_functions);
-		if (!res)
+		// [0-200:1/2|2/1|random/random],[200-maximum:0/0]
+		QStringList modify_funscript_function_move_in_out_variants = g_modify_funscript_function_move_in_out_variants.mid(1, g_modify_funscript_function_move_in_out_variants.size() - 2).split("],[");
+		for (QString& modify_funscript_function_move_in_out_variant : modify_funscript_function_move_in_out_variants)
 		{
-			return res;
+			QRegularExpression re_modify_funscript_move_in_out_function("^(\\d+)\\-(\\d+|maximum):([^:]+)$");
+			QRegularExpressionMatch match;
+
+			bool sub_res = false;
+
+			match = re_modify_funscript_move_in_out_function.match(modify_funscript_function_move_in_out_variant);
+			if (match.hasMatch())
+			{
+				QString val;
+				int min_speed = match.captured(1).toInt();
+
+				val = match.captured(2);
+				int max_speed = (val == "maximum") ? -1 : val.toInt();
+
+				if ((max_speed != -1) && (max_speed <= min_speed))
+				{
+					error_msg(QString("ERROR: incorrect format of max_speed: %1 in modify_funscript_function_move_in_out_variant: %2, max_speed should be > min_speed").arg(max_speed).arg(modify_funscript_function_move_in_out_variant));
+					return res;
+				}
+
+				val = match.captured(3);
+
+				std::vector<QPair<std::vector<int>, std::vector<int>>> variants_pairs;
+
+				QStringList _variants = val.split("|");
+				for (QString& variant_pair : _variants)
+				{
+					QStringList vars_in_out = variant_pair.split("/");
+					std::vector<int> variants_in;
+					std::vector<int> variants_out;
+
+					if (vars_in_out.size() == 2)
+					{
+						auto get_variants = [&modify_funscript_move_functions, &variant_pair, &modify_funscript_function_move_in_out_variant](QString variant_str, QString move_type, std::vector<int>& variants)
+						{
+							if (variant_str == QString("random"))
+							{
+								for (int variant = 0; variant < modify_funscript_move_functions.size(); variant++)
+								{
+									variants.push_back(variant);
+								}
+							}
+							else
+							{
+								int variant = variant_str.toInt();
+
+								if (!((variant >= 0) && (variant < modify_funscript_move_functions.size())))
+								{
+									error_msg(QString("ERROR: incorrect format of variant_%1: %2 in variant_pair: %3 in modify_funscript_function_move_in_out_variant: %4, it should be >= 0, < modify_funscript_move_functions.size() (%4) or 'random'").arg(move_type).arg(variant_str).arg(variant_pair).arg(modify_funscript_function_move_in_out_variant).arg(modify_funscript_move_functions.size()));
+									return false;
+								}
+
+								variants.push_back(variant);
+							}
+
+							return true;
+						};
+
+						res = get_variants(vars_in_out[0], "in", variants_in);
+						if (!res)
+						{
+							return res;
+						}
+
+						res = get_variants(vars_in_out[1], "out", variants_out);
+						if (!res)
+						{
+							return res;
+						}
+
+						variants_pairs.push_back(QPair<std::vector<int>, std::vector<int>>(variants_in, variants_out));
+					}
+				}
+
+				modify_funscript_move_in_out_functions.push_back(QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>(QPair<int, int>(min_speed, max_speed), variants_pairs));
+				sub_res = true;
+			}
+
+			if (!sub_res)
+			{
+				error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_in_out_variant: %2,\nit should be :\n"\
+					"[min_speed_in_rpm_1-max_speed_in_rpm_1:move_in_variant_id_1_1/move_out_variant_id_1_1|(or)move_in_variant_id_1_2/move_out_variant_id_1_2|...]\n"\
+					"For example:\n" \
+					"[0-200:1/2|2/1|random/random]\n"\
+					"[200-maximum:0/0]").arg(modify_funscript_function_move_in_out_variant));
+				return res;
+			}
 		}
 
 		std::list<QPair<int, int>> funscript_data_list;
+		int prev_move_in_out_id = -1;
+		int prev_variants_pair_id = -1;
 
 		id = 1;
 		found_first_move = 0;
@@ -1821,6 +1832,8 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 					if (cur_move_dirrection != prev_move_dirrection)
 					{
 						int min_pos, max_pos, min_id, max_id;
+						int move_in_out_id = -1;
+						int variants_pair_id = -1;
 
 						if (funscript_data[prev_top_end_id].second > funscript_data[id - 1].second)
 						{
@@ -1850,25 +1863,37 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 							int avg_cur_speed_in_rpm = (dpos * 1000 * 60) / (dt * 360);
 
-							std::vector<QPair<QPair<int, int>, std::vector<int>>>& modify_funscript_move_type_functions = (prev_move_dirrection == 1) ? modify_funscript_move_in_functions : modify_funscript_move_out_functions;
-							for (int var = 0; var < modify_funscript_move_type_functions.size(); var++)
+							move_in_out_id = 0;
+							while (move_in_out_id < modify_funscript_move_in_out_functions.size())
 							{
-								if ((avg_cur_speed_in_rpm >= modify_funscript_move_type_functions[var].first.first) &&
-									((modify_funscript_move_type_functions[var].first.second == -1) ? true : (avg_cur_speed_in_rpm <= modify_funscript_move_type_functions[var].first.second)))
+								if ((avg_cur_speed_in_rpm >= modify_funscript_move_in_out_functions[move_in_out_id].first.first) &&
+									((modify_funscript_move_in_out_functions[move_in_out_id].first.second == -1) ? true : (avg_cur_speed_in_rpm <= modify_funscript_move_in_out_functions[move_in_out_id].first.second)))
 								{
-									int modify_funscript_function_move_variant;
-									int vars_size = modify_funscript_move_type_functions[var].second.size();
-									if (vars_size == 1)
+
+									int variants_pairs_size = modify_funscript_move_in_out_functions[move_in_out_id].second.size();
+
+									if (prev_move_dirrection == 1) // move in
 									{
-										modify_funscript_function_move_variant = modify_funscript_move_type_functions[var].second[0];
+										variants_pair_id = (variants_pairs_size == 1) ? 0 : (std::rand() % variants_pairs_size);
 									}
 									else
 									{
-										modify_funscript_function_move_variant = modify_funscript_move_type_functions[var].second[std::rand() % vars_size];
+										if ((prev_move_in_out_id == move_in_out_id) && (prev_variants_pair_id != -1))
+										{
+											variants_pair_id = prev_variants_pair_id;
+										}
+										else
+										{
+											variants_pair_id = (variants_pairs_size == 1) ? 0 : (std::rand() % variants_pairs_size);
+										}
 									}
 
+									std::vector<int>& variats_by_cur_move_type = (prev_move_dirrection == 1) ? modify_funscript_move_in_out_functions[move_in_out_id].second[variants_pair_id].first : modify_funscript_move_in_out_functions[move_in_out_id].second[variants_pair_id].second;
+									int variats_by_cur_move_type_size = variats_by_cur_move_type.size();
+									int variant_id = (variats_by_cur_move_type_size == 1) ? variats_by_cur_move_type[0] : variats_by_cur_move_type[std::rand() % variats_by_cur_move_type_size];
+
 									int total_move = funscript_data[id - 1].second - funscript_data[prev_top_end_id].second;
-									std::vector<QPair<double, double>>& modify_funscript_move_function = modify_funscript_move_functions[modify_funscript_function_move_variant];
+									std::vector<QPair<double, double>>& modify_funscript_move_function = modify_funscript_move_functions[variant_id];
 
 									int ddt, ddmove, ddt_prev = 0;
 
@@ -1887,15 +1912,19 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 									break;
 								}
+
+								move_in_out_id++;
 							}
 
-							funscript_data_list.push_back(funscript_data[id - 1]);							
+							funscript_data_list.push_back(funscript_data[id - 1]);
 						}
 						else
 						{
 							funscript_data_list.push_back(funscript_data[id - 1]);
 						}
 
+						prev_move_in_out_id = move_in_out_id;
+						prev_variants_pair_id = variants_pair_id;
 						prev_move_dirrection = cur_move_dirrection;
 						prev_top_end_id = id - 1;
 					}
@@ -2093,7 +2122,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 	{
 		save_text_to_file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt",
 			cur_time_str + "\nFile path: " + funscript_fname + "\n----------\nLoaded successfully without changes\n----------\n\n",
-			QFile::WriteOnly | QFile::Append | QFile::Text);		
+			QFile::WriteOnly | QFile::Append | QFile::Text);
 	}
 
 	if (save_res_funscript)
@@ -2123,7 +2152,7 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 {
 	bool res = false;
 	statistics_data sub_data{0, 0, 0, -1};
-	
+
 	g_avg_time_delay = 0;
 	for (int speed = 1; speed <= 100; speed++)
 	{
@@ -2201,7 +2230,7 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 						dt_video += dt;
 					}
 				}
-				
+
 				break;
 			}
 		}
@@ -2353,7 +2382,7 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 		{
 			all_speeds_data.min_average_rate_of_change_of_speed = speed_data.average_rate_of_change_of_speed;
 		}
-		
+
 		if (speed_data.average_rate_of_change_of_speed > all_speeds_data.max_average_rate_of_change_of_speed)
 		{
 			all_speeds_data.max_average_rate_of_change_of_speed = speed_data.average_rate_of_change_of_speed;
@@ -2451,8 +2480,8 @@ int update_abs_pos(const int &cur_pos, const int &prev_pos, int &abs_cur_pos, cv
 			dpos = -(prev_pos - cur_pos);
 		}
 		else
-		{			
-			dpos = cur_pos + 360 - prev_pos;			
+		{
+			dpos = cur_pos + 360 - prev_pos;
 		}
 	}
 	if (cur_pos > prev_pos)
@@ -2467,11 +2496,11 @@ int update_abs_pos(const int &cur_pos, const int &prev_pos, int &abs_cur_pos, cv
 		}
 		else
 		{
-			dpos = cur_pos - prev_pos;			
+			dpos = cur_pos - prev_pos;
 		}
 	}
 
-	abs_cur_pos += dpos;	
+	abs_cur_pos += dpos;
 
 	return dpos;
 }
@@ -2513,7 +2542,7 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 				_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
 				_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
 			}
-			_num_prev_poss--;			
+			_num_prev_poss--;
 		}
 
 		msec_video_prev_pos = _tmp_msec_video_prev_poss[0];
@@ -2554,7 +2583,7 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 		msec_video_prev_pos = msec_video_cur_pos;
 		abs_prev_pos = abs_cur_pos;
 		_num_prev_poss = 0;
-		
+
 		_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
 		_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
 		_num_prev_poss++;
@@ -2638,7 +2667,7 @@ void get_delay_data()
 				return;
 			}
 		}
-		
+
 		start_time = GetTickCount64();
 		set_hithmith_speed(0.4);
 
@@ -2658,7 +2687,7 @@ void get_delay_data()
 
 	disconnect_from_hismith();
 
-	show_msg(QString("delay: %1, cur_speed: %2, prev_speed: %3").arg((int)(cur_time - start_time)).arg(cur_speed).arg(prev_speed));	
+	show_msg(QString("delay: %1, cur_speed: %2, prev_speed: %3").arg((int)(cur_time - start_time)).arg(cur_speed).arg(prev_speed));
 }
 
 QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl)
@@ -2830,7 +2859,7 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 				res = false;
 			}
 			else
-			{				
+			{
 				if (cur_video_pos < (int)((double)(length * 100) * position))
 				{
 					is_vlc_time_in_milliseconds = false;
@@ -2905,7 +2934,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 		GetObject(hFont, sizeof(LOGFONT), &logfont);
 
 		int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-		
+
 		// Scale the font(s)
 		constexpr UINT font_size{ 12 };
 		logfont.lfHeight = -((font_size * dpi) / 72);
@@ -2922,7 +2951,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 			total_text_size.cx = max(text_size.cx, total_text_size.cx);
 			total_text_size.cy += text_size.cy + 10;
 		}
-		
+
 		int screen_w = GetSystemMetrics(SM_CXSCREEN);
 		int screen_h = GetSystemMetrics(SM_CYSCREEN);
 
@@ -2958,7 +2987,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 		// Always select the old font back into the DC
 		SelectObject(hdc, hOldFont);
-		DeleteObject(hNewFont);		
+		DeleteObject(hNewFont);
 
 		EndPaint(hwnd, &ps);
 		break;
@@ -2971,10 +3000,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 }
 
 void show_msg(QString msg, int timeout)
-{	
+{
 
 	if (_tmp_p_msg_thr)
-	{		
+	{
 		_tmp_stop_msg = true;
 		if (_tmp_hwnd)
 		{
@@ -3038,7 +3067,7 @@ void show_msg(QString msg, int timeout)
 				_tmp_hwnd = NULL;
 			}
 
-			UnregisterClass(_tmp_CLASS_NAME, hInstance);			
+			UnregisterClass(_tmp_CLASS_NAME, hInstance);
 		}
 		_tmp_msg_mutex.unlock();
 	});
@@ -3114,7 +3143,7 @@ void run_funscript()
 	QString concatenated = ":" + g_vlc_password; //username:password
 	QByteArray data = concatenated.toLocal8Bit().toBase64();
 	QString headerData = "Basic " + data;
-	g_NetworkRequest.setRawHeader("Authorization", headerData.toLocal8Bit());	
+	g_NetworkRequest.setRawHeader("Authorization", headerData.toLocal8Bit());
 	g_NetworkRequest.setTransferTimeout(1000);
 
 	speeds_data all_speeds_data;
@@ -3160,7 +3189,7 @@ void run_funscript()
 					{
 						QString fpath = QUrl(uri).toLocalFile();
 						QFileInfo info(fpath);
-						QString fname = info.fileName();					
+						QString fname = info.fileName();
 						funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
 						break;
 					}
@@ -3177,7 +3206,7 @@ void run_funscript()
 			}
 
 			do
-			{				
+			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
 			} while (last_play_video_filename == video_filename && !g_stop_run);
@@ -3186,13 +3215,13 @@ void run_funscript()
 		}
 
 		//-----------------------------------------------------
-		// Load Funscript and Hismith statistical data		
+		// Load Funscript and Hismith statistical data
 		std::vector<QPair<int, int>> funscript_data_maped;
 
 		if (last_load_funscript_fname != funscript_fname)
 		{
 			last_load_funscript_fname = funscript_fname;
-			funscript_data_maped_full.clear();			
+			funscript_data_maped_full.clear();
 			if (!get_parsed_funscript_data(funscript_fname, funscript_data_maped_full, all_speeds_data))
 			{
 				do
@@ -3202,14 +3231,14 @@ void run_funscript()
 				} while (last_play_video_filename == video_filename && !g_stop_run);
 				last_play_video_filename = video_filename;
 				continue;
-			}			
+			}
 		}
 
 		bool found_start = false;
 		int start_id;
 		int pos_offset;
 		int search_video_pos;
-		
+
 		cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
 		search_video_pos = cur_video_pos;
 
@@ -3218,7 +3247,7 @@ void run_funscript()
 			if (!found_start)
 			{
 				if (funscript_data_maped_full[i].first > search_video_pos + 500)
-				{					
+				{
 					found_start = true;
 					search_start_pos = funscript_data_maped_full[i].second % 360;
 					start_id = i;
@@ -3230,7 +3259,7 @@ void run_funscript()
 			{
 				funscript_data_maped.push_back(QPair<int, int>(funscript_data_maped_full[i].first, funscript_data_maped_full[i].second - pos_offset));
 			}
-		}		
+		}
 
 		if (funscript_data_maped.size() < 2)
 		{
@@ -3260,13 +3289,13 @@ void run_funscript()
 				int dif_cur_vs_req_action_end_time;
 				int dif_cur_vs_req_action_start_time;
 				int dif_speed_changed_vs_req_action_start_time;
-				int dif_cur_vs_req_exp_pos;				
-				int action_length_time;				
+				int dif_cur_vs_req_exp_pos;
+				int action_length_time;
 				int req_abs_cur_pos;
 				int req_dpos;
 				int req_dpos_add;
-				int abs_cur_pos;				
-				int req_speed;				
+				int abs_cur_pos;
+				int req_speed;
 				int got_avg_speed;
 				int start_speed;
 				int end_speed;
@@ -3280,7 +3309,7 @@ void run_funscript()
 			std::vector<results_data> results(actions_size);
 			int results_size = 0;
 
-			int dtime = 0;			
+			int dtime = 0;
 
 			if (is_video_paused)
 			{
@@ -3300,7 +3329,7 @@ void run_funscript()
 				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
 				start_time = GetTickCount64();
 				start_video_pos = cur_video_pos;
-				
+
 				if (g_stop_run || g_pause || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 				{
 					last_play_video_filename = video_filename;
@@ -3352,7 +3381,7 @@ void run_funscript()
 			}
 			else
 			{
-				// for minimize time difference sync waiting for the nearest second change				
+				// for minimize time difference sync waiting for the nearest second change
 				int prev_video_pos;
 				do
 				{
@@ -3377,7 +3406,7 @@ void run_funscript()
 					abs_cur_pos += (funscript_data_maped[action_id - 1].second / 360) * 360;
 				}
 			}
-			
+
 			start_abs_pos = abs_cur_pos;
 			last_set_action_id_for_dif_cur_vs_req_exp_pos = action_id - 1;
 
@@ -3392,7 +3421,7 @@ void run_funscript()
 			// required for check computer freezes
 			prev_get_speed_time = GetTickCount64();
 			while (action_id < actions_size)
-			{				
+			{
 				action_start_time = cur_time = GetTickCount64();
 
 				if ((funscript_data_maped[action_id].second - abs_cur_pos >= 360 * 2) && (g_max_allowed_hismith_speed < 100))
@@ -3428,10 +3457,10 @@ void run_funscript()
 				req_speed = ((funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) / dt;
 				hismith_speed_prev = cur_set_hismith_speed;
 				//exp_abs_pos_before_speed_change = abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0);
-				optimal_hismith_speed = (double)get_optimal_hismith_speed(all_speeds_data, (int)(hismith_speed_prev*100.0), cur_speed, dpos, dt) / 100.0;				
+				optimal_hismith_speed = (double)get_optimal_hismith_speed(all_speeds_data, (int)(hismith_speed_prev*100.0), cur_speed, dpos, dt) / 100.0;
 				avg_hismith_speed_prev = (double)get_avg_hismith_speed(all_speeds_data, action_start_speed)/100.0;
 				int optimal_hismith_start_speed_int;
-				
+
 				if (action_start_speed <= req_speed)
 				{
 					double val = min(avg_hismith_speed_prev, hismith_speed_prev);
@@ -3453,7 +3482,7 @@ void run_funscript()
 				speed_change_was_obtained = false;
 
 				dtime = (action_id < actions_size - 1) ? g_speed_change_delay : 0;
-				
+
 				cur_set_hismith_speed = optimal_hismith_start_speed;
 
 				do
@@ -3463,12 +3492,12 @@ void run_funscript()
 					{
 						break;
 					}
-					
+
 					last_abs_prev_pos = abs_cur_pos;
 					get_next_frame_and_cur_speed_res = get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 						msec_video_prev_pos, abs_prev_pos);
-					
+
 					if (!get_next_frame_and_cur_speed_res)
 					{
 						break;
@@ -3498,7 +3527,7 @@ void run_funscript()
 					{
 						break;
 					}
-					
+
 					if (funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time)) > 1000)
 					{
 						if (start_video_pos + (int)(cur_time - start_time) - cur_video_pos >= 1000)
@@ -3580,7 +3609,7 @@ void run_funscript()
 							speed_change_time = cur_time;
 							speed_change_was_obtained = true;
 						}
-						
+
 						if (speed_change_was_obtained)
 						{
 							dt = funscript_data_maped[action_id].first - (start_video_pos + (int)(cur_time - start_time));
@@ -3629,13 +3658,13 @@ void run_funscript()
 						avg_speed_start_abs_cur_pos = abs_cur_pos;
 					}
 
-				} while ((start_video_pos + (int)(cur_time - start_time)) + dtime < funscript_data_maped[action_id].first);				
+				} while ((start_video_pos + (int)(cur_time - start_time)) + dtime < funscript_data_maped[action_id].first);
 
 				if ((avg_speed_start_time != -1) && (cur_time - avg_speed_start_time >= g_dt_for_get_cur_speed))
 				{
-					got_avg_speed = ((abs_cur_pos - avg_speed_start_abs_cur_pos) * 1000) / (int)(cur_time - avg_speed_start_time);					
+					got_avg_speed = ((abs_cur_pos - avg_speed_start_abs_cur_pos) * 1000) / (int)(cur_time - avg_speed_start_time);
 				}
-				
+
 				if (p_get_vlc_status)
 				{
 					p_get_vlc_status->join();
@@ -3647,7 +3676,7 @@ void run_funscript()
 					video_filename = _tmp_video_filename;
 					is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
 				}
-				
+
 				results[action_id - 1].action_start_video_time = VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str();
 				results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)(cur_time - start_time)) - funscript_data_maped[action_id].first;
 				results[action_id - 1].dif_cur_vs_req_action_start_time = dif_cur_vs_req_action_start_time;
@@ -3682,8 +3711,8 @@ void run_funscript()
 					actions_size = action_id;
 					break;
 				}
-				
-				if (g_stop_run || g_pause || is_video_paused || 
+
+				if (g_stop_run || g_pause || is_video_paused ||
 					(cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 				{
@@ -3713,9 +3742,9 @@ void run_funscript()
 					actions_size = action_id;
 					break;
 				}
-				
+
 				action_id++;
-			}			
+			}
 
 			QString result_str;
 			for (int i = 0; i < actions_size; i++)
@@ -3726,7 +3755,7 @@ void run_funscript()
 					.arg(results[i].action_start_video_time)
 					.arg(results[i].action_length_time)
 					.arg(results[i].req_dpos)
-					.arg(results[i].req_dpos_add)					
+					.arg(results[i].req_dpos_add)
 					.arg(results[i].dif_cur_vs_req_action_start_time)
 					.arg(results[i].dif_cur_vs_req_action_end_time)
 					.arg(results[i].start_speed)
@@ -3759,7 +3788,7 @@ void run_funscript()
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		}
 	}
-	
+
 	disconnect_from_hismith();
 
 	g_pNetworkAccessManager->deleteLater();
@@ -3771,7 +3800,7 @@ void disconnect_from_hismith()
 {
 	if (g_pMyDevice)
 	{
-		g_pClient->stopAllDevices();		
+		g_pClient->stopAllDevices();
 		g_myDevices.clear();
 		delete g_pClient;
 		g_pClient = NULL;
@@ -3791,7 +3820,7 @@ bool get_devices_list()
 		g_pClient = new Client(g_intiface_central_client_url, g_intiface_central_client_port);
 		g_pClient->connect(callbackFunction);
 	}
-	
+
 	_tmp_got_client_msg = false;
 	g_pClient->requestDeviceList();
 	g_pClient->startScan();
@@ -3898,7 +3927,7 @@ void get_performance_with_hismith(int hismith_speed)
 		return;
 
 	//-----------------------------------------------------
-	// Connecting to Web Camera	
+	// Connecting to Web Camera
 
 	cv::Mat frame, bad_frame, prev_frame, res_frame;
 	int video_dev_id = get_video_dev_id();
@@ -3925,7 +3954,7 @@ void get_performance_with_hismith(int hismith_speed)
 		}
 		abs_cur_pos = get_abs_pos(cur_pos);
 
-		hismith_speed = (int)(set_hithmith_speed((double)hismith_speed / 100.0) * 100.0);		
+		hismith_speed = (int)(set_hithmith_speed((double)hismith_speed / 100.0) * 100.0);
 
 		get_next_frame_and_cur_speed(capture, frame,
 			abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
@@ -3938,7 +3967,7 @@ void get_performance_with_hismith(int hismith_speed)
 		bool last_get_frame_status = false;
 
 		while (1)
-		{			
+		{
 			last_msec_video_prev_pos = msec_video_cur_pos;
 			last_get_frame_status = get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
@@ -3950,7 +3979,7 @@ void get_performance_with_hismith(int hismith_speed)
 			}
 			prev_time = cur_time;
 			cur_time = GetTickCount64();
-			num_frames++;			
+			num_frames++;
 
 			if (msec_video_cur_pos - last_msec_video_prev_pos > max_dt_according_webcam_to_get_new_frame_and_speed)
 			{
@@ -3969,7 +3998,7 @@ void get_performance_with_hismith(int hismith_speed)
 			{
 				break;
 			}
-		}		
+		}
 
 		set_hithmith_speed(0.0);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -4019,7 +4048,7 @@ void get_statistics_with_hismith()
 
 	get_statistics_start_time = GetTickCount64();
 
-	show_msg("It can takes ~20 minutes, please wait...\nIt will get data for speed from 1-100", 5000);	
+	show_msg("It can takes ~20 minutes, please wait...\nIt will get data for speed from 1-100", 5000);
 
 	//-----------------------------------------------------
 	// Connecting to Hismith
@@ -4033,7 +4062,7 @@ void get_statistics_with_hismith()
 	}
 
 	//-----------------------------------------------------
-	// Connecting to Web Camera	
+	// Connecting to Web Camera
 
 	cv::Mat frame, bad_frame, prev_frame, res_frame;
 	int video_dev_id = get_video_dev_id();
@@ -4074,7 +4103,7 @@ void get_statistics_with_hismith()
 			get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 				msec_video_prev_pos, abs_prev_pos);
-		}		
+		}
 
 		for (hismith_speed = 1; hismith_speed <= g_max_allowed_hismith_speed; hismith_speed++)
 		{
@@ -4129,7 +4158,7 @@ void get_statistics_with_hismith()
 					{
 						break;
 					}
-				}				
+				}
 
 				if (g_stop_run)
 				{
@@ -4168,7 +4197,7 @@ void get_statistics_with_hismith()
 					ts << document.toString();
 					file.flush();
 					file.close();
-				}				
+				}
 			} while (need_restart);
 		}
 	}
@@ -4195,7 +4224,7 @@ void test_hismith(int hismith_speed)
 		return;
 
 	//-----------------------------------------------------
-	// Connecting to Web Camera	
+	// Connecting to Web Camera
 
 	cv::Mat frame, prev_frame, res_frame;
 	int video_dev_id = get_video_dev_id();
@@ -4265,7 +4294,7 @@ void test_hismith(int hismith_speed)
 
 			int key = cv::waitKey(1);
 
-			if ( (key == 27 /* Esc key */) || 
+			if ( (key == 27 /* Esc key */) ||
 				( (key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0) ) )
 			{
 				save_BGR_image(frame, g_root_dir + "\\res_data\\orig.bmp");
@@ -4310,8 +4339,7 @@ void SaveSettings()
 	add_xml_element(document, root, "min_funscript_relative_move", QString::number(g_min_funscript_relative_move));
 	add_xml_element(document, root, "use_modify_funscript_functions", QString::number(g_modify_funscript ? 1 : 0));
 	add_xml_element(document, root, "functions_move_variants", g_modify_funscript_function_move_variants);
-	add_xml_element(document, root, "functions_move_in", g_modify_funscript_function_move_in_variants);
-	add_xml_element(document, root, "functions_move_out", g_modify_funscript_function_move_out_variants);
+	add_xml_element(document, root, "functions_move_in_out", g_modify_funscript_function_move_in_out_variants);
 	add_xml_element(document, root, "dt_for_get_cur_speed", QString::number(g_dt_for_get_cur_speed));
 	add_xml_element(document, root, "increase_hismith_speed_start_multiplier", QString::number(g_increase_hismith_speed_start_multiplier));
 	add_xml_element(document, root, "slowdown_hismith_speed_start_multiplier", QString::number(g_slowdown_hismith_speed_start_multiplier));
@@ -4319,7 +4347,7 @@ void SaveSettings()
 	add_xml_element(document, root, "slowdown_hismith_speed_change_multiplier", QString::number(g_slowdown_hismith_speed_change_multiplier));
 	add_xml_element(document, root, "speed_change_delay", QString::number(g_speed_change_delay));
 	add_xml_element(document, root, "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout));
-	
+
 	add_xml_element(document, root, "B_range", QString("[%1-%2][%3-%4][%5-%6]")
 												.arg(g_B_range[0][0])
 												.arg(g_B_range[0][1])
@@ -4457,8 +4485,7 @@ bool LoadSettings()
 
 	g_modify_funscript = (data_map["use_modify_funscript_functions"].toInt() == 0) ? false : true;
 	g_modify_funscript_function_move_variants = data_map["functions_move_variants"];
-	g_modify_funscript_function_move_in_variants = data_map["functions_move_in"];
-	g_modify_funscript_function_move_out_variants = data_map["functions_move_out"];
+	g_modify_funscript_function_move_in_out_variants = data_map["functions_move_in_out"];
 
 	//------------------------------------------------------------------------------------------------
 
@@ -4475,8 +4502,7 @@ bool LoadSettings()
 	}
 	g_modify_funscript_function_move_variants = tmp_modify_funscript_function_move_variants;
 
-	pW->ui->functionsMoveIn->setText(g_modify_funscript_function_move_in_variants);
-	pW->ui->functionsMoveOut->setText(g_modify_funscript_function_move_out_variants);
+	pW->ui->functionsMoveInOut->setText(g_modify_funscript_function_move_in_out_variants);
 
 	//--------------------
 
@@ -4511,9 +4537,11 @@ bool LoadSettings()
 
 int main(int argc, char *argv[])
 {
+	std::srand(std::time(nullptr)); // use current time as seed for random generator
+
     QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();
-	
+
 	{
 		QFile file(g_root_dir + "\\res_data\\!results.txt");
 		file.resize(0);
@@ -4524,7 +4552,7 @@ int main(int argc, char *argv[])
 		QFile file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt");
 		file.resize(0);
 		file.close();
-	}	
+	}
 
     MainWindow w;
 	pW = &w;
@@ -4546,7 +4574,7 @@ int main(int argc, char *argv[])
 
 	//test_hismith(5);
 
-	//get_delay_data();	
+	//get_delay_data();
 
 	//cv::destroyAllWindows();
 

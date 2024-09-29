@@ -69,8 +69,7 @@ MainWindow::MainWindow(QWidget *parent)
     QVBoxLayout* layout = new QVBoxLayout(ui->chartFrame);
     layout->addWidget(chartView);
 
-    connect(ui->functionsMoveIn, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveInChanged()));
-    connect(ui->functionsMoveOut, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveOutChanged()));
+    connect(ui->functionsMoveInOut, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveInOutChanged()));
 
     //-------------------
 
@@ -344,17 +343,14 @@ void MainWindow::handleFunctionsMoveVariantsChanged(const QString& str)
 
         chart->axisX()->setTitleText("ddt");
         chart->axisY()->setTitleText("ddpos");
-    }   
+    }
+
+    chart->setTitle(QString("Modify Funscript Function [id: %1]").arg(cur_id));
 }
 
-void MainWindow::handleFunctionsMoveInChanged()
+void MainWindow::handleFunctionsMoveInOutChanged()
 {
-    g_modify_funscript_function_move_in_variants = ui->functionsMoveIn->text();
-}
-
-void MainWindow::handleFunctionsMoveOutChanged()
-{
-    g_modify_funscript_function_move_out_variants = ui->functionsMoveOut->text();
+    g_modify_funscript_function_move_in_out_variants = ui->functionsMoveInOut->text();
 }
 
 void MainWindow::handleRefreshDevicesButton()
