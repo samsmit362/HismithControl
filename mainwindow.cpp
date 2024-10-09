@@ -17,30 +17,62 @@ void Controller::handleResults()
     p_parent->trayIcon->hide();
 }
 
+UINT get_key_mod(QString &ks)
+{
+    UINT res = 0; 
+    for (QString &str: ks.split("+"))
+    {
+        if(str == "Ctrl")
+        {
+            res |= MOD_CONTROL;
+        } 
+        else if(str == "Alt")
+        {
+            res |= MOD_ALT;
+        } 
+        else if(str == "Shift")
+        {
+            res |= MOD_SHIFT;
+        }
+    }
+    return res;
+}
+
+UINT get_key(QString &ks)
+{
+    return QKeySequence(ks.split("+").last())[0];
+}
+
+void MainWindow::RegisterHotKeys()
+{
+    RegisterHotKey(
+        (HWND)this->window()->winId(),
+        HOTKEY_STOP_ID,
+        get_key_mod(g_hotkey_stop) | MOD_NOREPEAT,
+        get_key(g_hotkey_stop));
+
+    RegisterHotKey(
+        (HWND)this->window()->winId(),
+        HOTKEY_PAUSE_ID,
+        get_key_mod(g_hotkey_pause) | MOD_NOREPEAT,
+        get_key(g_hotkey_pause));
+
+    RegisterHotKey(
+        (HWND)this->window()->winId(),
+        HOTKEY_RESUME_ID,
+        get_key_mod(g_hotkey_resume) | MOD_NOREPEAT,
+        get_key(g_hotkey_resume));
+
+    stopStartAction->setText(tr("Stop Run\t") + g_hotkey_stop);
+    pauseStartAction->setText(tr("Pause Run\t") + g_hotkey_pause);
+    resumeStartAction->setText(tr("Resume Run\t") + g_hotkey_resume);
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ctrl(this)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-
-    bool result = RegisterHotKey(
-        (HWND)this->window()->winId(),
-        HOTKEY_PAUSE_ID,
-        MOD_ALT | MOD_NOREPEAT,
-        Qt::Key_B);
-
-
-    result &= RegisterHotKey(
-        (HWND)this->window()->winId(),
-        HOTKEY_RESUME_ID,
-        MOD_ALT | MOD_NOREPEAT,
-        Qt::Key_N);
-
-    result &= RegisterHotKey(
-        (HWND)this->window()->winId(),
-        HOTKEY_STOP_ID,
-        MOD_ALT | MOD_NOREPEAT,
-        Qt::Key_Q);
 
     connect(ui->startButton, &QPushButton::released, this, &MainWindow::handleStartButton);
     connect(ui->testButton, &QPushButton::released, this, &MainWindow::handleTestButton);
@@ -75,15 +107,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     trayIconMenu = new QMenu(this);
 
-    stopStartAction = new QAction(tr("Stop Run\tAlt+Q"), this);
+    stopStartAction = new QAction(tr("Stop Run"), this);
     connect(stopStartAction, &QAction::triggered, this, &MainWindow::handleStopStart);
     trayIconMenu->addAction(stopStartAction);
 
-    pauseStartAction = new QAction(tr("Pause Run\tAlt+B"), this);
+    pauseStartAction = new QAction(tr("Pause Run"), this);
     connect(pauseStartAction, &QAction::triggered, this, &MainWindow::handlePauseStart);
     trayIconMenu->addAction(pauseStartAction);
 
-    resumeStartAction = new QAction(tr("Resume Run\tAlt+N"), this);
+    resumeStartAction = new QAction(tr("Resume Run"), this);
     connect(resumeStartAction, &QAction::triggered, this, &MainWindow::handleResumeStart);
     trayIconMenu->addAction(resumeStartAction);
 

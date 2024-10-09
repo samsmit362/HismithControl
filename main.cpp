@@ -40,6 +40,10 @@ QString g_vlc_url;
 int g_vlc_port;
 QString g_vlc_password;
 
+QString g_hotkey_stop;
+QString g_hotkey_pause;
+QString g_hotkey_resume;
+
 //---------------------------------------------------------------
 
 QString g_root_dir;
@@ -104,14 +108,16 @@ void save_text_to_file(QString fpath, QString text, QFlags<QIODeviceBase::OpenMo
 
 	if (!file.open(flags))
 	{
-		file.close();
 		error_msg(QString("ERROR: file [%1] already opened for write or there is another issue").arg(fpath));
 	}
-	QTextStream ts(&file);
+	else
+	{
+		QTextStream ts(&file);
 
-	ts << text;
-	file.flush();
-	file.close();
+		ts << text;
+		file.flush();
+		file.close();
+	}
 }
 
 QString get_cur_time_str()
@@ -134,8 +140,8 @@ void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame)
 		if (!capture.read(frame))
 		{
 			error_msg(QString("ERROR: capture.read(frame) failed"));
+			break;
 		}
-
 	}
 	while (	(prev_frame.size == frame.size) &&
 			(prev_frame.channels() == frame.channels()) &&
@@ -255,10 +261,12 @@ void show_frame_in_cv_window(cv::String wname, cv::Mat* p_frame)
 
 void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_prev_frame, int x1, int y1, int x2, int y2)
 {
+	g_stop_run = true;
+
 	disconnect_from_hismith();
 
 	auto t = std::time(nullptr);
-	auto tm = *std::localtime(&t);
+	auto tm = *std ::localtime(&t);
 	std::ostringstream oss;
 	oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
 	QString time_str = oss.str().c_str();
@@ -533,302 +541,311 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
 		cv::rectangle(frame_upd, cv::Point(0, 0), cv::Point(max(5, ((2 * height) / 15)/10), (2 * height) / 15), cv::Scalar(0, 255, 0));
 		error_msg("ERROR: Failed to find big left vertical border blue color figure\n(min search size in top left green rectangle)", &frame, &frame_upd, NULL, 0, 0, (2 * width) / 3, (3 * height) / 4);
-		return res;
 	}
-
-	for (int id = 0; id < figures_b_N; id++)
+	else
 	{
-		CMyClosedFigure* pFigure = p_figures_b[id];
-		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
-		int size = pFigure->m_PointsArray.m_size;
-
-		if (pFigure == p_best_match_l_figure)
+		for (int id = 0; id < figures_b_N; id++)
 		{
-			continue;
-		}
+			CMyClosedFigure* pFigure = p_figures_b[id];
+			int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
+			int size = pFigure->m_PointsArray.m_size;
 
-		if ((x > l_x + ((3 * l_h) / 2)) && (y > l_y - (l_h / 2)) && (y + h < l_y + ((4 * l_h) / 2)))
-		{
-			if (size > max_size_r)
+			if (pFigure == p_best_match_l_figure)
 			{
-				max_size_r = size;
-				p_best_match_r_figure = pFigure;
-				r_x = x;
-				r_y = y;
-				r_w = w;
-				r_h = h;
-			}
-		}
-	}
-
-	if (!p_best_match_r_figure)
-	{
-		cv::Mat frame_upd;
-		frame.copyTo(frame_upd);
-		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
-		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
-		error_msg("ERROR: Failed to find big right blue color figure", &frame, &frame_upd, NULL, l_x + ((3 * l_h) / 2), l_y - (l_h / 2), width, l_y + ((4 * l_h) / 2));
-		return res;
-	}
-
-	int min_cw = 5;
-	int min_sy = min(l_y + (l_h / 4), r_y);
-	int max_sy = max(l_y + ((3 * l_h) / 4), r_y + r_h);
-	std::vector<CMyClosedFigure*> c_figures;
-
-	for (int id = 0; id < figures_b_N; id++)
-	{
-		CMyClosedFigure* pFigure = p_figures_b[id];
-		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
-		int size = pFigure->m_PointsArray.m_size;
-
-		if ((pFigure == p_best_match_l_figure) || (pFigure == p_best_match_r_figure))
-		{
-			continue;
-		}
-
-		if ((x > l_x + l_w) && (x + w < ((l_x + l_w + r_x) / 2)) && (y + h >= min_sy) && (y <= max_sy) && (w >= min_cw) /*&& (h >= min_ch)*/)
-		{
-			if (show_results)
-			{
-				c_figures.push_back(pFigure);
+				continue;
 			}
 
-			if (c_x == -1)
+			if ((x > l_x + ((3 * l_h) / 2)) && (y > l_y - (l_h / 2)) && (y + h < l_y + ((4 * l_h) / 2)))
 			{
-				c_x = x;
-				c_y = y;
-				c_w = w;
-				c_h = h;
-			}
-			else
-			{
-				int min_x = min(c_x, x);
-				int max_x = max(c_x + c_w - 1, x + w - 1);
-				int min_y = min(c_y, y);
-				int max_y = max(c_y + c_h - 1, y + h - 1);
-				c_x = min_x;
-				c_w = max_x - min_x + 1;
-				c_y = min_y;
-				c_h = max_y - min_y + 1;
+				if (size > max_size_r)
+				{
+					max_size_r = size;
+					p_best_match_r_figure = pFigure;
+					r_x = x;
+					r_y = y;
+					r_w = w;
+					r_h = h;
+				}
 			}
 		}
-	}
 
-	int l_cx = l_x + (l_w / 2);
-	int l_cy = l_y + (l_h / 2);
-	int r_cx = r_x + (r_w / 2);
-	int r_cy = r_y + (r_h / 2);
-	int c_cx;
-	int c_cy;
-
-	double ccxlcx_lh_ratio_prev = ccxlcx_lh_ratio;
-
-	if (r_cx == l_cx)
-	{
-		cv::Mat frame_upd;
-		frame.copyTo(frame_upd);
-		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
-		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
-		cv::rectangle(frame_upd, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-		cv::circle(frame_upd, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-		error_msg(QString("ERROR: unexpected issue, centers of left and right blue figures are same\n"), &frame, &frame_upd);
-	}
-
-	if (c_x == -1)
-	{
-		if (ccxlcx_lh_ratio > 0)
-		{
-			c_cx = l_cx + (int)(ccxlcx_lh_ratio * (double)l_h);
-			c_w = max(r_w, r_h);
-			c_h = c_w;
-			c_x = c_cx - (c_w / 2);
-			c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
-			c_y = c_cy - (c_h / 2);
-		}
-		else
+		if (!p_best_match_r_figure)
 		{
 			cv::Mat frame_upd;
 			frame.copyTo(frame_upd);
 			frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
 			frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
-			cv::rectangle(frame_upd, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-			cv::circle(frame_upd, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-			error_msg(QString("ERROR: failed to get telescopic motor rocker arm center x position\n"), &frame, &frame_upd);
+			error_msg("ERROR: Failed to find big right blue color figure", &frame, &frame_upd, NULL, l_x + ((3 * l_h) / 2), l_y - (l_h / 2), width, l_y + ((4 * l_h) / 2));			
 		}
-	}
-	else
-	{
-		c_cx = c_x + (c_w / 2);
-		c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
-		c_h = max((c_cy - c_y) * 2, (c_y + c_h - 1 - c_cy) * 2);
-		c_y = c_cy - (c_h / 2);
-
-		ccxlcx_lh_ratio = (double)(c_cx - l_cx) / (double)l_h;
-
-		if ( (ccxlcx_lh_ratio < g_min_telescopic_motor_rocker_arm_center_x_proportions) ||
-			(ccxlcx_lh_ratio > g_max_telescopic_motor_rocker_arm_center_x_proportions) )
+		else
 		{
-			cv::Mat img_res;
-			frame.copyTo(img_res);
+			int min_cw = 5;
+			int min_sy = min(l_y + (l_h / 4), r_y);
+			int max_sy = max(l_y + ((3 * l_h) / 4), r_y + r_h);
+			std::vector<CMyClosedFigure*> c_figures;
 
-			img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
-			img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
-			for (CMyClosedFigure* c_figure : c_figures)
+			for (int id = 0; id < figures_b_N; id++)
 			{
-				img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(c_figure, width, height));
+				CMyClosedFigure* pFigure = p_figures_b[id];
+				int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
+				int size = pFigure->m_PointsArray.m_size;
+
+				if ((pFigure == p_best_match_l_figure) || (pFigure == p_best_match_r_figure))
+				{
+					continue;
+				}
+
+				if ((x > l_x + l_w) && (x + w < ((l_x + l_w + r_x) / 2)) && (y + h >= min_sy) && (y <= max_sy) && (w >= min_cw) /*&& (h >= min_ch)*/)
+				{
+					if (show_results)
+					{
+						c_figures.push_back(pFigure);
+					}
+
+					if (c_x == -1)
+					{
+						c_x = x;
+						c_y = y;
+						c_w = w;
+						c_h = h;
+					}
+					else
+					{
+						int min_x = min(c_x, x);
+						int max_x = max(c_x + c_w - 1, x + w - 1);
+						int min_y = min(c_y, y);
+						int max_y = max(c_y + c_h - 1, y + h - 1);
+						c_x = min_x;
+						c_w = max_x - min_x + 1;
+						c_y = min_y;
+						c_h = max_y - min_y + 1;
+					}
+				}
 			}
 
-			cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-			cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-			cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
+			int l_cx = l_x + (l_w / 2);
+			int l_cy = l_y + (l_h / 2);
+			int r_cx = r_x + (r_w / 2);
+			int r_cy = r_y + (r_h / 2);
+			int c_cx;
+			int c_cy;
 
-			cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
-			cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+			double ccxlcx_lh_ratio_prev = ccxlcx_lh_ratio;
 
-			error_msg(QString(	"ERROR: got strange center position:\n"
-								"telescopic_motor_rocker_arm_center_x_proportions:%1\n"
-								"min_telescopic_motor_rocker_arm_center_x_proportions:%2\n"
-								"max_telescopic_motor_rocker_arm_center_x_proportions:%3\n")
-								.arg(ccxlcx_lh_ratio)
-								.arg(g_min_telescopic_motor_rocker_arm_center_x_proportions)
-								.arg(g_max_telescopic_motor_rocker_arm_center_x_proportions),
-								&frame, &img_res);
-		}
-	}
-
-	for (int id = 0; id < figures_g.m_size; id++)
-	{
-		CMyClosedFigure* pFigure = &(figures_g[id]);
-		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
-		int size = pFigure->m_PointsArray.m_size;
-
-		int g_to_c_distance_pow2 = pow2((x + (w / 2)) - c_cx) + pow2((y + (h / 2)) - c_cy);
-		int g_to_r_distance_pow2 = pow2((x + (w / 2)) - r_cx) + pow2((y + (h / 2)) - r_cy);
-
-		if (g_to_r_distance_pow2 > 0)
-		{
-			if ((double)g_to_c_distance_pow2 / g_to_r_distance_pow2 <= g_max_telescopic_motor_rocker_arm_proportions * g_max_telescopic_motor_rocker_arm_proportions)
+			if (r_cx == l_cx)
 			{
-				if (size > max_size_g)
+				cv::Mat frame_upd;
+				frame.copyTo(frame_upd);
+				frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+				frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
+				cv::rectangle(frame_upd, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+				cv::circle(frame_upd, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+				error_msg(QString("ERROR: unexpected issue, centers of left and right blue figures are same\n"), &frame, &frame_upd);
+			}
+			else
+			{
+				if (c_x == -1)
 				{
-					max_size_g = size;
-					p_best_match_g_figure = pFigure;
-					g_x = x;
-					g_y = y;
-					g_w = w;
-					g_h = h;
+					if (ccxlcx_lh_ratio > 0)
+					{
+						c_cx = l_cx + (int)(ccxlcx_lh_ratio * (double)l_h);
+						c_w = max(r_w, r_h);
+						c_h = c_w;
+						c_x = c_cx - (c_w / 2);
+						c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
+						c_y = c_cy - (c_h / 2);
+					}
+					else
+					{
+						cv::Mat frame_upd;
+						frame.copyTo(frame_upd);
+						frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+						frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
+						cv::rectangle(frame_upd, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+						cv::circle(frame_upd, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+						error_msg(QString("ERROR: failed to get telescopic motor rocker arm center x position\n"), &frame, &frame_upd);						
+					}
+				}
+				else
+				{
+					c_cx = c_x + (c_w / 2);
+					c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
+					c_h = max((c_cy - c_y) * 2, (c_y + c_h - 1 - c_cy) * 2);
+					c_y = c_cy - (c_h / 2);
+
+					ccxlcx_lh_ratio = (double)(c_cx - l_cx) / (double)l_h;
+
+					if ((ccxlcx_lh_ratio < g_min_telescopic_motor_rocker_arm_center_x_proportions) ||
+						(ccxlcx_lh_ratio > g_max_telescopic_motor_rocker_arm_center_x_proportions))
+					{
+						cv::Mat img_res;
+						frame.copyTo(img_res);
+
+						img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
+						img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
+						for (CMyClosedFigure* c_figure : c_figures)
+						{
+							img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(c_figure, width, height));
+						}
+
+						cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+						cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+						cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
+
+						cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
+						cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+
+						error_msg(QString("ERROR: got strange center position:\n"
+							"telescopic_motor_rocker_arm_center_x_proportions:%1\n"
+							"min_telescopic_motor_rocker_arm_center_x_proportions:%2\n"
+							"max_telescopic_motor_rocker_arm_center_x_proportions:%3\n")
+							.arg(ccxlcx_lh_ratio)
+							.arg(g_min_telescopic_motor_rocker_arm_center_x_proportions)
+							.arg(g_max_telescopic_motor_rocker_arm_center_x_proportions),
+							&frame, &img_res);						
+					}
+				}
+
+				if (!g_stop_run)
+				{
+					for (int id = 0; id < figures_g.m_size; id++)
+					{
+						CMyClosedFigure* pFigure = &(figures_g[id]);
+						int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
+						int size = pFigure->m_PointsArray.m_size;
+
+						int g_to_c_distance_pow2 = pow2((x + (w / 2)) - c_cx) + pow2((y + (h / 2)) - c_cy);
+						int g_to_r_distance_pow2 = pow2((x + (w / 2)) - r_cx) + pow2((y + (h / 2)) - r_cy);
+
+						if (g_to_r_distance_pow2 > 0)
+						{
+							if ((double)g_to_c_distance_pow2 / g_to_r_distance_pow2 <= g_max_telescopic_motor_rocker_arm_proportions * g_max_telescopic_motor_rocker_arm_proportions)
+							{
+								if (size > max_size_g)
+								{
+									max_size_g = size;
+									p_best_match_g_figure = pFigure;
+									g_x = x;
+									g_y = y;
+									g_w = w;
+									g_h = h;
+								}
+							}
+						}
+					}
+
+					if (!p_best_match_g_figure)
+					{
+						cv::Mat frame_upd;
+						frame.copyTo(frame_upd);
+						frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+						frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
+						error_msg("ERROR: Failed to find green color figure", &frame, &frame_upd, NULL, l_x, min(l_y, r_y), r_x, min(l_y + l_h, r_y + r_h));						
+					}
+					else
+					{
+						int g_cx = g_x + (g_w / 2), g_cy = g_y + (g_h / 2);
+
+						double g_to_c_distance = sqrt((double)(pow2(g_cx - c_cx) + pow2(g_cy - c_cy)));
+						double r_to_c_distance = sqrt((double)(pow2(r_cx - c_cx) + pow2(r_cy - c_cy)));
+
+						if (g_to_c_distance * r_to_c_distance == 0)
+						{
+							cv::Mat frame_upd;
+							frame.copyTo(frame_upd);
+							frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
+							frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
+							error_msg("ERROR: unexpected issue: g_to_c_distance * r_to_c_distance == 0", &frame, &frame_upd);
+						}
+						else
+						{
+							int g_to_c_cx = g_cx - c_cx;
+							int g_to_c_cy_inv = -(g_cy - c_cy);
+
+							int r_to_c_cx = r_cx - c_cx;
+							int r_to_c_cy_inv = -(r_cy - c_cy);
+
+							// From scalar vector multiplication a_vec * b_vac
+							// cos(alpha) = (a_x*b_x + a_y*b_y)/|a|*|b|
+							double alpha = std::acos((double)((g_to_c_cx * r_to_c_cx) + (g_to_c_cy_inv * r_to_c_cy_inv)) / (g_to_c_distance * r_to_c_distance));
+
+							// From cross product (vector product of vectors) [a_vec * b_vac]
+							// [a_vec * b_vac] = ax*by-ay*bx
+							int cross_product = g_to_c_cx * r_to_c_cy_inv - g_to_c_cy_inv * r_to_c_cx;
+
+							if (cross_product >= 0)
+							{
+								pos = (double)((M_PI - alpha) * 180.0) / M_PI;
+							}
+							else
+							{
+								pos = (double)((M_PI + alpha) * 180.0) / M_PI;
+							}
+
+							res = true;
+
+							if (show_results)
+							{
+								int dt = (int)(GetTickCount64() - start_time);
+								int dt1 = (int)(t1 - start_time);
+
+								cv::Mat img_res = frame.clone();
+
+								img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
+								img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
+								for (CMyClosedFigure* c_figure : c_figures)
+								{
+									img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(c_figure, width, height));
+								}
+								img_res.setTo(cv::Scalar(0, 255, 0), GetFigureMask(p_best_match_g_figure, width, height));
+
+								cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+								cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+								cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
+								cv::circle(img_res, cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), int(max(g_w / 2, g_h / 2)), cv::Scalar(0, 0, 255), 3);
+
+								cv::line(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), cv::Scalar(0, 170, 0), 5);
+								cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+
+								if (ccxlcx_lh_ratio_prev > 0)
+								{
+									int c_cx_exp = l_cx + (int)(ccxlcx_lh_ratio_prev * (double)l_h);
+									int c_w_exp = max(r_w, r_h);
+									int c_h_exp = c_w;
+									int c_x_exp = c_cx_exp - (c_w_exp / 2);
+									int c_cy_exp = l_cy + (((r_cy - l_cy) * (c_cx_exp - l_cx)) / (r_cx - l_cx));
+									int c_y_exp = c_cy_exp - (c_h_exp / 2);
+									cv::rectangle(img_res, cv::Rect(c_x_exp, c_y_exp, c_w_exp, c_h_exp), cv::Scalar(0, 0, 255), 1);
+									cv::line(img_res, cv::Point(c_cx_exp, c_cy_exp - 4), cv::Point(c_cx_exp, c_cy_exp + 4), cv::Scalar(0, 0, 255), 1);
+								}
+
+								int cur_speed = -1;
+								int dt_get_speed = -1;
+								if (p_cur_speed)
+								{
+									cur_speed = *p_cur_speed;
+								}
+
+								double g_to_c_distance = (int)sqrt((double)(pow2(g_cx - c_cx) + pow2(g_cy - c_cy)));
+								double g_to_r_distance = (int)sqrt((double)(pow2(g_cx - r_cx) + pow2(g_cy - r_cy)));
+								double telescopic_motor_rocker_arm_proportions = g_to_r_distance > 0 ? g_to_c_distance / g_to_r_distance : 0;
+
+								cv::String text = cv::format("%s" "pos: %d cur_speed: %d\ntelescopic_motor_rocker_arm_proportions: %f\ntelescopic_motor_rocker_arm_center_x_proportions: %f\nperformance data: dt_get_pos_total: %d dt_get_pos_conversion: %d", add_data.toStdString().c_str(), pos, cur_speed, telescopic_motor_rocker_arm_proportions, ccxlcx_lh_ratio, dt, dt1);
+
+								draw_text(text.c_str(), img_res);
+
+								if (p_res_frame)
+								{
+									img_res.copyTo(*p_res_frame);
+								}
+
+								cv::imshow(title, img_res);
+							}
+						}
+					}
 				}
 			}
 		}
-	}
-
-	if (!p_best_match_g_figure)
-	{
-		cv::Mat frame_upd;
-		frame.copyTo(frame_upd);
-		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
-		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
-		error_msg("ERROR: Failed to find green color figure", &frame, &frame_upd, NULL, l_x, min(l_y, r_y), r_x, min(l_y + l_h, r_y + r_h));
-		return res;
-	}
-
-	int g_cx = g_x + (g_w / 2), g_cy = g_y + (g_h / 2);
-
-	double g_to_c_distance = sqrt((double)(pow2(g_cx - c_cx) + pow2(g_cy - c_cy)));
-	double r_to_c_distance = sqrt((double)(pow2(r_cx - c_cx) + pow2(r_cy - c_cy)));
-
-	if (g_to_c_distance * r_to_c_distance == 0)
-	{
-		cv::Mat frame_upd;
-		frame.copyTo(frame_upd);
-		frame_upd.setTo(cv::Scalar(255, 0, 0), img_b);
-		frame_upd.setTo(cv::Scalar(0, 255, 0), img_g);
-		error_msg("ERROR: unexpected issue: g_to_c_distance * r_to_c_distance == 0", &frame, &frame_upd);
-		return res;
-	}
-
-	int g_to_c_cx = g_cx - c_cx;
-	int g_to_c_cy_inv = -(g_cy - c_cy);
-
-	int r_to_c_cx = r_cx - c_cx;
-	int r_to_c_cy_inv = -(r_cy - c_cy);
-
-	// From scalar vector multiplication a_vec * b_vac
-	// cos(alpha) = (a_x*b_x + a_y*b_y)/|a|*|b|
-	double alpha = std::acos((double)((g_to_c_cx * r_to_c_cx) + (g_to_c_cy_inv * r_to_c_cy_inv)) / (g_to_c_distance * r_to_c_distance));
-
-	// From cross product (vector product of vectors) [a_vec * b_vac]
-	// [a_vec * b_vac] = ax*by-ay*bx
-	int cross_product = g_to_c_cx * r_to_c_cy_inv - g_to_c_cy_inv * r_to_c_cx;
-
-	if (cross_product >= 0)
-	{
-		pos = (double)((M_PI - alpha) * 180.0) / M_PI;
-	}
-	else
-	{
-		pos = (double)((M_PI + alpha) * 180.0) / M_PI;
-	}
-
-	res = true;
-
-	if (show_results)
-	{
-		int dt = (int)(GetTickCount64() - start_time);
-		int dt1 = (int)(t1 - start_time);
-
-		cv::Mat img_res = frame.clone();
-
-		img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
-		img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
-		for (CMyClosedFigure* c_figure : c_figures)
-		{
-			img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(c_figure, width, height));
-		}
-		img_res.setTo(cv::Scalar(0, 255, 0), GetFigureMask(p_best_match_g_figure, width, height));
-
-		cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-		cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-		cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
-		cv::circle(img_res, cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), int(max(g_w / 2, g_h / 2)), cv::Scalar(0, 0, 255), 3);
-
-		cv::line(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), cv::Point(g_x + int(g_w / 2), g_y + int(g_h / 2)), cv::Scalar(0, 170, 0), 5);
-		cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
-
-		if (ccxlcx_lh_ratio_prev > 0)
-		{
-			int c_cx_exp = l_cx + (int)(ccxlcx_lh_ratio_prev * (double)l_h);
-			int c_w_exp = max(r_w, r_h);
-			int c_h_exp = c_w;
-			int c_x_exp = c_cx_exp - (c_w_exp / 2);
-			int c_cy_exp = l_cy + (((r_cy - l_cy) * (c_cx_exp - l_cx)) / (r_cx - l_cx));
-			int c_y_exp = c_cy_exp - (c_h_exp / 2);
-			cv::rectangle(img_res, cv::Rect(c_x_exp, c_y_exp, c_w_exp, c_h_exp), cv::Scalar(0, 0, 255), 1);
-			cv::line(img_res, cv::Point(c_cx_exp, c_cy_exp - 4), cv::Point(c_cx_exp, c_cy_exp + 4), cv::Scalar(0, 0, 255), 1);
-		}
-
-		int cur_speed = -1;
-		int dt_get_speed = -1;
-		if (p_cur_speed)
-		{
-			cur_speed = *p_cur_speed;
-		}
-
-		double g_to_c_distance = (int)sqrt((double)(pow2(g_cx - c_cx) + pow2(g_cy - c_cy)));
-		double g_to_r_distance = (int)sqrt((double)(pow2(g_cx - r_cx) + pow2(g_cy - r_cy)));
-		double telescopic_motor_rocker_arm_proportions = g_to_r_distance > 0 ? g_to_c_distance / g_to_r_distance : 0;
-
-		cv::String text = cv::format("%s" "pos: %d cur_speed: %d\ntelescopic_motor_rocker_arm_proportions: %f\ntelescopic_motor_rocker_arm_center_x_proportions: %f\nperformance data: dt_get_pos_total: %d dt_get_pos_conversion: %d", add_data.toStdString().c_str(), pos, cur_speed, telescopic_motor_rocker_arm_proportions, ccxlcx_lh_ratio, dt, dt1);
-
-		draw_text(text.c_str(), img_res);
-
-		if (p_res_frame)
-		{
-			img_res.copyTo(*p_res_frame);
-		}
-
-		cv::imshow(title, img_res);
 	}
 
 	return res;
@@ -2554,70 +2571,74 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame/*, c
 {
 	int prev_pos, dpos;
 	int dt;
+	bool res = false;
 
 	prev_pos = cur_pos;
 
 	get_new_camera_frame(capture, frame/*, prev_frame*/);
-
-	msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
-
-	if (msec_video_prev_pos != -1)
+	if (!g_stop_run)
 	{
-		if (_num_prev_poss == _tmp_prev_poss_max_N - 1)
+		msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
+
+		if (msec_video_prev_pos != -1)
 		{
-			for (int i = 0; i < _num_prev_poss; i++)
+			if (_num_prev_poss == _tmp_prev_poss_max_N - 1)
 			{
-				_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
-				_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
+				for (int i = 0; i < _num_prev_poss; i++)
+				{
+					_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
+					_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
+				}
+				_num_prev_poss--;
 			}
-			_num_prev_poss--;
+
+			msec_video_prev_pos = _tmp_msec_video_prev_poss[0];
+			abs_prev_pos = _tmp_abs_prev_poss[0];
 		}
 
-		msec_video_prev_pos = _tmp_msec_video_prev_poss[0];
-		abs_prev_pos = _tmp_abs_prev_poss[0];
-	}
+		dt = (int)(msec_video_cur_pos - msec_video_prev_pos);
 
-	dt = (int)(msec_video_cur_pos - msec_video_prev_pos);
-
-	if (!get_hismith_pos_by_image(frame, cur_pos, show_results, p_res_frame, &cur_speed, title, add_data))
-	{
-		return false;
-	}
-	dpos = update_abs_pos(cur_pos, prev_pos, abs_cur_pos, frame/*, prev_frame*/, cur_speed);
-
-	if (msec_video_prev_pos != -1)
-	{
-		_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
-		_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
-		_num_prev_poss++;
-
-		if (dt > 0)
+		if (get_hismith_pos_by_image(frame, cur_pos, show_results, p_res_frame, &cur_speed, title, add_data))
 		{
-			cur_speed = (double)((abs_cur_pos - abs_prev_pos) * 1000.0) / (double)dt;
-		}
+			dpos = update_abs_pos(cur_pos, prev_pos, abs_cur_pos, frame/*, prev_frame*/, cur_speed);
 
-		if (dt >= g_dt_for_get_cur_speed)
-		{
-			for (int i = 0; i < _num_prev_poss; i++)
+			if (msec_video_prev_pos != -1)
 			{
-				_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
-				_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
+				_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
+				_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
+				_num_prev_poss++;
+
+				if (dt > 0)
+				{
+					cur_speed = (double)((abs_cur_pos - abs_prev_pos) * 1000.0) / (double)dt;
+				}
+
+				if (dt >= g_dt_for_get_cur_speed)
+				{
+					for (int i = 0; i < _num_prev_poss; i++)
+					{
+						_tmp_msec_video_prev_poss[i] = _tmp_msec_video_prev_poss[i + 1];
+						_tmp_abs_prev_poss[i] = _tmp_abs_prev_poss[i + 1];
+					}
+					_num_prev_poss--;
+				}
 			}
-			_num_prev_poss--;
+			else
+			{
+				msec_video_prev_pos = msec_video_cur_pos;
+				abs_prev_pos = abs_cur_pos;
+				_num_prev_poss = 0;
+
+				_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
+				_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
+				_num_prev_poss++;
+			}
+
+			res = true;
 		}
 	}
-	else
-	{
-		msec_video_prev_pos = msec_video_cur_pos;
-		abs_prev_pos = abs_cur_pos;
-		_num_prev_poss = 0;
 
-		_tmp_msec_video_prev_poss[_num_prev_poss] = msec_video_cur_pos;
-		_tmp_abs_prev_poss[_num_prev_poss] = abs_cur_pos;
-		_num_prev_poss++;
-	}
-
-	return true;
+	return res;
 }
 //------------------------------------------
 
@@ -3053,7 +3074,7 @@ void show_msg(QString msg, int timeout)
 		wx.lpszClassName = _tmp_CLASS_NAME;
 		if (RegisterClassEx(&wx))
 		{
-			_tmp_hwnd = CreateWindowEx(WS_EX_TOPMOST,
+			_tmp_hwnd = CreateWindowEx(WS_EX_TOPMOST | WS_EX_NOACTIVATE,
 				_tmp_CLASS_NAME,
 				L"Window Title",
 				WS_OVERLAPPEDWINDOW,
@@ -3068,11 +3089,11 @@ void show_msg(QString msg, int timeout)
 
 			if (_tmp_hwnd)
 			{
-				ShowWindow(_tmp_hwnd, SW_SHOWNOACTIVATE);
-
 				LONG lStyle = GetWindowLong(_tmp_hwnd, GWL_STYLE);
 				lStyle &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
 				SetWindowLong(_tmp_hwnd, GWL_STYLE, lStyle);
+
+				ShowWindow(_tmp_hwnd, SW_SHOWNOACTIVATE);
 
 				__int64 start_time = GetTickCount64();
 				int dt = timeout - (int)(GetTickCount64() - start_time);
@@ -4530,6 +4551,11 @@ bool LoadSettings()
 	g_slowdown_hismith_speed_change_multiplier = data_map["slowdown_hismith_speed_change_multiplier"].toDouble();
 	g_speed_change_delay = data_map["speed_change_delay"].toInt();
 	g_cpu_freezes_timeout = data_map["cpu_freezes_timeout"].toInt();
+
+	g_hotkey_stop = data_map["hotkey_stop"];
+	g_hotkey_pause = data_map["hotkey_pause"];
+	g_hotkey_resume = data_map["hotkey_resume"];
+	pW->RegisterHotKeys();
 
 	{
 		QString str = data_map["B_range"];

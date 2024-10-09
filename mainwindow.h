@@ -63,6 +63,10 @@ extern std::vector<DeviceClass> g_myDevices;
 
 extern bool g_work_in_progress;
 
+extern QString g_hotkey_stop;
+extern QString g_hotkey_pause;
+extern QString g_hotkey_resume;
+
 //---------------------------------------------------------------
 
 void show_msg(QString msg, int timeout = 5000);
@@ -164,6 +168,7 @@ public:
     QSystemTrayIcon* trayIcon;
 
     bool eventFilter(QObject* obj, QEvent* event);
+    void RegisterHotKeys();
 
 private slots:
     void handleStartButton();
