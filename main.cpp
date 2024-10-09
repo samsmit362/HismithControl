@@ -77,11 +77,12 @@ bool g_modify_funscript = false;
 // "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87],[unchanged]"; // [fast:slow:fast],[slow:fast:slow],[unchanged]
 QString g_modify_funscript_function_move_variants;
 
-//"[0-200:0],[200-maximum:1]";
-//"[0-200:0|1],[200-maximum:1]";
-//"[0-200:random],[200-maximum:1]";
-//"[0-maximum:random]";
+//"[0-200:1],[200-maximum:2];[0-200:1|2],[200-maximum:2];[0-200:random],[200-maximum:2];[0-maximum:random]";
 QString g_modify_funscript_function_move_in_out_variants;
+
+// selected variant in g_modify_funscript_function_move_in_out_variants
+// it's value should be from 1 to num in g_modify_funscript_function_move_in_out_variants
+int g_functions_move_in_out_variant = 1;
 
 //---------------------------------------------------------------
 
@@ -1720,15 +1721,16 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		}
 
 		// [0-200:1/2|2/1|random/random],[200-maximum:0/0]
-		QStringList modify_funscript_function_move_in_out_variants = g_modify_funscript_function_move_in_out_variants.mid(1, g_modify_funscript_function_move_in_out_variants.size() - 2).split("],[");
-		for (QString& modify_funscript_function_move_in_out_variant : modify_funscript_function_move_in_out_variants)
+		QString modify_funscript_function_move_in_out_variant = pW->ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1);
+		QStringList modify_funscript_function_move_in_out_variants = modify_funscript_function_move_in_out_variant.mid(1, modify_funscript_function_move_in_out_variant.size() - 2).split("],[");
+		for (QString& modify_funscript_function_move_in_out_sub_variant : modify_funscript_function_move_in_out_variants)
 		{
 			QRegularExpression re_modify_funscript_move_in_out_function("^(\\d+)\\-(\\d+|maximum):([^:]+)$");
 			QRegularExpressionMatch match;
 
 			bool sub_res = false;
 
-			match = re_modify_funscript_move_in_out_function.match(modify_funscript_function_move_in_out_variant);
+			match = re_modify_funscript_move_in_out_function.match(modify_funscript_function_move_in_out_sub_variant);
 			if (match.hasMatch())
 			{
 				QString val;
@@ -1739,7 +1741,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 				if ((max_speed != -1) && (max_speed <= min_speed))
 				{
-					error_msg(QString("ERROR: incorrect format of max_speed: %1 in modify_funscript_function_move_in_out_variant: %2, max_speed should be > min_speed").arg(max_speed).arg(modify_funscript_function_move_in_out_variant));
+					error_msg(QString("ERROR: incorrect format of max_speed: %1 in modify_funscript_function_move_in_out_sub_variant: %2, max_speed should be > min_speed").arg(max_speed).arg(modify_funscript_function_move_in_out_sub_variant));
 					return res;
 				}
 
@@ -1756,7 +1758,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 					if (vars_in_out.size() == 2)
 					{
-						auto get_variants = [&modify_funscript_move_functions, &variant_pair, &modify_funscript_function_move_in_out_variant](QString variant_str, QString move_type, std::vector<int>& variants)
+						auto get_variants = [&modify_funscript_move_functions, &variant_pair, &modify_funscript_function_move_in_out_sub_variant](QString variant_str, QString move_type, std::vector<int>& variants)
 						{
 							if (variant_str == QString("random"))
 							{
@@ -1767,11 +1769,11 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 							}
 							else
 							{
-								int variant = variant_str.toInt();
+								int variant = variant_str.toInt() - 1;
 
 								if (!((variant >= 0) && (variant < modify_funscript_move_functions.size())))
 								{
-									error_msg(QString("ERROR: incorrect format of variant_%1: %2 in variant_pair: %3 in modify_funscript_function_move_in_out_variant: %4, it should be >= 0, < modify_funscript_move_functions.size() (%4) or 'random'").arg(move_type).arg(variant_str).arg(variant_pair).arg(modify_funscript_function_move_in_out_variant).arg(modify_funscript_move_functions.size()));
+									error_msg(QString("ERROR: incorrect format of variant_%1: %2 in variant_pair: %3 in modify_funscript_function_move_in_out_sub_variant: %4, it should be >= 1, <= modify_funscript_move_functions.size() (%4) or 'random'").arg(move_type).arg(variant_str).arg(variant_pair).arg(modify_funscript_function_move_in_out_sub_variant).arg(modify_funscript_move_functions.size()));
 									return false;
 								}
 
@@ -1803,11 +1805,11 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 			if (!sub_res)
 			{
-				error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_in_out_variant: %2,\nit should be :\n"\
+				error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_in_out_sub_variant: %2,\nit should be :\n"\
 					"[min_speed_in_rpm_1-max_speed_in_rpm_1:move_in_variant_id_1_1/move_out_variant_id_1_1|(or)move_in_variant_id_1_2/move_out_variant_id_1_2|...]\n"\
 					"For example:\n" \
-					"[0-200:1/2|2/1|random/random]\n"\
-					"[200-maximum:0/0]").arg(modify_funscript_function_move_in_out_variant));
+					"[0-200:2/3|3/2|random/random]\n"\
+					"[200-maximum:1/1]").arg(modify_funscript_function_move_in_out_sub_variant));
 				return res;
 			}
 		}
@@ -3215,6 +3217,8 @@ void run_funscript()
 		g_speed_change_delay = g_avg_time_delay;
 	}
 
+	g_functions_move_in_out_variant = pW->ui->functionsMoveInOutVariants->currentIndex() + 1;
+
 	while (!g_stop_run && get_next_frame_and_cur_speed_res)
 	{
 		set_hithmith_speed(0.0);
@@ -4475,11 +4479,14 @@ void SaveSettings()
 	root = document.createElement("settings");
 	document.appendChild(root);
 
+	g_functions_move_in_out_variant = pW->ui->functionsMoveInOutVariants->currentIndex() + 1;
+
 	add_xml_element(document, root, "max_allowed_hismith_speed", QString::number(g_max_allowed_hismith_speed));
 	add_xml_element(document, root, "min_funscript_relative_move", QString::number(g_min_funscript_relative_move));
 	add_xml_element(document, root, "use_modify_funscript_functions", QString::number(g_modify_funscript ? 1 : 0));
 	add_xml_element(document, root, "functions_move_variants", g_modify_funscript_function_move_variants);
-	add_xml_element(document, root, "functions_move_in_out", g_modify_funscript_function_move_in_out_variants);
+	add_xml_element(document, root, "functions_move_in_out_variants", g_modify_funscript_function_move_in_out_variants);
+	add_xml_element(document, root, "functions_move_in_out_variant", QString::number(g_functions_move_in_out_variant));
 	add_xml_element(document, root, "dt_for_get_cur_speed", QString::number(g_dt_for_get_cur_speed));
 	add_xml_element(document, root, "increase_hismith_speed_start_multiplier", QString::number(g_increase_hismith_speed_start_multiplier));
 	add_xml_element(document, root, "slowdown_hismith_speed_start_multiplier", QString::number(g_slowdown_hismith_speed_start_multiplier));
@@ -4523,6 +4530,11 @@ void SaveSettings()
 	add_xml_element(document, root, "vlc_port", QString::number(g_vlc_port));
 	add_xml_element(document, root, "vlc_password", g_vlc_password);
 
+	add_xml_element(document, root, "hotkey_stop", g_hotkey_stop);
+	add_xml_element(document, root, "hotkey_pause", g_hotkey_pause);
+	add_xml_element(document, root, "hotkey_resume", g_hotkey_resume);
+	add_xml_element(document, root, "hotkey_use_modify_funscript_functions", g_hotkey_use_modify_funscript_functions);
+
 	xmlContent << document.toString();
 	xmlFile.flush();
 	xmlFile.close();
@@ -4539,9 +4551,15 @@ bool LoadSettings()
 		error_msg(QString("ERROR: can't open settings file for read: %1").arg(fpath));
 		return res;
 	}
-	if (!doc.setContent(&xmlFile)) {
-		xmlFile.close();
-		return res;
+
+	{
+		QString err_msg;
+		int err_line, err_column;
+		if (!doc.setContent(&xmlFile, &err_msg, &err_line, &err_column)) {
+			error_msg(QString("ERROR: failed to parse xml file: %1\nline:%2 column:%3\nerror_msg:\n%4").arg(fpath).arg(err_line).arg(err_column).arg(err_msg));
+			xmlFile.close();
+			return res;
+		}
 	}
 	xmlFile.close();
 
@@ -4631,7 +4649,8 @@ bool LoadSettings()
 
 	g_modify_funscript = (data_map["use_modify_funscript_functions"].toInt() == 0) ? false : true;
 	g_modify_funscript_function_move_variants = data_map["functions_move_variants"];
-	g_modify_funscript_function_move_in_out_variants = data_map["functions_move_in_out"];
+	g_modify_funscript_function_move_in_out_variants = data_map["functions_move_in_out_variants"];
+	g_functions_move_in_out_variant = data_map["functions_move_in_out_variant"].toInt();
 
 	//------------------------------------------------------------------------------------------------
 
@@ -4648,7 +4667,16 @@ bool LoadSettings()
 	}
 	g_modify_funscript_function_move_variants = tmp_modify_funscript_function_move_variants;
 
-	pW->ui->functionsMoveInOut->setText(g_modify_funscript_function_move_in_out_variants);
+
+	QString tmp_modify_funscript_function_move_in_out_variants = g_modify_funscript_function_move_in_out_variants;
+	QStringList modify_funscript_function_move_in_out_variants = g_modify_funscript_function_move_in_out_variants.split(";");
+	for (QString& modify_funscript_function_move_in_out_variant : modify_funscript_function_move_in_out_variants)
+	{
+		pW->ui->functionsMoveInOutVariants->addItem(modify_funscript_function_move_in_out_variant);
+	}
+	g_modify_funscript_function_move_in_out_variants = tmp_modify_funscript_function_move_in_out_variants;
+
+	pW->ui->functionsMoveInOutVariants->setCurrentIndex(g_functions_move_in_out_variant - 1);
 
 	//--------------------
 

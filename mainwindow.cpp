@@ -109,7 +109,10 @@ MainWindow::MainWindow(QWidget *parent)
     QVBoxLayout* layout = new QVBoxLayout(ui->chartFrame);
     layout->addWidget(chartView);
 
-    connect(ui->functionsMoveInOut, SIGNAL(textChanged(const QString&)), this, SLOT(handleFunctionsMoveInOutChanged()));
+    connect(ui->functionsMoveInOutVariants, SIGNAL(editTextChanged(const QString&)), this, SLOT(handleFunctionsMoveInOutVariantsChanged(const QString&)));
+    connect(ui->functionsMoveInOutVariants, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(handleFunctionsMoveInOutVariantsContextMenuRequested(QPoint)));
+    connect(ui->functionsMoveInOutVariants->lineEdit(), SIGNAL(editingFinished()), SLOT(handleFunctionsMoveInOutVariantsEditingFinished()));
+    ui->functionsMoveInOutVariants->installEventFilter(this);
 
     //-------------------
 
@@ -248,6 +251,32 @@ void MainWindow::handleModifyFunscriptChanged()
     g_modify_funscript = ui->modifyFunscript->isChecked();
 }
 
+bool MainWindow::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == ui->functionsMoveVariants && event->type() == QEvent::KeyPress)
+    {
+        QKeyEvent* key = static_cast<QKeyEvent*>(event);
+        int ikey = key->key();
+
+        if ((ikey == Qt::Key_Up) || (ikey == Qt::Key_Down))
+        {
+            handleFunctionsMoveVariantsEditingFinished();
+        }
+    }
+    else if (obj == ui->functionsMoveInOutVariants && event->type() == QEvent::KeyPress)
+    {
+        QKeyEvent* key = static_cast<QKeyEvent*>(event);
+        int ikey = key->key();
+
+        if ((ikey == Qt::Key_Up) || (ikey == Qt::Key_Down))
+        {
+            handleFunctionsMoveInOutVariantsEditingFinished();
+        }
+    }
+
+    return QObject::eventFilter(obj, event);
+}
+
 void MainWindow::handleFunctionsMoveVariantsContextMenuRequested(QPoint pos)
 {
     QMenu menu;
@@ -288,22 +317,6 @@ void MainWindow::handleFunctionsMoveVariantsEditingFinished()
 {
     int cur_id = ui->functionsMoveVariants->currentIndex();
     ui->functionsMoveVariants->setItemText(cur_id, ui->functionsMoveVariants->lineEdit()->text());
-}
-
-bool MainWindow::eventFilter(QObject* obj, QEvent* event)
-{
-    if (obj == ui->functionsMoveVariants && event->type() == QEvent::KeyPress)
-    {
-        QKeyEvent* key = static_cast<QKeyEvent*>(event);
-        int ikey = key->key();
-        
-        if ((ikey == Qt::Key_Up) || (ikey == Qt::Key_Down))
-        {
-            handleFunctionsMoveVariantsEditingFinished();
-        }
-    }
-
-    return QObject::eventFilter(obj, event);
 }
 
 void MainWindow::handleFunctionsMoveVariantsChanged(const QString& str)
@@ -389,12 +402,72 @@ void MainWindow::handleFunctionsMoveVariantsChanged(const QString& str)
         chart->axisY()->setTitleText("ddpos");
     }
 
-    chart->setTitle(QString("Modify Funscript Function [id: %1]").arg(cur_id));
+    chart->setTitle(QString("Modify Funscript Function [id: %1]").arg(cur_id+1));
 }
 
-void MainWindow::handleFunctionsMoveInOutChanged()
+void MainWindow::handleFunctionsMoveInOutVariantsContextMenuRequested(QPoint pos)
 {
-    g_modify_funscript_function_move_in_out_variants = ui->functionsMoveInOut->text();
+    QMenu menu;
+    menu.addAction(QString("delete current item"));
+    menu.addAction(QString("add item before current item"));
+    menu.addAction(QString("add item after current item"));
+    QAction* pAction = menu.exec(ui->functionsMoveInOutVariants->mapToGlobal(pos));
+
+    if (pAction)
+    {
+        if (pAction->text() == QString("delete current item"))
+        {
+            int cur_id = ui->functionsMoveInOutVariants->currentIndex();
+
+            if (cur_id != -1)
+            {
+                ui->functionsMoveInOutVariants->removeItem(cur_id);
+            }
+        }
+        else if (pAction->text() == QString("add item before current item"))
+        {
+            int cur_id = ui->functionsMoveInOutVariants->currentIndex();
+            int insert_id = (cur_id == -1) ? 0 : cur_id;
+            ui->functionsMoveInOutVariants->insertItem(insert_id, QString("[]"));
+            handleFunctionsMoveInOutVariantsChanged(ui->functionsMoveInOutVariants->itemText(ui->functionsMoveInOutVariants->currentIndex()));
+        }
+        else if (pAction->text() == QString("add item after current item"))
+        {
+            int cur_id = ui->functionsMoveInOutVariants->currentIndex();
+            int insert_id = (cur_id == -1) ? 0 : cur_id + 1;
+            ui->functionsMoveInOutVariants->insertItem(insert_id, QString("[]"));
+            handleFunctionsMoveInOutVariantsChanged(ui->functionsMoveInOutVariants->itemText(ui->functionsMoveInOutVariants->currentIndex()));
+        }
+    }
+}
+
+void MainWindow::handleFunctionsMoveInOutVariantsEditingFinished()
+{
+    int cur_id = ui->functionsMoveInOutVariants->currentIndex();
+    ui->functionsMoveInOutVariants->setItemText(cur_id, ui->functionsMoveInOutVariants->lineEdit()->text());
+}
+
+void MainWindow::handleFunctionsMoveInOutVariantsChanged(const QString& str)
+{
+    int cur_id = ui->functionsMoveInOutVariants->currentIndex();
+
+    g_modify_funscript_function_move_in_out_variants = "";
+    for (int id = 0; id < ui->functionsMoveInOutVariants->count(); id++)
+    {
+        if (id > 0)
+        {
+            g_modify_funscript_function_move_in_out_variants += ";";
+        }
+
+        if (id == cur_id)
+        {
+            g_modify_funscript_function_move_in_out_variants += str;
+        }
+        else
+        {
+            g_modify_funscript_function_move_in_out_variants += ui->functionsMoveInOutVariants->itemText(id);
+        }
+    }
 }
 
 void MainWindow::handleRefreshDevicesButton()
@@ -463,15 +536,25 @@ void MainWindow::handleUseModifyFunscriptFunctions()
     {
         std::lock_guard lk(g_change_in_use_modify_funscript_functions_mutex);
         g_was_change_in_use_modify_funscript_functions = true;
+
         if (g_modify_funscript)
         {
-            g_modify_funscript = false;
-            show_msg("Turn Off Use Modify Funscript Functions", 2000, true);
+            if (g_functions_move_in_out_variant == ui->functionsMoveInOutVariants->count())
+            {
+                g_functions_move_in_out_variant = 1;
+                g_modify_funscript = false;
+                show_msg("Turn Off Use Modify Funscript Functions", 2000, true);
+            }
+            else
+            {
+                g_functions_move_in_out_variant++;
+                show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 2000, true);
+            }
         }
         else
         {
             g_modify_funscript = true;
-            show_msg("Turn On Use Modify Funscript Functions", 2000, true);
+            show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 2000, true);
         }
     }
 }

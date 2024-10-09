@@ -3,7 +3,8 @@
  <min_funscript_relative_move>20</min_funscript_relative_move>
  <use_modify_funscript_functions>0</use_modify_funscript_functions>
  <functions_move_variants>[unchanged],[0.75:0.95],[0.25:0.05],[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]</functions_move_variants>
- <functions_move_in_out>[0-120:0/0|1/2|2/1|4/4|3/3]</functions_move_in_out>
+ <functions_move_in_out_variants>[0-120:1/1|2/3|3/2|5/5|4/4];[0-120:1/1|2/3|3/2];[0-120:2/3];[0-120:3/2]</functions_move_in_out_variants>
+ <functions_move_in_out_variant>1</functions_move_in_out_variant>
  <dt_for_get_cur_speed>120</dt_for_get_cur_speed>
  <increase_hismith_speed_start_multiplier>1.25</increase_hismith_speed_start_multiplier>
  <slowdown_hismith_speed_start_multiplier>1.5</slowdown_hismith_speed_start_multiplier>
@@ -26,7 +27,7 @@
  <vlc_port>8080</vlc_port>
  <vlc_password>1234</vlc_password>
  <hotkey_stop>Shift+Q</hotkey_stop>
- <hotkey_pause>Shift+W</hotkey_pause> 
+ <hotkey_pause>Shift+W</hotkey_pause>
  <hotkey_resume>Shift+E</hotkey_resume>
  <hotkey_use_modify_funscript_functions>Shift+B</hotkey_use_modify_funscript_functions>
 </settings>

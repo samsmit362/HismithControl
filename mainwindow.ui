@@ -278,16 +278,6 @@
     <property name="title">
      <string>Modify Funscript Functions</string>
     </property>
-    <widget class="QLineEdit" name="functionsMoveInOut">
-     <property name="geometry">
-      <rect>
-       <x>10</x>
-       <y>100</y>
-       <width>221</width>
-       <height>24</height>
-      </rect>
-     </property>
-    </widget>
     <widget class="QLabel" name="label_6">
      <property name="geometry">
       <rect>
@@ -306,12 +296,12 @@
       <rect>
        <x>10</x>
        <y>80</y>
-       <width>131</width>
+       <width>181</width>
        <height>16</height>
       </rect>
      </property>
      <property name="text">
-      <string>Functions move in/out:</string>
+      <string>Functions move in/out variants:</string>
      </property>
     </widget>
     <widget class="QComboBox" name="functionsMoveVariants">
@@ -319,6 +309,22 @@
       <rect>
        <x>10</x>
        <y>50</y>
+       <width>221</width>
+       <height>24</height>
+      </rect>
+     </property>
+     <property name="contextMenuPolicy">
+      <enum>Qt::CustomContextMenu</enum>
+     </property>
+     <property name="editable">
+      <bool>true</bool>
+     </property>
+    </widget>
+    <widget class="QComboBox" name="functionsMoveInOutVariants">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>100</y>
        <width>221</width>
        <height>24</height>
       </rect>

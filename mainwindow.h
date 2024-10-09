@@ -58,6 +58,7 @@ extern int g_min_funscript_relative_move;
 extern bool g_modify_funscript;
 extern QString g_modify_funscript_function_move_variants;
 extern QString g_modify_funscript_function_move_in_out_variants;
+extern int g_functions_move_in_out_variant;
 
 extern QString g_req_webcam_name;
 extern QString g_hismith_device_name;
@@ -195,7 +196,9 @@ private slots:
     void handleFunctionsMoveVariantsChanged(const QString& str);
     void handleFunctionsMoveVariantsContextMenuRequested(QPoint pos);
     void handleFunctionsMoveVariantsEditingFinished();
-    void handleFunctionsMoveInOutChanged();
+    void handleFunctionsMoveInOutVariantsChanged(const QString& str);
+    void handleFunctionsMoveInOutVariantsContextMenuRequested(QPoint pos);
+    void handleFunctionsMoveInOutVariantsEditingFinished();
 
 protected:
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result);
