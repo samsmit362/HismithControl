@@ -46,8 +46,10 @@ struct speeds_data;
 
 extern bool g_pause;
 extern bool g_stop_run;
+extern bool g_was_change_in_use_modify_funscript_functions;
 
 extern std::mutex g_stop_mutex;
+extern std::mutex g_change_in_use_modify_funscript_functions_mutex;
 extern std::condition_variable g_stop_cvar;
 
 extern int g_max_allowed_hismith_speed;
@@ -66,10 +68,11 @@ extern bool g_work_in_progress;
 extern QString g_hotkey_stop;
 extern QString g_hotkey_pause;
 extern QString g_hotkey_resume;
+extern QString g_hotkey_use_modify_funscript_functions;
 
 //---------------------------------------------------------------
 
-void show_msg(QString msg, int timeout = 5000);
+void show_msg(QString msg, int timeout = 5000, bool always = false);
 void run_funscript();
 void test_hismith(int hismith_speed);
 void get_performance_with_hismith(int hismith_speed);
@@ -179,6 +182,7 @@ private slots:
     void handleStopStart();
     void handlePauseStart();
     void handleResumeStart();
+    void handleUseModifyFunscriptFunctions();
     void handleTrayExit();
     void handleRefreshDevicesButton();
     void handleSaveSettings();
@@ -202,6 +206,7 @@ public:
     QAction* stopStartAction;
     QAction* pauseStartAction;
     QAction* resumeStartAction;
+    QAction* useModifyFunscriptFunctionsAction;
     QAction* exitAction;
     QMenu* trayIconMenu;
     QChart* chart;

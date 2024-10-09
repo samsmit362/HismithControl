@@ -43,6 +43,7 @@ QString g_vlc_password;
 QString g_hotkey_stop;
 QString g_hotkey_pause;
 QString g_hotkey_resume;
+QString g_hotkey_use_modify_funscript_functions;
 
 //---------------------------------------------------------------
 
@@ -57,10 +58,12 @@ QNetworkRequest g_NetworkRequest;
 
 bool g_stop_run = false;
 bool g_pause = false;
+bool g_was_change_in_use_modify_funscript_functions = false;
 
 MainWindow* pW = NULL;
 
 std::mutex g_stop_mutex;
+std::mutex g_change_in_use_modify_funscript_functions_mutex;
 std::condition_variable g_stop_cvar;
 
 bool g_work_in_progress = false;
@@ -147,7 +150,8 @@ void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame)
 			(prev_frame.channels() == frame.channels()) &&
 			(memcmp(prev_frame.data, frame.data, frame.channels() * frame.size[0] * frame.size[1]) == 0) &&
 			!g_stop_run &&
-			!g_pause );
+			!g_pause && 
+			!g_was_change_in_use_modify_funscript_functions);
 }
 
 double set_hithmith_speed(double speed)
@@ -2945,9 +2949,10 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 // NOTE: QT Doesn't allow to create GUI in a non-main GUI thread
 // like QMessageBox for example, so using Win API
 //---------------------------------------------------------------
+bool  _tmp_msg_always;
 QString  _tmp_msg;
 const wchar_t _tmp_CLASS_NAME[] = L"MSG Window Class";
-std::mutex _tmp_msg_mutex;
+std::mutex _tmp_create_msg_mutex;
 HWND _tmp_hwnd = NULL;
 std::thread* _tmp_p_msg_thr = NULL;
 bool _tmp_stop_msg = false;
@@ -3048,14 +3053,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-void show_msg(QString msg, int timeout)
+void show_msg(QString msg, int timeout, bool always)
 {
 
 	if (_tmp_p_msg_thr)
 	{
-		_tmp_stop_msg = true;
 		if (_tmp_hwnd)
 		{
+			if (_tmp_msg_always && !always)
+			{
+				msg = _tmp_msg + QString("\n") + msg;
+				always = true;
+			}
+			_tmp_stop_msg = true;
 			SendMessage(_tmp_hwnd, WM_CLOSE, 0, 0);
 		}
 		_tmp_p_msg_thr->join();
@@ -3063,9 +3073,11 @@ void show_msg(QString msg, int timeout)
 		_tmp_stop_msg = false;
 	}
 
+	_tmp_msg = msg;
+	_tmp_msg_always = always;
+
 	_tmp_p_msg_thr = new std::thread([msg, timeout] {
-		_tmp_msg_mutex.lock();
-		_tmp_msg = msg;
+		_tmp_create_msg_mutex.lock();
 		HINSTANCE hInstance = (HINSTANCE)::GetModuleHandle(NULL);
 		WNDCLASSEX wx = {};
 		wx.cbSize = sizeof(WNDCLASSEX);
@@ -3118,7 +3130,7 @@ void show_msg(QString msg, int timeout)
 
 			UnregisterClass(_tmp_CLASS_NAME, hInstance);
 		}
-		_tmp_msg_mutex.unlock();
+		_tmp_create_msg_mutex.unlock();
 	});
 }
 
@@ -3213,7 +3225,7 @@ void run_funscript()
 			g_stop_cvar.wait(lk, [] { return !g_pause || g_stop_run; });
 			if (g_stop_run)
 				break;
-		}
+		}		
 
 		cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
 		last_play_video_filename = video_filename;
@@ -3266,11 +3278,17 @@ void run_funscript()
 		// Load Funscript and Hismith statistical data
 		std::vector<QPair<int, int>> funscript_data_maped;
 
-		if (last_load_funscript_fname != funscript_fname)
+		if ( (last_load_funscript_fname != funscript_fname) || g_was_change_in_use_modify_funscript_functions )
 		{
 			last_load_funscript_fname = funscript_fname;
 			funscript_data_maped_full.clear();
-			if (!get_parsed_funscript_data(funscript_fname, funscript_data_maped_full, all_speeds_data))
+
+			g_change_in_use_modify_funscript_functions_mutex.lock();
+			bool get_data = get_parsed_funscript_data(funscript_fname, funscript_data_maped_full, all_speeds_data);
+			g_was_change_in_use_modify_funscript_functions = false;
+			g_change_in_use_modify_funscript_functions_mutex.unlock();
+
+			if (!get_data)
 			{
 				do
 				{
@@ -3433,7 +3451,7 @@ void run_funscript()
 								get_d_in_front_form_poses(exp_abs_pos_before_speed_change, funscript_data_maped[0].second, max_search_pos_dif),
 								get_d_in_front_form_poses(abs_cur_pos, funscript_data_maped[0].second, max_search_pos_dif) );
 
-							if (g_stop_run || g_pause || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
+							if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 							{
 								break;
 							}
@@ -3445,7 +3463,7 @@ void run_funscript()
 
 						set_hithmith_speed(0.0);
 
-						if (g_stop_run || g_pause || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
+						if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 						{
 							continue;
 						}
@@ -3471,13 +3489,13 @@ void run_funscript()
 				start_time = GetTickCount64();
 				start_video_pos = cur_video_pos;
 
-				if (g_stop_run || g_pause || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
+				if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 				{
 					break;
 				}
 			}
 
-			if (g_stop_run || g_pause || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
+			if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 			{
 				continue;
 			}
@@ -3649,7 +3667,7 @@ void run_funscript()
 
 				do
 				{
-					if (g_stop_run || g_pause || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+					if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 					{
 						break;
@@ -3689,7 +3707,7 @@ void run_funscript()
 								video_filename = _tmp_video_filename;
 								is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
 
-								if (g_stop_run || g_pause || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+								if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 									(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 								{
 									break;
@@ -3799,7 +3817,7 @@ void run_funscript()
 					is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
 					new_start_video_pos = cur_video_pos - (int)(_tmp_cur_time - start_time);
 
-					if (g_stop_run || g_pause || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+					if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused || (cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 					{
 						// need to stop run
@@ -3835,7 +3853,7 @@ void run_funscript()
 					break;
 				}
 
-				if (g_stop_run || g_pause || is_video_paused ||
+				if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused ||
 					(cur_video_pos > (start_video_pos + (int)(cur_time - start_time)) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 				{
@@ -3856,7 +3874,7 @@ void run_funscript()
 					}
 					else
 					{
-						actions_end_with = QString("g_stop_run || g_pause || is_video_paused");
+						actions_end_with = QString("g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused");
 					}
 
 					//show_msg(actions_end_with);
@@ -4555,6 +4573,7 @@ bool LoadSettings()
 	g_hotkey_stop = data_map["hotkey_stop"];
 	g_hotkey_pause = data_map["hotkey_pause"];
 	g_hotkey_resume = data_map["hotkey_resume"];
+	g_hotkey_use_modify_funscript_functions = data_map["hotkey_use_modify_funscript_functions"];
 	pW->RegisterHotKeys();
 
 	{

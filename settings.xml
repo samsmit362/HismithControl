@@ -28,4 +28,5 @@
  <hotkey_stop>Shift+Q</hotkey_stop>
  <hotkey_pause>Shift+W</hotkey_pause> 
  <hotkey_resume>Shift+E</hotkey_resume>
+ <hotkey_use_modify_funscript_functions>Shift+B</hotkey_use_modify_funscript_functions>
 </settings>

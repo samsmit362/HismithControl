@@ -8,6 +8,7 @@
 #define HOTKEY_PAUSE_ID     1
 #define HOTKEY_RESUME_ID    2
 #define HOTKEY_STOP_ID      3
+#define HOTKEY_USE_MODIFY_FUNSCRIPT_FUNCTIONS_ID      4
 
 void Controller::handleResults()
 {
@@ -63,9 +64,16 @@ void MainWindow::RegisterHotKeys()
         get_key_mod(g_hotkey_resume) | MOD_NOREPEAT,
         get_key(g_hotkey_resume));
 
+    RegisterHotKey(
+        (HWND)this->window()->winId(),
+        HOTKEY_USE_MODIFY_FUNSCRIPT_FUNCTIONS_ID,
+        get_key_mod(g_hotkey_use_modify_funscript_functions) | MOD_NOREPEAT,
+        get_key(g_hotkey_use_modify_funscript_functions));
+
     stopStartAction->setText(tr("Stop Run\t") + g_hotkey_stop);
     pauseStartAction->setText(tr("Pause Run\t") + g_hotkey_pause);
     resumeStartAction->setText(tr("Resume Run\t") + g_hotkey_resume);
+    useModifyFunscriptFunctionsAction->setText(tr("Change Use Modify Funscript Functions\t") + g_hotkey_use_modify_funscript_functions);
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -118,6 +126,10 @@ MainWindow::MainWindow(QWidget *parent)
     resumeStartAction = new QAction(tr("Resume Run"), this);
     connect(resumeStartAction, &QAction::triggered, this, &MainWindow::handleResumeStart);
     trayIconMenu->addAction(resumeStartAction);
+
+    useModifyFunscriptFunctionsAction = new QAction(tr("Change Use Modify Funscript Functions"), this);
+    connect(useModifyFunscriptFunctionsAction, &QAction::triggered, this, &MainWindow::handleUseModifyFunscriptFunctions);
+    trayIconMenu->addAction(useModifyFunscriptFunctionsAction);
 
     exitAction = new QAction(tr("Exit"), this);
     connect(exitAction, &QAction::triggered, this, &MainWindow::handleTrayExit);
@@ -425,18 +437,43 @@ void MainWindow::handleStopStart()
 
 void MainWindow::handlePauseStart()
 {
-    std::lock_guard lk(g_stop_mutex);
-    show_msg("Pause pressed", 1000);
-    g_pause = true;
-    g_stop_cvar.notify_all();
+    if (g_work_in_progress)
+    {
+        std::lock_guard lk(g_stop_mutex);
+        show_msg("Pause pressed", 1000);
+        g_pause = true;
+        g_stop_cvar.notify_all();
+    }
 }
 
 void MainWindow::handleResumeStart()
 {
-    std::lock_guard lk(g_stop_mutex);
-    show_msg("Resume pressed", 1000);
-    g_pause = false;
-    g_stop_cvar.notify_all();
+    if (g_work_in_progress)
+    {
+        std::lock_guard lk(g_stop_mutex);
+        show_msg("Resume pressed", 1000);
+        g_pause = false;
+        g_stop_cvar.notify_all();
+    }
+}
+
+void MainWindow::handleUseModifyFunscriptFunctions()
+{
+    if (g_work_in_progress)
+    {
+        std::lock_guard lk(g_change_in_use_modify_funscript_functions_mutex);
+        g_was_change_in_use_modify_funscript_functions = true;
+        if (g_modify_funscript)
+        {
+            g_modify_funscript = false;
+            show_msg("Turn Off Use Modify Funscript Functions", 2000, true);
+        }
+        else
+        {
+            g_modify_funscript = true;
+            show_msg("Turn On Use Modify Funscript Functions", 2000, true);
+        }
+    }
 }
 
 void MainWindow::handleTrayExit()
@@ -463,6 +500,10 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
             else if (wp == HOTKEY_STOP_ID)
             {
                 handleStopStart();
+            }
+            else if (wp == HOTKEY_USE_MODIFY_FUNSCRIPT_FUNCTIONS_ID)
+            {
+                handleUseModifyFunscriptFunctions();
             }
         }
         
