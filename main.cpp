@@ -31,6 +31,8 @@ double g_max_telescopic_motor_rocker_arm_center_x_proportions;
 QString g_req_webcam_name;
 int g_webcam_frame_width;
 int g_webcam_frame_height;
+double g_webcam_fps;
+int g_webcam_focus;
 
 std::string g_intiface_central_client_url;
 int g_intiface_central_client_port;
@@ -83,6 +85,8 @@ QString g_modify_funscript_function_move_in_out_variants;
 // selected variant in g_modify_funscript_function_move_in_out_variants
 // it's value should be from 1 to num in g_modify_funscript_function_move_in_out_variants
 int g_functions_move_in_out_variant = 1;
+
+const int max_search_pos_dif = 45;
 
 //---------------------------------------------------------------
 
@@ -176,7 +180,7 @@ void draw_text(QString text, cv::Mat &frame, int x1 = -1, int y1 = -1, int x2 = 
 {
 	int fontFace = cv::FONT_HERSHEY_SIMPLEX;
 	double fontScale = 1;
-	int thickness = 3;
+	int thickness = 4;
 	int width = frame.cols;
 	int height = frame.rows;
 	int y_offset = 5;
@@ -192,7 +196,9 @@ void draw_text(QString text, cv::Mat &frame, int x1 = -1, int y1 = -1, int x2 = 
 		cv::Point textOrg((width - textSize.width) / 2, y_offset + textSize.height + thickness);
 
 		cv::putText(frame, line.toStdString(), textOrg, fontFace, fontScale,
-			cv::Scalar(0, 111, 221), thickness, 8);
+			cv::Scalar(0, 0, 0), thickness, cv::LINE_AA);
+		cv::putText(frame, line.toStdString(), textOrg, fontFace, fontScale,
+			cv::Scalar(255, 255, 255), thickness - 2, cv::LINE_AA);
 
 		y_offset += textSize.height + (2*thickness) + 5;
 	}
@@ -1204,6 +1210,20 @@ void test_camera()
 
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+		
+		if (g_webcam_fps > 0)
+		{
+			capture.set(cv::CAP_PROP_FPS, g_webcam_fps);
+		}
+		
+		double fps = capture.get(cv::CAP_PROP_FPS);
+
+		if (g_webcam_focus >= 0)
+		{
+			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+		}
+
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 		cv::namedWindow(title, 1);
@@ -1237,7 +1257,8 @@ void test_camera()
 			cv::bitwise_and(img_b, img_g, img_intersection);
 			img.setTo(cv::Scalar(0, 0, 255), img_intersection);
 
-			draw_text(QString("Press 'Enter' for use current colors as original colors. Current vs original colors:\nb[%1(%2)-%3(%4)][%5(%6)-%7(%8)][%9(%10)-%11(%12)]\ng[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors")
+			draw_text(QString("Press 'Enter' for use current colors as original colors. Current vs original colors:\nb[%1(%2)-%3(%4)][%5(%6)-%7(%8)][%9(%10)-%11(%12)]\ng[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\nPress b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors\n\
+fps: %25 focus: %26 press '[' or ']' for change focus")
 				.arg(B_range[0][0])
 				.arg(g_B_range[0][0])
 				.arg(B_range[0][1])
@@ -1262,6 +1283,8 @@ void test_camera()
 				.arg(g_G_range[2][0])
 				.arg(G_range[2][1])
 				.arg(g_G_range[2][1])
+				.arg(fps)
+				.arg(g_webcam_focus)
 				, img);
 			cv::imshow(title, img);
 
@@ -1381,6 +1404,41 @@ void test_camera()
 			else if (key == 'm')
 			{
 				G_range[2][1] = max(G_range[2][1] - 1, 0);
+			}
+
+			//-----------------------
+
+			else if (key == '[')
+			{
+				g_webcam_focus--;
+				if (g_webcam_focus < -1)
+				{
+					g_webcam_focus = -1;
+				}
+
+				if (g_webcam_focus >= 0)
+				{
+					capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+					capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+				}
+				else
+				{
+					capture.set(cv::CAP_PROP_AUTOFOCUS, 1);
+				}
+			}
+			else if (key == ']')
+			{
+				g_webcam_focus++;
+
+				if (g_webcam_focus >= 0)
+				{
+					capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+					capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+				}
+				else
+				{
+					capture.set(cv::CAP_PROP_AUTOFOCUS, 1);
+				}
 			}
 		}
 
@@ -2682,6 +2740,21 @@ void get_delay_data()
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
 
+		if (g_webcam_fps > 0)
+		{
+			capture.set(cv::CAP_PROP_FPS, g_webcam_fps);
+		}
+
+		double fps = capture.get(cv::CAP_PROP_FPS);
+
+		if (g_webcam_focus >= 0)
+		{
+			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+		}
+
+		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
+
 		get_new_camera_frame(capture, frame/*, prev_frame*/);
 		msec_video_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
 		if (!get_hismith_pos_by_image(frame, cur_pos))
@@ -2953,6 +3026,7 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 //---------------------------------------------------------------
 bool  _tmp_msg_always;
 QString  _tmp_msg;
+int  _tmp_timeout;
 const wchar_t _tmp_CLASS_NAME[] = L"MSG Window Class";
 std::mutex _tmp_create_msg_mutex;
 HWND _tmp_hwnd = NULL;
@@ -3066,6 +3140,11 @@ void show_msg(QString msg, int timeout, bool always)
 			{
 				msg = _tmp_msg + QString("\n") + msg;
 				always = true;
+
+				if (timeout < _tmp_timeout)
+				{
+					timeout = _tmp_timeout;
+				}
 			}
 			_tmp_stop_msg = true;
 			SendMessage(_tmp_hwnd, WM_CLOSE, 0, 0);
@@ -3077,6 +3156,7 @@ void show_msg(QString msg, int timeout, bool always)
 
 	_tmp_msg = msg;
 	_tmp_msg_always = always;
+	_tmp_timeout = timeout;
 
 	_tmp_p_msg_thr = new std::thread([msg, timeout] {
 		_tmp_create_msg_mutex.lock();
@@ -3177,6 +3257,20 @@ void run_funscript()
 	{
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+
+		if (g_webcam_fps > 0)
+		{
+			capture.set(cv::CAP_PROP_FPS, g_webcam_fps);
+		}
+
+		double fps = capture.get(cv::CAP_PROP_FPS);
+
+		if (g_webcam_focus >= 0)
+		{
+			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+		}
+
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 		// geting first 30 frames for get better camera focus
@@ -3389,7 +3483,6 @@ void run_funscript()
 			//waiting for video unpaused
 
 			bool position_was_aligned = false;
-			const int max_search_pos_dif = 30;
 
 			if (is_vlc_time_in_milliseconds && (is_video_paused || (cur_video_pos < funscript_data_maped[0].first - g_speed_change_delay - g_min_dt_for_set_hismith_speed)))
 			{
@@ -4084,6 +4177,21 @@ void get_performance_with_hismith(int hismith_speed)
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
 
+		if (g_webcam_fps > 0)
+		{
+			capture.set(cv::CAP_PROP_FPS, g_webcam_fps);
+		}
+
+		double fps = capture.get(cv::CAP_PROP_FPS);
+
+		if (g_webcam_focus >= 0)
+		{
+			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+		}
+
+		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
+
 		// geting first 30 frames for get better camera focus
 		for (int i = 0; i < 30; i++)
 		{
@@ -4222,6 +4330,21 @@ void get_statistics_with_hismith()
 	{
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+
+		if (g_webcam_fps > 0)
+		{
+			capture.set(cv::CAP_PROP_FPS, g_webcam_fps);
+		}
+
+		double fps = capture.get(cv::CAP_PROP_FPS);
+
+		if (g_webcam_focus >= 0)
+		{
+			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+		}
+
+		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 		// geting first 30 frames for get better camera focus
 		for (int i = 0; i < 30; i++)
@@ -4380,6 +4503,20 @@ void test_hismith(int hismith_speed)
 	{
 		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+
+		if (g_webcam_fps > 0)
+		{
+			capture.set(cv::CAP_PROP_FPS, g_webcam_fps);
+		}
+
+		double fps = capture.get(cv::CAP_PROP_FPS);
+
+		if (g_webcam_focus >= 0)
+		{
+			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+		}
+
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 		// geting first 30 frames for get better camera focus
@@ -4521,6 +4658,8 @@ void SaveSettings()
 	add_xml_element(document, root, "req_webcam_name", selected_webcam);
 	add_xml_element(document, root, "webcam_frame_width", QString::number(g_webcam_frame_width));
 	add_xml_element(document, root, "webcam_frame_height", QString::number(g_webcam_frame_height));
+	add_xml_element(document, root, "webcam_fps", QString::number(g_webcam_fps));
+	add_xml_element(document, root, "webcam_focus", QString::number(g_webcam_focus));
 
 	add_xml_element(document, root, "intiface_central_client_url", g_intiface_central_client_url.c_str());
 	add_xml_element(document, root, "intiface_central_client_port", QString::number(g_intiface_central_client_port));
@@ -4637,6 +4776,8 @@ bool LoadSettings()
 	g_req_webcam_name = data_map["req_webcam_name"];
 	g_webcam_frame_width = data_map["webcam_frame_width"].toInt();
 	g_webcam_frame_height = data_map["webcam_frame_height"].toInt();
+	g_webcam_fps = data_map["webcam_fps"].toDouble();
+	g_webcam_focus = data_map["webcam_focus"].toInt();
 
 	g_intiface_central_client_url = data_map["intiface_central_client_url"].toStdString();
 	g_intiface_central_client_port = data_map["intiface_central_client_port"].toInt();

@@ -543,18 +543,18 @@ void MainWindow::handleUseModifyFunscriptFunctions()
             {
                 g_functions_move_in_out_variant = 1;
                 g_modify_funscript = false;
-                show_msg("Turn Off Use Modify Funscript Functions", 2000, true);
+                show_msg("Turn Off Use Modify Funscript Functions", 4000, true);
             }
             else
             {
                 g_functions_move_in_out_variant++;
-                show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 2000, true);
+                show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true);
             }
         }
         else
         {
             g_modify_funscript = true;
-            show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 2000, true);
+            show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true);
         }
     }
 }
