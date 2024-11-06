@@ -8,8 +8,6 @@
  <dt_for_get_cur_speed>120</dt_for_get_cur_speed>
  <increase_hismith_speed_start_multiplier>1.25</increase_hismith_speed_start_multiplier>
  <slowdown_hismith_speed_start_multiplier>1.5</slowdown_hismith_speed_start_multiplier>
- <increase_hismith_speed_change_multiplier>0.05</increase_hismith_speed_change_multiplier>
- <slowdown_hismith_speed_change_multiplier>0.2</slowdown_hismith_speed_change_multiplier>
  <speed_change_delay>-1</speed_change_delay>
  <cpu_freezes_timeout>300</cpu_freezes_timeout>
  <B_range>[5-160][150-205][60-120]</B_range>
@@ -20,6 +18,8 @@
  <req_webcam_name>Full HD webcam</req_webcam_name>
  <webcam_frame_width>1920</webcam_frame_width>
  <webcam_frame_height>1080</webcam_frame_height>
+ <webcam_fps>-1</webcam_fps>
+ <webcam_focus>-1</webcam_focus>
  <intiface_central_client_url>ws://127.0.0.1</intiface_central_client_url>
  <intiface_central_client_port>12345</intiface_central_client_port>
  <hismith_device_name>Hismith Sex Machine</hismith_device_name>
