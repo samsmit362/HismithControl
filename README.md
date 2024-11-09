@@ -42,7 +42,7 @@ So if you plan to use a higher speed than 50 you need to set "Hismith Speed Limi
 6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
 7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
-https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases ( https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/artifacts ) \
+https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases \
 You can also use standard VLC but be aware that desynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds.\
 Also you will need to enabler HTTP request supports in VLC according\
 https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer \
@@ -79,7 +79,7 @@ Also after play (Alt+Q) you can open new generated res_data\\!results.txt for ch
  '-90' -- '90' are mostly good results especially if they below '45'.
 
 ## <font color="red">! WARNING !</font>
-**<font color="red">Be aware to stop Hismith by power button or hotkeys (alt+b or alt+q) to stop running.</font>**\
+**<font color="red">Be aware to stop Hismith by power button or hotkeys to stop running.</font>**\
 Due to different reasons like computer freeze or "Intiface Central" lose Hismith device or "Funscript - some of which has very fast stroking on scenes where they are totally missed or not".\
 If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI.\
 So I highly recommend checking each scene before usage.\
@@ -97,6 +97,7 @@ Also program save result parsed funscript to "res_data" folder with same name as
 You can use this option for get better experience on simple moves.\
 In most cases funscripts use simple patterns for "in"(going inside) and "out"(going outside) moves without details how to make it (without additional points inside such moves).\
 In case of turn on this feature ("Use Modify Funscript Functions" CheckBox) it will automatically replace such simple moves by adding additional move detail points inside moves.\
+You can turn on/off or switch used Modify Funscript Functions even during execution by using hotkey (<hotkey_use_modify_funscript_functions> in settings.xml).\
 \
 Variants of such added points are defined in "Functions move variants:" GUI (<functions_move_variants> in settings.xml).\
 Its format is:\

@@ -1,6 +1,9 @@
 
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include <gdiplus.h>
+using namespace Gdiplus;
+#pragma comment (lib,"Gdiplus.lib")
 
 
 //---------------------------------------------------------------
@@ -1148,8 +1151,8 @@ void test_camera()
 
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
-		// geting first 30 frames for get better camera focus
-		for (int i = 0; i < 30; i++)
+		// geting first 60 frames for get better camera focus
+		for (int i = 0; i < 60; i++)
 		{
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
 		}
@@ -1393,6 +1396,158 @@ int rel_move_to_dpos(double rel_move)
 	}
 
 	return dpos;
+}
+
+bool get_modify_funscript_move_in_out_functions(std::vector<std::vector<QPair<double, double>>>& modify_funscript_move_functions, std::vector<QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>>& modify_funscript_move_in_out_functions)
+{
+	bool res = false;
+	modify_funscript_move_functions.clear();
+	modify_funscript_move_in_out_functions.clear();
+
+	// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87],[unchanged]"; // [fast:slow:fast],[slow:fast:slow],[unchanged]
+	QStringList modify_funscript_function_move_variants = g_modify_funscript_function_move_variants.mid(1, g_modify_funscript_function_move_variants.size() - 2).split("],[");
+	for (QString& modify_funscript_function_move_variant : modify_funscript_function_move_variants)
+	{
+		std::vector<QPair<double, double>> modify_funscript_move_function;
+
+		if (modify_funscript_function_move_variant == QString("unchanged"))
+		{
+			modify_funscript_move_functions.push_back(modify_funscript_move_function);
+		}
+		else
+		{
+			QStringList modify_funscript_function_move_variant_actions = modify_funscript_function_move_variant.split("|");
+			for (QString& modify_funscript_function_move_variant_action : modify_funscript_function_move_variant_actions)
+			{
+				QRegularExpression re_modify_funscript_function_move_variant_action("^([\\d\\.]+):([\\d\\.]+)$");
+				QRegularExpressionMatch match;
+
+				match = re_modify_funscript_function_move_variant_action.match(modify_funscript_function_move_variant_action);
+				if (!match.hasMatch())
+				{
+					error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_variant_action: %1, it should be ddt(0.0-1.0):ddpos[0.0-1.0] or 'unchanged'").arg(modify_funscript_function_move_variant_action));
+					return res;
+				}
+				else
+				{
+					double ddt = match.captured(1).toDouble();
+					double ddpos = match.captured(2).toDouble();
+
+					if (!((ddt > 0) && (ddt < 1)))
+					{
+						error_msg(QString("ERROR: incorrect format of ddt: %1 in modify_funscript_function_move_variant_action: %2, ddt should be: (ddt > 0) && (ddt < 1)").arg(ddt).arg(modify_funscript_function_move_variant_action));
+						return res;
+					}
+
+					if (!((ddpos >= 0) && (ddpos <= 1)))
+					{
+						error_msg(QString("ERROR: incorrect format of ddpos: %1 in modify_funscript_function_move_variant_action: %2, ddpos should be: (ddt > 0) && (ddt < 1)").arg(ddpos).arg(modify_funscript_function_move_variant_action));
+						return res;
+					}
+
+					modify_funscript_move_function.push_back(QPair<double, double>(ddt, ddpos));
+				}
+			}
+
+			modify_funscript_move_functions.push_back(modify_funscript_move_function);
+		}
+	}
+
+	// [0-200:1/2|2/1|random/random],[200-maximum:0/0]
+	QString modify_funscript_function_move_in_out_variant = pW->ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1);
+	QStringList modify_funscript_function_move_in_out_variants = modify_funscript_function_move_in_out_variant.mid(1, modify_funscript_function_move_in_out_variant.size() - 2).split("],[");
+	for (QString& modify_funscript_function_move_in_out_sub_variant : modify_funscript_function_move_in_out_variants)
+	{
+		QRegularExpression re_modify_funscript_move_in_out_function("^(\\d+)\\-(\\d+|maximum):([^:]+)$");
+		QRegularExpressionMatch match;
+
+		bool sub_res = false;
+
+		match = re_modify_funscript_move_in_out_function.match(modify_funscript_function_move_in_out_sub_variant);
+		if (match.hasMatch())
+		{
+			QString val;
+			int min_speed = match.captured(1).toInt();
+
+			val = match.captured(2);
+			int max_speed = (val == "maximum") ? -1 : val.toInt();
+
+			if ((max_speed != -1) && (max_speed <= min_speed))
+			{
+				error_msg(QString("ERROR: incorrect format of max_speed: %1 in modify_funscript_function_move_in_out_sub_variant: %2, max_speed should be > min_speed").arg(max_speed).arg(modify_funscript_function_move_in_out_sub_variant));
+				return res;
+			}
+
+			val = match.captured(3);
+
+			std::vector<QPair<std::vector<int>, std::vector<int>>> variants_pairs;
+
+			QStringList _variants = val.split("|");
+			for (QString& variant_pair : _variants)
+			{
+				QStringList vars_in_out = variant_pair.split("/");
+				std::vector<int> variants_in;
+				std::vector<int> variants_out;
+
+				if (vars_in_out.size() == 2)
+				{
+					auto get_variants = [&modify_funscript_move_functions, &variant_pair, &modify_funscript_function_move_in_out_sub_variant](QString variant_str, QString move_type, std::vector<int>& variants)
+					{
+						if (variant_str == QString("random"))
+						{
+							for (int variant = 0; variant < modify_funscript_move_functions.size(); variant++)
+							{
+								variants.push_back(variant);
+							}
+						}
+						else
+						{
+							int variant = variant_str.toInt() - 1;
+
+							if (!((variant >= 0) && (variant < modify_funscript_move_functions.size())))
+							{
+								error_msg(QString("ERROR: incorrect format of variant_%1: %2 in variant_pair: %3 in modify_funscript_function_move_in_out_sub_variant: %4, it should be >= 1, <= modify_funscript_move_functions.size() (%4) or 'random'").arg(move_type).arg(variant_str).arg(variant_pair).arg(modify_funscript_function_move_in_out_sub_variant).arg(modify_funscript_move_functions.size()));
+								return false;
+							}
+
+							variants.push_back(variant);
+						}
+
+						return true;
+					};
+
+					res = get_variants(vars_in_out[0], "in", variants_in);
+					if (!res)
+					{
+						return res;
+					}
+
+					res = get_variants(vars_in_out[1], "out", variants_out);
+					if (!res)
+					{
+						return res;
+					}
+
+					variants_pairs.push_back(QPair<std::vector<int>, std::vector<int>>(variants_in, variants_out));
+				}
+			}
+
+			modify_funscript_move_in_out_functions.push_back(QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>(QPair<int, int>(min_speed, max_speed), variants_pairs));
+			sub_res = true;
+		}
+
+		if (!sub_res)
+		{
+			error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_in_out_sub_variant: %2,\nit should be :\n"\
+				"[min_speed_in_rpm_1-max_speed_in_rpm_1:move_in_variant_id_1_1/move_out_variant_id_1_1|(or)move_in_variant_id_1_2/move_out_variant_id_1_2|...]\n"\
+				"For example:\n" \
+				"[0-200:2/3|3/2|random/random]\n"\
+				"[200-maximum:1/1]").arg(modify_funscript_function_move_in_out_sub_variant));
+			return res;
+		}
+	}
+
+	return true;
 }
 
 bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data &all_speeds_data, QString *p_res_details)
@@ -1656,148 +1811,11 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 		std::vector<std::vector<QPair<double, double>>> modify_funscript_move_functions;
 		std::vector<QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>> modify_funscript_move_in_out_functions;
+		res = get_modify_funscript_move_in_out_functions(modify_funscript_move_functions, modify_funscript_move_in_out_functions);
 
-		// "[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87],[unchanged]"; // [fast:slow:fast],[slow:fast:slow],[unchanged]
-		QStringList modify_funscript_function_move_variants = g_modify_funscript_function_move_variants.mid(1, g_modify_funscript_function_move_variants.size() - 2).split("],[");
-		for (QString& modify_funscript_function_move_variant : modify_funscript_function_move_variants)
+		if (!res)
 		{
-			std::vector<QPair<double, double>> modify_funscript_move_function;
-
-			if (modify_funscript_function_move_variant == QString("unchanged"))
-			{
-				modify_funscript_move_functions.push_back(modify_funscript_move_function);
-			}
-			else
-			{
-				QStringList modify_funscript_function_move_variant_actions = modify_funscript_function_move_variant.split("|");
-				for (QString& modify_funscript_function_move_variant_action : modify_funscript_function_move_variant_actions)
-				{
-					QRegularExpression re_modify_funscript_function_move_variant_action("^([\\d\\.]+):([\\d\\.]+)$");
-					QRegularExpressionMatch match;
-
-					match = re_modify_funscript_function_move_variant_action.match(modify_funscript_function_move_variant_action);
-					if (!match.hasMatch())
-					{
-						error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_variant_action: %1, it should be ddt(0.0-1.0):ddpos[0.0-1.0] or 'unchanged'").arg(modify_funscript_function_move_variant_action));
-						return res;
-					}
-					else
-					{
-						double ddt = match.captured(1).toDouble();
-						double ddpos = match.captured(2).toDouble();
-
-						if (!((ddt > 0) && (ddt < 1)))
-						{
-							error_msg(QString("ERROR: incorrect format of ddt: %1 in modify_funscript_function_move_variant_action: %2, ddt should be: (ddt > 0) && (ddt < 1)").arg(ddt).arg(modify_funscript_function_move_variant_action));
-							return res;
-						}
-
-						if (!((ddpos >= 0) && (ddpos <= 1)))
-						{
-							error_msg(QString("ERROR: incorrect format of ddpos: %1 in modify_funscript_function_move_variant_action: %2, ddpos should be: (ddt > 0) && (ddt < 1)").arg(ddpos).arg(modify_funscript_function_move_variant_action));
-							return res;
-						}
-
-						modify_funscript_move_function.push_back(QPair<double, double>(ddt, ddpos));
-					}
-				}
-
-				modify_funscript_move_functions.push_back(modify_funscript_move_function);
-			}
-		}
-
-		// [0-200:1/2|2/1|random/random],[200-maximum:0/0]
-		QString modify_funscript_function_move_in_out_variant = pW->ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1);
-		QStringList modify_funscript_function_move_in_out_variants = modify_funscript_function_move_in_out_variant.mid(1, modify_funscript_function_move_in_out_variant.size() - 2).split("],[");
-		for (QString& modify_funscript_function_move_in_out_sub_variant : modify_funscript_function_move_in_out_variants)
-		{
-			QRegularExpression re_modify_funscript_move_in_out_function("^(\\d+)\\-(\\d+|maximum):([^:]+)$");
-			QRegularExpressionMatch match;
-
-			bool sub_res = false;
-
-			match = re_modify_funscript_move_in_out_function.match(modify_funscript_function_move_in_out_sub_variant);
-			if (match.hasMatch())
-			{
-				QString val;
-				int min_speed = match.captured(1).toInt();
-
-				val = match.captured(2);
-				int max_speed = (val == "maximum") ? -1 : val.toInt();
-
-				if ((max_speed != -1) && (max_speed <= min_speed))
-				{
-					error_msg(QString("ERROR: incorrect format of max_speed: %1 in modify_funscript_function_move_in_out_sub_variant: %2, max_speed should be > min_speed").arg(max_speed).arg(modify_funscript_function_move_in_out_sub_variant));
-					return res;
-				}
-
-				val = match.captured(3);
-
-				std::vector<QPair<std::vector<int>, std::vector<int>>> variants_pairs;
-
-				QStringList _variants = val.split("|");
-				for (QString& variant_pair : _variants)
-				{
-					QStringList vars_in_out = variant_pair.split("/");
-					std::vector<int> variants_in;
-					std::vector<int> variants_out;
-
-					if (vars_in_out.size() == 2)
-					{
-						auto get_variants = [&modify_funscript_move_functions, &variant_pair, &modify_funscript_function_move_in_out_sub_variant](QString variant_str, QString move_type, std::vector<int>& variants)
-						{
-							if (variant_str == QString("random"))
-							{
-								for (int variant = 0; variant < modify_funscript_move_functions.size(); variant++)
-								{
-									variants.push_back(variant);
-								}
-							}
-							else
-							{
-								int variant = variant_str.toInt() - 1;
-
-								if (!((variant >= 0) && (variant < modify_funscript_move_functions.size())))
-								{
-									error_msg(QString("ERROR: incorrect format of variant_%1: %2 in variant_pair: %3 in modify_funscript_function_move_in_out_sub_variant: %4, it should be >= 1, <= modify_funscript_move_functions.size() (%4) or 'random'").arg(move_type).arg(variant_str).arg(variant_pair).arg(modify_funscript_function_move_in_out_sub_variant).arg(modify_funscript_move_functions.size()));
-									return false;
-								}
-
-								variants.push_back(variant);
-							}
-
-							return true;
-						};
-
-						res = get_variants(vars_in_out[0], "in", variants_in);
-						if (!res)
-						{
-							return res;
-						}
-
-						res = get_variants(vars_in_out[1], "out", variants_out);
-						if (!res)
-						{
-							return res;
-						}
-
-						variants_pairs.push_back(QPair<std::vector<int>, std::vector<int>>(variants_in, variants_out));
-					}
-				}
-
-				modify_funscript_move_in_out_functions.push_back(QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>(QPair<int, int>(min_speed, max_speed), variants_pairs));
-				sub_res = true;
-			}
-
-			if (!sub_res)
-			{
-				error_msg(QString("ERROR: incorrect format of modify_funscript_function_move_in_out_sub_variant: %2,\nit should be :\n"\
-					"[min_speed_in_rpm_1-max_speed_in_rpm_1:move_in_variant_id_1_1/move_out_variant_id_1_1|(or)move_in_variant_id_1_2/move_out_variant_id_1_2|...]\n"\
-					"For example:\n" \
-					"[0-200:2/3|3/2|random/random]\n"\
-					"[200-maximum:1/1]").arg(modify_funscript_function_move_in_out_sub_variant));
-				return res;
-			}
+			return res;
 		}
 
 		std::list<QPair<int, int>> funscript_data_list;
@@ -2836,7 +2854,8 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 // NOTE: QT Doesn't allow to create GUI in a non-main GUI thread
 // like QMessageBox for example, so using Win API
 //---------------------------------------------------------------
-bool  _tmp_msg_always;
+bool  _tmp_always;
+QString  _tmp_msg_always;
 QString  _tmp_msg;
 int  _tmp_timeout;
 const wchar_t _tmp_CLASS_NAME[] = L"MSG Window Class";
@@ -2844,6 +2863,7 @@ std::mutex _tmp_create_msg_mutex;
 HWND _tmp_hwnd = NULL;
 std::thread* _tmp_p_msg_thr = NULL;
 bool _tmp_stop_msg = false;
+bool _tmp_drow_modify_funscript_functions = true;
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
@@ -2894,6 +2914,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 			total_text_size.cy += text_size.cy + 10;
 		}
 
+		int draw_h = 100;
+		std::vector<std::vector<QPair<double, double>>> modify_funscript_move_functions;
+		std::vector<QPair<QPair<int, int>, std::vector<QPair<std::vector<int>, std::vector<int>>>>> modify_funscript_move_in_out_functions;
+
+		if (_tmp_drow_modify_funscript_functions)
+		{			
+			if (get_modify_funscript_move_in_out_functions(modify_funscript_move_functions, modify_funscript_move_in_out_functions))
+			{
+				total_text_size.cy += modify_funscript_move_in_out_functions.size() * (draw_h + 10);
+
+				for (int move_in_out_id = 0; move_in_out_id < modify_funscript_move_in_out_functions.size(); move_in_out_id++)
+				{
+					total_text_size.cx = max(total_text_size.cx, (20 * (modify_funscript_move_in_out_functions[move_in_out_id].second.size() - 1)) + 
+						(draw_h * 2 * modify_funscript_move_in_out_functions[move_in_out_id].second.size()));
+				}
+			}
+			else
+			{
+				_tmp_drow_modify_funscript_functions = false;
+			}
+		}
+
 		int screen_w = GetSystemMetrics(SM_CXSCREEN);
 		int screen_h = GetSystemMetrics(SM_CYSCREEN);
 
@@ -2927,6 +2969,110 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 			rt.top = rt.bottom;
 		}
 
+		int bottom = rt.bottom + 10;
+
+		if (_tmp_drow_modify_funscript_functions)
+		{
+			Graphics graphics(hdc);
+			Pen      pen(Color(255, 0, 0, 0), 5.0);
+
+			for (int move_in_out_id = 0; move_in_out_id < modify_funscript_move_in_out_functions.size(); move_in_out_id++)
+			{
+				int left = ( (total_text_size.cx + 20) - 
+					(20 * (modify_funscript_move_in_out_functions[move_in_out_id].second.size() - 1)) - 
+					(draw_h * 2 * modify_funscript_move_in_out_functions[move_in_out_id].second.size()) ) / 2;
+
+				for (int variants_pair_id = 0; variants_pair_id < modify_funscript_move_in_out_functions[move_in_out_id].second.size(); variants_pair_id++)
+				{
+					std::vector<int> variant_ids;
+
+					if (modify_funscript_move_in_out_functions[move_in_out_id].second[variants_pair_id].first.size() == 1)
+					{
+						variant_ids.push_back(modify_funscript_move_in_out_functions[move_in_out_id].second[variants_pair_id].first[0]);
+					}
+					else
+					{
+						variant_ids.push_back(-1); // random
+					}
+
+					if (modify_funscript_move_in_out_functions[move_in_out_id].second[variants_pair_id].second.size() == 1)
+					{
+						variant_ids.push_back(modify_funscript_move_in_out_functions[move_in_out_id].second[variants_pair_id].second[0]);
+					}
+					else
+					{
+						variant_ids.push_back(-1); // random
+					}
+
+					for (int direction_id = 0; direction_id < 2; direction_id++)
+					{
+						int variant_id = variant_ids[direction_id];
+
+						if (variant_id == -1) // random
+						{
+							if (direction_id == 0)
+							{
+								rt.left = left;
+								rt.right = left + draw_h;
+								rt.top = bottom;
+								rt.bottom = bottom + draw_h;
+							}
+							else
+							{
+								rt.left = left + draw_h;
+								rt.right = left + (draw_h * 2);
+								rt.top = bottom;
+								rt.bottom = bottom + draw_h;
+							}
+							DrawText(hdc, L"RND", -1, &rt, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+						}
+						else
+						{
+							std::vector<QPair<double, double>> modify_funscript_move_function = modify_funscript_move_functions[variant_id];
+
+							int ddt, ddmove, ddt_prev = 0;
+
+							modify_funscript_move_function.insert(modify_funscript_move_function.begin(), QPair<double, double>(0.0, 0.0));
+							modify_funscript_move_function.push_back(QPair<double, double>(1.0, 1.0));
+							for (int mov_id = 1; mov_id < modify_funscript_move_function.size(); mov_id++)
+							{
+								int ddt1, ddmove1, ddt2, ddmove2;
+								int x1, y1, x2, y2;
+
+								ddt1 = (int)((double)draw_h * modify_funscript_move_function[mov_id - 1].first);
+								ddmove1 = (int)((double)draw_h * modify_funscript_move_function[mov_id - 1].second);
+
+								ddt2 = (int)((double)draw_h * modify_funscript_move_function[mov_id].first);
+								ddmove2 = (int)((double)draw_h * modify_funscript_move_function[mov_id].second);
+
+								if (direction_id == 0)
+								{
+									x1 = left + ddt1;
+									x2 = left + ddt2;
+									y1 = bottom + draw_h - ddmove1;
+									y2 = bottom + draw_h - ddmove2;
+								}
+								else
+								{
+									x1 = left + draw_h + ddt1;
+									x2 = left + draw_h + ddt2;
+
+									y1 = bottom + ddmove1;
+									y2 = bottom + ddmove2;
+								}
+
+								graphics.DrawLine(&pen, x1, y1, x2, y2);
+							}
+						}
+					}
+				
+					left += (draw_h * 2) + 20;
+				}
+			
+				bottom += draw_h + 10;
+			}
+		}
+
 		// Always select the old font back into the DC
 		SelectObject(hdc, hOldFont);
 		DeleteObject(hNewFont);
@@ -2941,17 +3087,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-void show_msg(QString msg, int timeout, bool always)
+void show_msg(QString msg, int timeout, bool always, bool drow_modify_funscript_functions)
 {
+	if (always)
+	{
+		_tmp_msg_always = msg;
+		_tmp_always = false;
+	}
 
 	if (_tmp_p_msg_thr)
 	{
 		if (_tmp_hwnd)
 		{
-			if (_tmp_msg_always && !always)
+			if (_tmp_always)
 			{
-				msg = _tmp_msg + QString("\n") + msg;
+				msg = _tmp_msg_always + QString("\n") + msg;
 				always = true;
+				drow_modify_funscript_functions = drow_modify_funscript_functions || _tmp_drow_modify_funscript_functions;
 
 				if (timeout < _tmp_timeout)
 				{
@@ -2967,8 +3119,9 @@ void show_msg(QString msg, int timeout, bool always)
 	}
 
 	_tmp_msg = msg;
-	_tmp_msg_always = always;
+	_tmp_always = always;
 	_tmp_timeout = timeout;
+	_tmp_drow_modify_funscript_functions = drow_modify_funscript_functions;
 
 	_tmp_p_msg_thr = new std::thread([msg, timeout] {
 		_tmp_create_msg_mutex.lock();
@@ -3091,8 +3244,8 @@ void run_funscript()
 
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
-		// geting first 30 frames for get better camera focus
-		for (int i = 0; i < 30; i++)
+		// geting first 60 frames for get better camera focus
+		for (int i = 0; i < 60; i++)
 		{
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
 		}
@@ -3288,11 +3441,11 @@ void run_funscript()
 
 			if (is_video_paused)
 			{
-				show_msg("Ready to go", 1000);
+				show_msg("Ready to go", 2000, false, g_modify_funscript);
 			}
 			else
 			{
-				show_msg("Runing!", 1000);
+				show_msg("Runing!", 2000, false, g_modify_funscript);
 			}
 
 			start_video_pos = cur_video_pos;
@@ -4371,8 +4524,8 @@ void test_hismith(int hismith_speed)
 
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
-		// geting first 30 frames for get better camera focus
-		for (int i = 0; i < 30; i++)
+		// geting first 60 frames for get better camera focus
+		for (int i = 0; i < 60; i++)
 		{
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
 		}
@@ -4740,6 +4893,10 @@ void test_vlc()
 int main(int argc, char *argv[])
 {
 	std::srand(std::time(nullptr)); // use current time as seed for random generator
+
+	GdiplusStartupInput gdiplusStartupInput;
+	ULONG_PTR gdiplusToken;
+	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
     QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();

@@ -513,7 +513,7 @@ void MainWindow::handlePauseStart()
     if (g_work_in_progress)
     {
         std::lock_guard lk(g_stop_mutex);
-        show_msg("Pause pressed", 1000);
+        show_msg("Pause pressed", 2000, true, g_modify_funscript);
         g_pause = true;
         g_stop_cvar.notify_all();
     }
@@ -524,7 +524,7 @@ void MainWindow::handleResumeStart()
     if (g_work_in_progress)
     {
         std::lock_guard lk(g_stop_mutex);
-        show_msg("Resume pressed", 1000);
+        show_msg("Resume pressed", 2000, true, g_modify_funscript);
         g_pause = false;
         g_stop_cvar.notify_all();
     }
@@ -548,13 +548,13 @@ void MainWindow::handleUseModifyFunscriptFunctions()
             else
             {
                 g_functions_move_in_out_variant++;
-                show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true);
+                show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
             }
         }
         else
         {
             g_modify_funscript = true;
-            show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true);
+            show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
         }
     }
 }

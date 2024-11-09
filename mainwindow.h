@@ -73,7 +73,7 @@ extern QString g_hotkey_use_modify_funscript_functions;
 
 //---------------------------------------------------------------
 
-void show_msg(QString msg, int timeout = 5000, bool always = false);
+void show_msg(QString msg, int timeout = 5000, bool always = false, bool drow_modify_funscript_functions = false);
 void run_funscript();
 void test_hismith(int hismith_speed);
 void get_performance_with_hismith(int hismith_speed);
