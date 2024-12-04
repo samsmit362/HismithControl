@@ -264,14 +264,16 @@ int MessageBoxPos(HWND hWnd, const WCHAR* sText, const WCHAR* sCaption, UINT uTy
 	return iResult;
 }
 
-void show_frame_in_cv_window(cv::String wname, cv::Mat* p_frame)
+void show_frame_in_cv_window(cv::String wname, cv::Mat &frame)
 {
-	cv::imshow(wname, *p_frame);
+	cv::namedWindow(wname, cv::WINDOW_NORMAL);
 	cv::setWindowProperty(wname, cv::WND_PROP_TOPMOST, 1);
-	cv::Rect rc = cv::getWindowImageRect(wname);
+	cv::imshow(wname, frame);
+	cv::Size s = frame.size();
+	cv::resizeWindow(wname, s);
 	int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 	int sh = (int)GetSystemMetrics(SM_CYSCREEN);
-	cv::moveWindow(wname, (sw - rc.width) / 2, (sh - rc.height) / 2);
+	cv::moveWindow(wname, (sw - s.width) / 2, (sh - s.height) / 2);
 }
 
 void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_prev_frame, int x1, int y1, int x2, int y2)
@@ -302,7 +304,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 		draw_text(msg, *p_draw_frame, x1, y1, x2, y2);
 		save_BGR_image(*p_draw_frame, g_root_dir + "\\error_data\\" + time_str + "_frame_draw.bmp");
 
-		show_frame_in_cv_window("Error", p_draw_frame);
+		show_frame_in_cv_window("Error", *p_draw_frame);
 		cv::waitKey(0);
 	}
 	else
@@ -416,7 +418,7 @@ void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int er
 	}
 }
 
-bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "", QString add_data = QString())
+bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "Get Hismith Pos By Image", QString add_data = QString())
 {
 	static double ccxlcx_lh_ratio = -1.0;
 
@@ -485,17 +487,23 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 							int max_h = max(pFigure1->height(), pFigure2->height());
 
 							if (dist_by_y < max_h)
-							{
-								// join two figures
-								*pFigure1 += *pFigure2;
-
-								for (int id3 = id2; id3 < figures_b_N - 1; id3++)
+							{ 
+								double max_w_to_min_w = (double)max(pFigure1->width(), pFigure2->width()) / (double)min(pFigure1->width(), pFigure2->width());     // got in experiments: 1.06 / 1.04 / 1.03 / 1.03 / 1.12 / 1.07 / 1.06
+								double max_h_to_min_h = (double)max(pFigure1->height(), pFigure2->height()) / (double)min(pFigure1->height(), pFigure2->height()); // got in experiments: 2.15 / 2.82 / 2.78 / 2.71 / 1.02 / 2.80 / 1.69
+								if ((max_w_to_min_w <= 1.5) &&
+									(max_h_to_min_h <= 4.0))
 								{
-									p_figures_b[id3] = p_figures_b[id3 + 1];
-								}
+									// join two figures
+									*pFigure1 += *pFigure2;
 
-								figures_b_N--;
-								continue;
+									for (int id3 = id2; id3 < figures_b_N - 1; id3++)
+									{
+										p_figures_b[id3] = p_figures_b[id3 + 1];
+									}
+
+									figures_b_N--;
+									continue;
+								}
 							}
 						}
 
@@ -699,10 +707,10 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 						frame.copyTo(img_res);
 
 						img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
-						img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
+						img_res.setTo(cv::Scalar(255, 255, 0), GetFigureMask(p_best_match_r_figure, width, height));
 						for (CMyClosedFigure* c_figure : c_figures)
 						{
-							img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(c_figure, width, height));
+							img_res.setTo(cv::Scalar(255, 0, 255), GetFigureMask(c_figure, width, height));
 						}
 
 						cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
@@ -857,7 +865,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 									img_res.copyTo(*p_res_frame);
 								}
 
-								cv::imshow(title, img_res);
+								show_frame_in_cv_window(title, img_res);
 							}
 						}
 					}
@@ -991,7 +999,7 @@ void test_err_frame(QString fpath)
 			.arg(G_range[2][1])
 			.arg(g_G_range[2][1])
 			, img);
-		cv::imshow(title, img);
+		show_frame_in_cv_window(title, img);
 
 		int key = cv::waitKey(0);
 
@@ -1217,7 +1225,7 @@ fps: %25 focus: %26 press '[' or ']' for change focus")
 				.arg(fps)
 				.arg(g_webcam_focus)
 				, img);
-			cv::imshow(title, img);
+			show_frame_in_cv_window(title, img);
 
 			int key = cv::waitKey(1);
 
@@ -4922,7 +4930,7 @@ int main(int argc, char *argv[])
 
 	//test_camera();
 
-	//test_err_frame(g_root_dir + "\\error_data\\01_08_2024_23_03_20_frame_orig.bmp");
+	//test_err_frame(g_root_dir + "\\error_data\\12_07_2024_17_08_53_frame_orig.bmp");
 
 	//test_hismith(5);
 
