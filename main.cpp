@@ -4036,7 +4036,7 @@ void disconnect_from_hismith()
 	}
 }
 
-bool get_devices_list()
+bool get_devices_list(bool show_msgs)
 {
 	bool res = false;
 	//-----------------------------------------------------
@@ -4060,7 +4060,7 @@ bool get_devices_list()
 
 	g_myDevices = g_pClient->getDevices();
 
-	if (g_myDevices.size() == 0)
+	if (show_msgs && (g_myDevices.size() == 0))
 	{
 		if (!_tmp_got_client_msg)
 		{
@@ -4834,7 +4834,7 @@ bool LoadSettings()
 	//--------------------
 
 	//--------------------
-	get_devices_list();
+	get_devices_list(false);
 
 	for (DeviceClass& dev : g_myDevices)
 	{
