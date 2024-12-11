@@ -163,7 +163,7 @@ void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame, __int64& ms
 	msec_frame_prev_pos = msec_frame_cur_pos;
 }
 
-double set_hithmith_speed(double speed)
+double set_hismith_speed(double speed)
 {
 	double res_speed = -1.0;
 	if (g_pClient && g_pMyDevice)
@@ -2680,7 +2680,7 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 				if (show_warning)
 				{
 					show_msg("Waiting for VLC is starded");
-					set_hithmith_speed(0.0);
+					set_hismith_speed(0.0);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					show_warning = false;
 				}
@@ -2730,7 +2730,7 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 				if (show_warning)
 				{
 					show_msg("Waiting for VLC is starded");
-					set_hithmith_speed(0.0);
+					set_hismith_speed(0.0);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					show_warning = false;
 				}
@@ -2850,7 +2850,7 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 		if (!res && !g_stop_run)
 		{
 			if (g_pMyDevice)
-				set_hithmith_speed(0.0);
+				set_hismith_speed(0.0);
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		}
 	}
@@ -3213,7 +3213,7 @@ void run_funscript()
 	bool is_vlc_time_in_milliseconds = true;
 	int res;
 
-	LARGE_INTEGER start_time, cur_time, Frequency;
+	LARGE_INTEGER start_time, cur_time, set_hismith_speed_time, Frequency;
 	QueryPerformanceFrequency(&Frequency);
 
 	//-----------------------------------------------------
@@ -3293,7 +3293,8 @@ void run_funscript()
 
 	while (!g_stop_run && get_next_frame_and_cur_speed_res)
 	{
-		set_hithmith_speed(0.0);
+		set_hismith_speed(0.0);
+		QueryPerformanceCounter(&set_hismith_speed_time);
 
 		if (g_pause)
 		{
@@ -3498,7 +3499,8 @@ void run_funscript()
 
 						show_msg(QString("Align device position for run funscript actions..."), min(1000, dt));
 
-						set_hithmith_speed((double)hspeed / 100.0);
+						set_hismith_speed((double)hspeed / 100.0);
+						QueryPerformanceCounter(&set_hismith_speed_time);
 						msec_video_prev_pos = -1;
 						abs_prev_pos = 0;
 						cur_speed = 0;
@@ -3535,7 +3537,8 @@ void run_funscript()
 							(d_from_search_start_pos < 0) &&
 							(exp_abs_pos_before_speed_change < funscript_data_maped[0].second + 360) );
 
-						set_hithmith_speed(0.0);
+						set_hismith_speed(0.0);
+						QueryPerformanceCounter(&set_hismith_speed_time);
 
 						if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 						{
@@ -3730,10 +3733,18 @@ void run_funscript()
 					optimal_hismith_start_speed = (double)(optimal_hismith_start_speed_int) / 100.0;
 				}
 
-				if (optimal_hismith_start_speed != cur_set_hismith_speed)
+				if ((optimal_hismith_start_speed != cur_set_hismith_speed) || ((cur_set_hismith_speed == 0) && ((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)) > 1000)))
 				{
-					optimal_hismith_start_speed = set_hithmith_speed(optimal_hismith_start_speed);
+					optimal_hismith_start_speed = set_hismith_speed(optimal_hismith_start_speed);
 					cur_set_hismith_speed = optimal_hismith_start_speed;
+					QueryPerformanceCounter(&set_hismith_speed_time);
+
+					hismith_speed_changed += QString("[spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_spd: %4 req_pos_vs_cur: %5]")
+						.arg((int)(cur_set_hismith_speed * 100.0))
+						.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency))))
+						.arg(cur_speed)
+						.arg(req_speed)
+						.arg(funscript_data_maped[action_id].second - abs_cur_pos);
 				}
 				
 				speed_change_was_obtained = false;
@@ -3846,9 +3857,10 @@ void run_funscript()
 
 						if (((cur_speed - req_cur_speed) > req_cur_speed / 10) && (exp_abs_pos_before_speed_change >= funscript_data_maped[action_id].second))
 						{
-							if (cur_set_hismith_speed > 0) 
+							if ((cur_set_hismith_speed > 0) || ((cur_set_hismith_speed == 0) && ((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)) > 1000)))
 							{
-								cur_set_hismith_speed = set_hithmith_speed(0.0);
+								cur_set_hismith_speed = set_hismith_speed(0.0);
+								QueryPerformanceCounter(&set_hismith_speed_time);
 								hismith_speed_changed += QString("[spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]")
 									.arg((int)(cur_set_hismith_speed * 100.0))
 									.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency))))
@@ -3877,7 +3889,8 @@ void run_funscript()
 										if ( (!((optimal_speed < cur_set_hismith_speed) && (cur_speed < req_cur_speed))) && 
 											 (!((optimal_speed > cur_set_hismith_speed) && (cur_speed > req_cur_speed))) )
 										{
-											cur_set_hismith_speed = set_hithmith_speed(optimal_speed);
+											cur_set_hismith_speed = set_hismith_speed(optimal_speed);
+											QueryPerformanceCounter(&set_hismith_speed_time);
 											hismith_speed_changed += QString("[spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]")
 												.arg((int)(cur_set_hismith_speed * 100.0))
 												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency))))
@@ -4020,7 +4033,8 @@ void run_funscript()
 				file.close();
 			}
 
-			set_hithmith_speed(0.0);
+			set_hismith_speed(0.0);
+			QueryPerformanceCounter(&set_hismith_speed_time);
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		}
 	}
@@ -4208,7 +4222,7 @@ void get_performance_with_hismith(int hismith_speed)
 		}
 		abs_cur_pos = get_abs_to_target_pos(cur_pos, 0);
 
-		hismith_speed = (int)(set_hithmith_speed((double)hismith_speed / 100.0) * 100.0);
+		hismith_speed = (int)(set_hismith_speed((double)hismith_speed / 100.0) * 100.0);
 
 		get_next_frame_and_cur_speed(capture, frame,
 			abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
@@ -4255,7 +4269,7 @@ void get_performance_with_hismith(int hismith_speed)
 			}
 		}
 
-		set_hithmith_speed(0.0);
+		set_hismith_speed(0.0);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 		if (num_frames > 0)
@@ -4390,7 +4404,7 @@ void get_statistics_with_hismith()
 			{
 				show_msg(QString("Starting to get data for speed %1 ...").arg(hismith_speed), 2000);
 
-				set_hithmith_speed(0.0);
+				set_hismith_speed(0.0);
 
 				QueryPerformanceCounter(&cur_time);
 				start_time = cur_time;
@@ -4441,7 +4455,7 @@ void get_statistics_with_hismith()
 
 				if (g_stop_run)
 				{
-					set_hithmith_speed(0.0);
+					set_hismith_speed(0.0);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					disconnect_from_hismith();
 					g_work_in_progress = false;
@@ -4551,7 +4565,7 @@ void test_hismith(int hismith_speed)
 
 	if (capture.isOpened())
 	{
-		hismith_speed = (int)(set_hithmith_speed((double)hismith_speed/ 100.0)*100.0);
+		hismith_speed = (int)(set_hismith_speed((double)hismith_speed/ 100.0)*100.0);
 
 		std::vector<QPair<__int64, int>> collected_data;
 		QString add_data;
