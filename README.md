@@ -7,11 +7,12 @@ For this moment it has very good results when speed is not too high, especially 
 For minimize complexity of used computer vision algorithms, also as for increase accuracy and speed for making decision, it use color markers which you will need to place on Hismith (more details below)
 
 ## What is required for its work
-You will need:\
-Hismith with remote control support (or possibly any other similar form Fucking Machine) + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)\
-About Web Camera:\
-I'm using very chip Web Camera but with Full HD support (1080p) 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision) 
-I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it .
+You will need:
+- Hismith with remote control support (or possibly any other similar form Fucking Machine) + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)\
+- Web Camera (i have tested on):
+	- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
+	- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300)
+- External backlight: I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it.
 
 ## How to use
 **If you have a camera with external or integrated backlight you will need only to add color markers.\
@@ -23,7 +24,9 @@ So after getting all of this you will need:
 check that it can find your Hismith and you can change speed by using it.
 2) to run this program
 3) select Web Camera in combo box which you wish to use for detect Hismith rotation angle.\
-**Press "Test Webcam". According images in "example_images" folder you will need to find what are best colors in your case (don't forget to save all changes by menu or Ctrl+S):**\
+**Press "Test Webcam".\
+Note: You can set manual webcam focus (for example to 300) if it support it by using shown hotkeys, also as change manual webcam focus and webcam fps (for example to 30 or 60) through settings.xml\
+According images in "example_images" folder you will need to find what are best colors in your case (don't forget to save all changes by menu or Ctrl+S):**\
 <code><B_range>[10-160][150-205][60-120]</B_range>\
 <G_range>[60-210][120-150][10-110]</G_range></code>\
 **B_range of colors (highlighted as Blue during test) is used for detection:**
@@ -36,9 +39,8 @@ If all is highlighted well you will need to go to next step
 4) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
 By default it will start Hismith on mostly very low speed 5, which you can change to any other for check how good it can track all without errors.\
 After 10 seconds it will show in top average speed value.
-5) If you plan to use other device or for getting the best results **it is highly recommended to run "Get Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
-In this case it will automatically run Hismith from 1-2-3-to-"Hismith Speed Limit" (max_allowed_hismith_speed in settings.xml) (by default 50) for about 3+7 seconds on each speed.\
-So if you plan to use a higher speed than 50 you need to set "Hismith Speed Limit" to 100 or lower.
+5) If you plan to use other device or for getting the best results **it is highly recommended to run "Get Hismith Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
+In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed.\
 6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
 7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
@@ -57,11 +59,8 @@ In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
 If VLC does not found it will show a message that it's waiting for it.\
 When you select or open a video file (in playlist) which has funscript located near a video file with the same base name it will show "Ready to go" or "Running" depending from is video on pause or not.\
-See available hotkeys and actions in the tray menu where the app will be hidden.\
-**ALt+B - pause\
-ALt+N - continue\
-ALt+Q - stop**\
-Also after play (Alt+Q) you can open new generated res_data\\!results.txt for check results:\
+**See available hotkeys and actions in the tray menu where the app will be hidden.**\
+Also after play you can open new generated res_data\\!results.txt for check results:\
 <code>**dif_end_pos:-19** start_t:0:07:50:424 len:280 req_dpos:180+(52) ...\
 **dif_end_pos:-15** start_t:0:07:50:704 len:400 req_dpos:180+(114) ...\
 **dif_end_pos:-6** start_t:0:07:51:104 len:360 req_dpos:180+(87) ...\
@@ -88,6 +87,8 @@ You can simply play video with turned on program for check how it work or use Op
 **For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
 ## Notes
+**You can set manual webcam focus (for example to 300) if it support it and webcam fps (for example to 30 or 60) through settings.xml, also you can adjust manual webcam focus during "Test Webcam"**\
+\
 Min Funscript Relative Move - is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"
 it will try to find the first next move with which min to max positions will be >= "Min Funscript Relative Move" if such found it will combine from min to max all actions with averaging values in move.
 For more details which actions was averaged you can see in "res_data\\!results_for_get_parsed_funscript_data.txt"\

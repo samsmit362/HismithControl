@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>869</width>
-    <height>580</height>
+    <height>666</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -18,7 +18,7 @@
     <property name="geometry">
      <rect>
       <x>620</x>
-      <y>130</y>
+      <y>170</y>
       <width>131</width>
       <height>51</height>
      </rect>
@@ -33,7 +33,7 @@
       <x>10</x>
       <y>20</y>
       <width>241</width>
-      <height>311</height>
+      <height>261</height>
      </rect>
     </property>
     <property name="title">
@@ -44,7 +44,7 @@
       <rect>
        <x>20</x>
        <y>40</y>
-       <width>161</width>
+       <width>181</width>
        <height>41</height>
       </rect>
      </property>
@@ -57,7 +57,7 @@
       <rect>
        <x>20</x>
        <y>90</y>
-       <width>161</width>
+       <width>181</width>
        <height>41</height>
       </rect>
      </property>
@@ -70,7 +70,7 @@
       <rect>
        <x>20</x>
        <y>160</y>
-       <width>161</width>
+       <width>181</width>
        <height>24</height>
       </rect>
      </property>
@@ -81,7 +81,7 @@
     <widget class="QLabel" name="label">
      <property name="geometry">
       <rect>
-       <x>30</x>
+       <x>40</x>
        <y>140</y>
        <width>151</width>
        <height>16</height>
@@ -96,25 +96,12 @@
       <rect>
        <x>20</x>
        <y>200</y>
-       <width>161</width>
+       <width>181</width>
        <height>41</height>
       </rect>
      </property>
      <property name="text">
       <string>Test Performance</string>
-     </property>
-    </widget>
-    <widget class="QPushButton" name="getStatistics">
-     <property name="geometry">
-      <rect>
-       <x>20</x>
-       <y>260</y>
-       <width>161</width>
-       <height>41</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>Get Statistics Data</string>
      </property>
     </widget>
    </widget>
@@ -208,9 +195,9 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>340</y>
+      <y>290</y>
       <width>241</width>
-      <height>191</height>
+      <height>161</height>
      </rect>
     </property>
     <property name="title">
@@ -220,8 +207,8 @@
      <property name="geometry">
       <rect>
        <x>20</x>
-       <y>60</y>
-       <width>161</width>
+       <y>70</y>
+       <width>181</width>
        <height>24</height>
       </rect>
      </property>
@@ -230,8 +217,8 @@
      <property name="geometry">
       <rect>
        <x>20</x>
-       <y>90</y>
-       <width>161</width>
+       <y>100</y>
+       <width>181</width>
        <height>41</height>
       </rect>
      </property>
@@ -243,7 +230,7 @@
      <property name="geometry">
       <rect>
        <x>50</x>
-       <y>30</y>
+       <y>40</y>
        <width>91</width>
        <height>21</height>
       </rect>
@@ -256,7 +243,7 @@
      <property name="geometry">
       <rect>
        <x>20</x>
-       <y>30</y>
+       <y>40</y>
        <width>22</width>
        <height>23</height>
       </rect>
@@ -272,7 +259,7 @@
       <x>260</x>
       <y>340</y>
       <width>241</width>
-      <height>191</height>
+      <height>281</height>
      </rect>
     </property>
     <property name="title">
@@ -341,7 +328,7 @@
     <property name="geometry">
      <rect>
       <x>590</x>
-      <y>90</y>
+      <y>130</y>
       <width>191</width>
       <height>22</height>
      </rect>
@@ -354,7 +341,7 @@
     <property name="geometry">
      <rect>
       <x>520</x>
-      <y>200</y>
+      <y>290</y>
       <width>331</width>
       <height>331</height>
      </rect>
@@ -365,6 +352,90 @@
     <property name="frameShadow">
      <enum>QFrame::Raised</enum>
     </property>
+   </widget>
+   <widget class="QGroupBox" name="groupBox_5">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>460</y>
+      <width>241</width>
+      <height>161</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>Get Hismith Statistics Data</string>
+    </property>
+    <widget class="QPushButton" name="getStatistics">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>40</y>
+       <width>181</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Get Hismith Statistics Data</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_9">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>90</y>
+       <width>71</width>
+       <height>21</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Start Speed:</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="startSpeed">
+     <property name="geometry">
+      <rect>
+       <x>100</x>
+       <y>90</y>
+       <width>101</width>
+       <height>24</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>1</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_10">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>120</y>
+       <width>71</width>
+       <height>21</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>End Speed:</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="endSpeed">
+     <property name="geometry">
+      <rect>
+       <x>100</x>
+       <y>120</y>
+       <width>101</width>
+       <height>24</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>100</string>
+     </property>
+    </widget>
    </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">

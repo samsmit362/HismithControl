@@ -10,13 +10,41 @@
 #define HOTKEY_STOP_ID      3
 #define HOTKEY_USE_MODIFY_FUNSCRIPT_FUNCTIONS_ID      4
 
-void Controller::handleResults()
+//---------------------------------------------------------------
+
+void StartWorker::doWork()
+{
+    g_work_in_progress = true;
+    run_funscript();
+    emit resultReady();
+}
+
+void StartController::handleResults()
 {
     g_stop_run = false;
     g_work_in_progress = false;
     p_parent->show();
     p_parent->trayIcon->hide();
 }
+
+//---------------------------------------------------------------
+
+void GetStatisticsWorker::doWork()
+{
+    g_work_in_progress = true;
+    p_parent->ui->getStatistics->setText(QString("Stop Get Hismith Statistics Data"));
+    get_statistics_with_hismith(p_parent->ui->startSpeed->text().toInt(), p_parent->ui->endSpeed->text().toInt());
+    emit resultReady();
+}
+
+void GetStatisticsController::handleResults()
+{
+    g_stop_run = false;
+    g_work_in_progress = false;
+    p_parent->ui->getStatistics->setText(QString("Get Hismith Statistics Data"));
+}
+
+//---------------------------------------------------------------
 
 UINT get_key_mod(QString &ks)
 {
@@ -77,7 +105,7 @@ void MainWindow::RegisterHotKeys()
 }
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), ctrl(this)
+    : QMainWindow(parent), ctrlStart(this), ctrlGetStatistics(this)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
@@ -203,7 +231,7 @@ void MainWindow::handleStartButton()
 {
     hide();
     trayIcon->show();
-    emit ctrl.operate();
+    emit ctrlStart.operate();
 }
 
 void MainWindow::handleTestButton()
@@ -218,7 +246,15 @@ void MainWindow::handleGetPerformance()
 
 void MainWindow::handleGetStatistics()
 {
-    get_statistics_with_hismith();
+    if (!g_work_in_progress)
+    {
+        emit ctrlGetStatistics.operate();
+    }
+    else if (!g_stop_run)
+    {
+        show_msg("Stop pressed", 1000);
+        g_stop_run = true;
+    }
 }
 
 void MainWindow::handleTestCameraButton()

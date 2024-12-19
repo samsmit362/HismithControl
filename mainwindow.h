@@ -85,7 +85,7 @@ int make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req
 QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl);
 bool get_devices_list(bool show_msgs = true);
 void SaveSettings();
-void get_statistics_with_hismith();
+void get_statistics_with_hismith(int start_speed, int end_speed);
 bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
 bool get_speed_statistics_data(speeds_data& all_speeds_data);
 
@@ -116,36 +116,34 @@ struct speeds_data
     speeds_data() : speed_data_vector(100) {}
 };
 
-class Worker : public QObject
+//---------------------------------------------------------------
+
+class StartWorker : public QObject
 {
     Q_OBJECT
 
 public slots:
-    void doWork() {
-        g_work_in_progress = true;
-        run_funscript();
-        emit resultReady();
-    }
+    void doWork();
 
 signals:
     void resultReady();
 };
 
-class Controller : public QObject
+class StartController : public QObject
 {
     Q_OBJECT
         QThread workerThread;
         MainWindow* p_parent;
 public:
-    Controller(MainWindow *parent) : p_parent(parent) {
-        Worker* worker = new Worker;
+    StartController(MainWindow *parent) : p_parent(parent) {
+        StartWorker* worker = new StartWorker;
         worker->moveToThread(&workerThread);
         connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
-        connect(this, &Controller::operate, worker, &Worker::doWork);
-        connect(worker, &Worker::resultReady, this, &Controller::handleResults);
+        connect(this, &StartController::operate, worker, &StartWorker::doWork);
+        connect(worker, &StartWorker::resultReady, this, &StartController::handleResults);
         workerThread.start();
     }
-    ~Controller() {
+    ~StartController() {
         workerThread.quit();
         workerThread.wait();
     }
@@ -155,6 +153,53 @@ public slots:
 signals:
     void operate();
 };
+
+//---------------------------------------------------------------
+
+class GetStatisticsWorker : public QObject
+{
+    Q_OBJECT
+
+    MainWindow* p_parent;
+
+public:
+    GetStatisticsWorker(MainWindow* parent) : p_parent(parent) {}
+
+public slots:
+    void doWork();
+
+signals:
+    void resultReady();
+};
+
+class GetStatisticsController : public QObject
+{
+    Q_OBJECT
+
+    QThread workerThread;
+    MainWindow* p_parent;
+
+public:
+    GetStatisticsController(MainWindow* parent) : p_parent(parent) {
+        GetStatisticsWorker* worker = new GetStatisticsWorker(parent);
+        worker->moveToThread(&workerThread);
+        connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
+        connect(this, &GetStatisticsController::operate, worker, &GetStatisticsWorker::doWork);
+        connect(worker, &GetStatisticsWorker::resultReady, this, &GetStatisticsController::handleResults);
+        workerThread.start();
+    }
+    ~GetStatisticsController() {
+        workerThread.quit();
+        workerThread.wait();
+    }
+
+public slots:
+    void handleResults();
+signals:
+    void operate();
+};
+
+//---------------------------------------------------------------
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -168,7 +213,9 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();    
     
-    Controller ctrl;
+    StartController ctrlStart;
+    GetStatisticsController ctrlGetStatistics;
+
     QSystemTrayIcon* trayIcon;
 
     bool eventFilter(QObject* obj, QEvent* event);

@@ -4393,7 +4393,7 @@ void get_performance_with_hismith(int hismith_speed)
 	disconnect_from_hismith();
 }
 
-void get_statistics_with_hismith()
+void get_statistics_with_hismith(int start_speed, int end_speed)
 {
 	int cur_pos, res;
 	__int64 msec_video_cur_pos = -1, msec_video_prev_pos = -1, last_msec_video_prev_pos, msec_video_start_pos;
@@ -4404,14 +4404,20 @@ void get_statistics_with_hismith()
 	int max_dt_according_GetTickCount = 0;
 	int hismith_speed;
 
-	g_work_in_progress = true;
+	if (g_stop_run || start_speed < 1 || start_speed > end_speed || end_speed > 100)
+	{
+		return;
+	}
 
 	LARGE_INTEGER get_statistics_start_time, start_time, cur_time, prev_time, Frequency;
 	QueryPerformanceFrequency(&Frequency);
 
 	QueryPerformanceCounter(&get_statistics_start_time);
 
-	show_msg("It can takes ~20 minutes, please wait...\nIt will get data for speed from 1-100", 5000);
+	show_msg(QString("It can takes ~%1 minutes, please wait...\nIt will get data for speed from range: %2-%3")
+		.arg(((20*(end_speed-start_speed+1)) + 99)/100)
+		.arg(start_speed)
+		.arg(end_speed), 5000);
 
 	//-----------------------------------------------------
 	// Connecting to Hismith
@@ -4419,8 +4425,6 @@ void get_statistics_with_hismith()
 
 	if (!connect_to_hismith())
 	{
-		g_work_in_progress = false;
-		g_stop_run = false;
 		return;
 	}
 
@@ -4431,8 +4435,6 @@ void get_statistics_with_hismith()
 	int video_dev_id = get_video_dev_id();
 	if (video_dev_id == -1)
 	{
-		g_work_in_progress = false;
-		g_stop_run = false;
 		return;
 	}
 	cv::VideoCapture capture(video_dev_id);
@@ -4452,17 +4454,25 @@ void get_statistics_with_hismith()
 
 		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
+		if (g_stop_run)
+		{
+			return;
+		}
+
 		// geting first g_webcam_fps frames for get better camera focus
 		for (int i = 0; i < g_webcam_fps; i++)
 		{
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
 		}
 
+		if (g_stop_run)
+		{
+			return;
+		}
+
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
 			capture.release();
-			g_work_in_progress = false;
-			g_stop_run = false;
 			return;
 		}
 		abs_cur_pos = get_abs_to_target_pos(cur_pos, 0);
@@ -4481,7 +4491,12 @@ void get_statistics_with_hismith()
 			QueryPerformanceCounter(&cur_time);
 		}
 
-		for (hismith_speed = 1; hismith_speed <= g_max_allowed_hismith_speed; hismith_speed++)
+		if (g_stop_run)
+		{
+			return;
+		}
+
+		for (hismith_speed = start_speed; hismith_speed <= end_speed; hismith_speed++)
 		{
 			bool need_restart;
 
@@ -4519,9 +4534,10 @@ void get_statistics_with_hismith()
 					prev_time = cur_time;
 					QueryPerformanceCounter(&cur_time);
 
-					if (abs_cur_pos - last_abs_prev_pos < 0)
+					if (abs_cur_pos < last_abs_prev_pos)
 					{
 						need_restart = true;
+						show_msg(QString("Got abs_cur_pos:%1 < last_abs_prev_pos:%2 => need to restart get data ...").arg(abs_cur_pos).arg(last_abs_prev_pos), 2000, true);
 						break;
 					}
 
@@ -4543,8 +4559,6 @@ void get_statistics_with_hismith()
 					set_hismith_speed(0.0);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					disconnect_from_hismith();
-					g_work_in_progress = false;
-					g_stop_run = false;
 					show_msg("Stoped to get statistics data.", 5000);
 					return;
 				}
