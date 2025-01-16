@@ -10,8 +10,8 @@
  <slowdown_hismith_speed_start_multiplier>1.5</slowdown_hismith_speed_start_multiplier>
  <speed_change_delay>-1</speed_change_delay>
  <cpu_freezes_timeout>300</cpu_freezes_timeout>
- <B_range>[5-160][150-205][60-120]</B_range>
- <G_range>[50-210][120-150][10-110]</G_range>
+ <B_range>[5-160][144-205][60-125]</B_range>
+ <G_range>[35-210][120-155][10-110]</G_range>
  <max_telescopic_motor_rocker_arm_proportions>0.35</max_telescopic_motor_rocker_arm_proportions>
  <min_telescopic_motor_rocker_arm_center_x_proportions>0.5</min_telescopic_motor_rocker_arm_center_x_proportions>
  <max_telescopic_motor_rocker_arm_center_x_proportions>1</max_telescopic_motor_rocker_arm_center_x_proportions>

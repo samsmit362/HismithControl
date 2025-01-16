@@ -44,6 +44,8 @@ struct speeds_data;
 
 //---------------------------------------------------------------
 
+extern QString g_cur_version;
+
 extern bool g_pause;
 extern bool g_stop_run;
 extern bool g_was_change_in_use_modify_funscript_functions;

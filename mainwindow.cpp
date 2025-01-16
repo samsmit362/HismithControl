@@ -173,8 +173,8 @@ MainWindow::MainWindow(QWidget *parent)
     trayIcon->setIcon(icon);
     setWindowIcon(icon);
 
-    trayIcon->setToolTip("Hismith Control With Funscript");
-    setWindowTitle("Hismith Control With Funscript");
+    trayIcon->setToolTip(QString("Hismith Control With Funscript v") + g_cur_version);
+    setWindowTitle(QString("Hismith Control With Funscript v") + g_cur_version);
 
     QIcon iconOpenFunscript(":/images/folder.png");
     ui->openFunscript->setIcon(iconOpenFunscript);
@@ -199,6 +199,15 @@ void MainWindow::handleCheckFunscript()
 
     if (funscript.size() > 0)
     {
+        QFileInfo info(funscript);
+        QString fname = info.fileName();
+        QString fext = info.suffix();
+
+        if (fext != QString("funscript"))
+        {
+            funscript = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
+        }
+
         speeds_data all_speeds_data;
         get_speed_statistics_data(all_speeds_data);
 

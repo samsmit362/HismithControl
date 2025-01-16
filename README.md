@@ -8,10 +8,10 @@ For minimize complexity of used computer vision algorithms, also as for increase
 
 ## What is required for its work
 You will need:
-- Hismith with remote control support (or possibly any other similar form Fucking Machine) + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)\
+- Hismith with remote control support (or possibly any other similar form Fucking Machine) + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)
 - Web Camera (i have tested on):
 	- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
-	- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300)
+	- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got average 45fps during "Test Performance".
 - External backlight: I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it.
 
 ## How to use
@@ -28,19 +28,23 @@ check that it can find your Hismith and you can change speed by using it.
 Note: You can set manual webcam focus (for example to 300) if it support it by using shown hotkeys, also as change manual webcam focus and webcam fps (for example to 30 or 60) through settings.xml\
 According images in "example_images" folder you will need to find what are best colors in your case (don't forget to save all changes by menu or Ctrl+S):**\
 <code><B_range>[10-160][150-205][60-120]</B_range>\
-<G_range>[60-210][120-150][10-110]</G_range></code>\
-**B_range of colors (highlighted as Blue during test) is used for detection:**
-- left corner edge of Hismith
-- center of rotation (for detect it's placement)
-- and for right connection of moving telescopic motor rocker arm\
-**G_range of colors (highlighted as Green during test) is used for detection:**
-- rotation part of telescopic motor rocker arm which perform circular movements.\
+<G_range>[60-210][120-150][10-110]</G_range></code>
+- **B_range of colors (highlighted as Blue during test) is used for detection:**
+	- left corner edge of Hismith: **<font color="red">left border of which should be always fully visible, if it is not - try to change web camera position, if it doesn't help try to extend it by something which will be detected as set related to it color</font>**
+	- center of rotation (for detect it's placement)
+	- and for right connection of moving telescopic motor rocker arm
+- **G_range of colors (highlighted as Green during test) is used for detection:**
+	- rotation part of telescopic motor rocker arm which perform circular movements.
+- **Intersected color ranges of B_range with G_range will be highlighted as Red and will be treated as related to Green:**
+	- rotation part of telescopic motor rocker arm which perform circular movements.
+
 If all is highlighted well you will need to go to next step
+
 4) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
 By default it will start Hismith on mostly very low speed 5, which you can change to any other for check how good it can track all without errors.\
 After 10 seconds it will show in top average speed value.
 5) If you plan to use other device or for getting the best results **it is highly recommended to run "Get Hismith Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
-In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed.\
+In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed.
 6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
 7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
@@ -60,7 +64,7 @@ users about it's status by popup messages shown topmost on the middle of screen,
 If VLC does not found it will show a message that it's waiting for it.\
 When you select or open a video file (in playlist) which has funscript located near a video file with the same base name it will show "Ready to go" or "Running" depending from is video on pause or not.\
 **See available hotkeys and actions in the tray menu where the app will be hidden.**\
-Also after play you can open new generated res_data\\!results.txt for check results:\
+Also after play you can open new generated res_data\\!results_[date].txt for check results:\
 <code>**dif_end_pos:-19** start_t:0:07:50:424 len:280 req_dpos:180+(52) ...\
 **dif_end_pos:-15** start_t:0:07:50:704 len:400 req_dpos:180+(114) ...\
 **dif_end_pos:-6** start_t:0:07:51:104 len:360 req_dpos:180+(87) ...\
@@ -87,6 +91,8 @@ You can simply play video with turned on program for check how it work or use Op
 **For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
 ## Notes
+Left corner edge of Hismith: **<font color="red">left border of which should be always fully visible, if it is not - try to change web camera position, if it doesn't help try to extend it by something which will be detected as set related to it color.</font>**
+
 **You can set manual webcam focus (for example to 300) if it support it and webcam fps (for example to 30 or 60) through settings.xml, also you can adjust manual webcam focus during "Test Webcam"**\
 \
 Min Funscript Relative Move - is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"

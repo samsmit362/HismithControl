@@ -231,12 +231,12 @@
       <rect>
        <x>50</x>
        <y>40</y>
-       <width>91</width>
+       <width>151</width>
        <height>21</height>
       </rect>
      </property>
      <property name="text">
-      <string>Funscript path:</string>
+      <string>Funscript or video file path:</string>
      </property>
     </widget>
     <widget class="QToolButton" name="openFunscript">
