@@ -138,15 +138,23 @@ min_speed_in_rpm_\"id\" should be >= 0\
 max_speed_in_rpm_\"id\" should be > 0 and can be set to "maximum"\
 move_(in(or)out)_variant_id_\"id\"\_\"sub_id\" should take value from 1 to "number_of_move_variants_in_<functions_move_variants>" or set to "random"\
 For example:\
-<functions_move_variants>[0-200:2/3|3/2|random/random],[200-maximum:1/1];[0-200:3/2]</functions_move_variants>\
-<functions_move_variant>1</functions_move_variant>\
-If simple move type is "in" and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then\
-additional detail points will be added from move variant with id == 2 (according pair: 2/3) or id == 3 (according pair: 3/2) or 'random' (according pair: random/random) randomly.\
-If simple move type is "out" and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then:
-- if previous was simple move "in" with average speed in range [0, 200] and was selected move variant from pair '3/2' then\
-additional detail points will be added from move variant with id == 2 (according pair: 3/2)
-- if previous move was not "simple move 'in' with average speed in range [0, 200]" then\
-additional detail points will be added from move variant with id == 3 (according pair: 2/3) or id == 2 (according pair: 3/2) or 'random' (according pair: random/random) randomly.
+<functions_move_in_out_variants>[0-200:2/3|3/2|random/random],[200-maximum:1/2];[0-200:3/2]</functions_move_in_out_variants>\
+<functions_move_in_out_variant>1</functions_move_in_out_variant>
+- If simple move type is "in" and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then\
+additional detail points will be added from move variant with id == 2 (according pair: 2/3) or id == 3 (according pair: 3/2) or random id (according pair: random/random) randomly.
+- If simple move type is "in" and its average speed in rpm >= 200 and <= maximum (in range [200, maximum]) then\
+additional detail points will be added from move variant with id == 1 (according pair: 1/2).
+- If simple move type is "out" and its average speed in rpm > 0 and <= 200 (in range [0, 200]) then:
+	- if previous was simple move "in" with average speed in range [0, 200] and was selected move variant from pair '2/3' then\
+	additional detail points will be added from move variant with id == 3 (according pair: 2/3)
+	- if previous was simple move "in" with average speed in range [0, 200] and was selected move variant from pair '3/2' then\
+	additional detail points will be added from move variant with id == 2 (according pair: 3/2)
+	- if previous was simple move "in" with average speed in range [0, 200] and was selected move variant from pair 'random/random' then\
+	additional detail points will be added from move variant with random id (according pair: random/random)
+	- if previous move was not "simple move 'in' with average speed in range [0, 200]" then\
+	additional detail points will be added from move variant with id == 3 (according pair: 2/3) or id == 2 (according pair: 3/2) or 'random' (according pair: random/random) randomly.
+- If simple move type is "out" and its average speed in rpm >= 200 and <= maximum (in range [200, maximum]) then\
+additional detail points will be added from move variant with id == 2 (according pair: 1/2).
 
 ## Known issues
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
