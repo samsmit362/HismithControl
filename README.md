@@ -6,10 +6,13 @@ To be able to do this it uses computer vision with using your Web Camera which t
 For this moment it has very good results when speed is not too high, especially in slow movements (it can track very good all changes). In case of high speed 3-4+ strokes per second now it also has not so bad results.\
 For minimize complexity of used computer vision algorithms, also as for increase accuracy and speed for making decision, it use color markers which you will need to place on Hismith (more details below)
 
+## Forum
+Discussion forum on: [discuss.eroscripts.com](https://discuss.eroscripts.com/t/hismithcontrol-hismith-control-with-funscripts-support/169661)
+
 ## What is required for its work
 - You will need:
-	- Hismith with remote control support (or possibly any other similar form Fucking Machine)
-	- Web Camera **with external or integrated backlight** (i have tested on):
+	- Hismith with remote control support or possibly any other similar form Fucking Machine
+	- Web Camera **with external or integrated backlight**, i have tested on:
 		- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
 		- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got average 45fps during "Test Performance".
 		- External backlight: I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it.
@@ -86,13 +89,16 @@ Also after play you can open new generated res_data\\!results_[date].txt for che
 **<font color="red">Be aware to stop Hismith by power button or hotkeys to stop running.</font>**\
 Due to different reasons like computer freeze or "Intiface Central" lose Hismith device or "Funscript - some of which has very fast stroking or vibration simulations on scenes where they are totally missed or not".\
 If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI also recommend to minimize stroke length in this case.\
-So I highly recommend checking each scene before usage.\
+**So I highly recommend checking each scene before usage especially with using "Check Funscript" button for check on "Min Funscript Relative Move" (more details below in separate topic).**\
+\
 **To minimize risks I have initially set "Hismith Speed Limit" to 50 (50%) by default, but you will get less good experience in this case.**\
 You can simply play video with turned on program for check how it work or use [OpenFunscripter](https://github.com/OpenFunscripter/OFS) to check script on high intensity moves.\
+\
 Also sometimes it start too quick during video navigation, especially if you moved to intensive part of scene without pause video and HismithControl.\
 **So i recommend to pause video and pause HismithControl ("Pause Run" hotkey) before navigation on video.**\
 \
 **For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
+
 
 ## Min Funscript Relative Move
 **It is used for modify funscript actions to increase safety in cases of very fast stroking or vibration simulations on scenes where they are totally missed or not.**\
