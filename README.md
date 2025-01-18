@@ -32,7 +32,7 @@ check that it can find your Hismith and you can change speed by using it.
 3) select Web Camera in combo box which you wish to use for detect Hismith rotation angle.\
 **Press "Test Webcam".**\
 **Note: You can set manual webcam focus (for example to 300) if it support it by using shown hotkeys, also as change manual webcam focus and webcam fps (for example to 30 or 60) through settings.xml**\
-**According images in "example_images" folder you will need to find what are best colors in your case (don't forget to save all changes by menu or Ctrl+S):**\
+**According images in "example_images" folder you will need to find what are best colors in your case, don't forget to save all changes by "Enter" during "Test Webcam" then after close "Test Webcam" by menu (File->"Save Settings") or hotkey (Ctrl+S):**\
 <code><B_range>[10-160][150-205][60-120]</B_range>\
 <G_range>[60-210][120-150][10-110]</G_range></code>
 - **B_range of colors (highlighted as Blue during test) is used for detection:**
