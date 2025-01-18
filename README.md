@@ -91,13 +91,17 @@ So I highly recommend checking each scene before usage.\
 You can simply play video with turned on program for check how it work or use [OpenFunscripter](https://github.com/OpenFunscripter/OFS) to check script on high intensity moves.\
 Also sometimes it start too quick during video navigation, especially if you moved to intensive part of scene without pause video and HismithControl.\
 **So i recommend to pause video and pause HismithControl ("Pause Run" hotkey) before navigation on video.**\
+\
 **For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
 ## Min Funscript Relative Move
-It is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"
-it will try to find the first next move with which min to max positions will be >= "Min Funscript Relative Move" if such found it will combine from min to max all actions with averaging values in move.
+**It is used for modify funscript actions to increase safety in cases of very fast stroking or vibration simulations on scenes where they are totally missed or not.**\
+If move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move" it will try to find the first next move with which min to max positions will be >= "Min Funscript Relative Move" if such found it will combine from min to max all actions with averaging values to single move (with trying to save internal move details).\
 For more details which actions was averaged you can see in "res_data\\!results_for_get_parsed_funscript_data.txt"\
-Also program save result parsed funscript to "res_data" folder with same name as original file used.
+You can get list if modified actions by using **"Check Funscript" button** by providing path to funscript or video file to which it is related.\
+Program save result parsed funscript to "res_data" folder with same name as original file used.\
+Then higher value for "Min Funscript Relative Move" is used then result used modified funscript will be safer but less accurate.\
+**I can recommend to set it to 20-30 but check which moves were changed by "Check Funscript" button.**
 
 ## Modify Funscript Functions
 You can use this option for get better experience on simple moves.\
