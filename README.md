@@ -7,12 +7,15 @@ For this moment it has very good results when speed is not too high, especially 
 For minimize complexity of used computer vision algorithms, also as for increase accuracy and speed for making decision, it use color markers which you will need to place on Hismith (more details below)
 
 ## What is required for its work
-You will need:
-- Hismith with remote control support (or possibly any other similar form Fucking Machine) + Web Camera + backlight (Ring Light as very good solution) + PC + Add color markers to Hismith (which will be tracked)
-- Web Camera (i have tested on):
-	- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
-	- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got average 45fps during "Test Performance".
-- External backlight: I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it.
+- You will need:
+	- Hismith with remote control support (or possibly any other similar form Fucking Machine)
+	- Web Camera **with external or integrated backlight** (i have tested on):
+		- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
+		- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got average 45fps during "Test Performance".
+		- External backlight: I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it.
+	- Personal computer (PC) with Windows OS
+	- Add color markers to Hismith (which will be tracked)
+	- **Highly recommended** to use some remote controller on which you can map keyboard hotkeys, i'm using Xbox Wireless Controller for PC + [JoyToKey](https://joytokey.net/en/)
 
 ## How to use
 **If you have a camera with external or integrated backlight you will need only to add color markers.\
@@ -20,17 +23,17 @@ I'm using for this blue and green insulating tapes (Multi Coloured Electrical Ta
 Also you will need that used colors mostly will not be present on Web Camera scenes.\
 Example how to do this you can see in "example_images" folder.**\
 So after getting all of this you will need:
-1) to start Intiface Central https://intiface.com/central/ => https://github.com/intiface/intiface-central/releases/download/v2.6.0/intiface-central-v2.6.0-win-x64.exe
+1) to start [Intiface Central](https://intiface.com/central/) (download: win: exe)\
 check that it can find your Hismith and you can change speed by using it.
 2) to run this program
 3) select Web Camera in combo box which you wish to use for detect Hismith rotation angle.\
-**Press "Test Webcam".\
-Note: You can set manual webcam focus (for example to 300) if it support it by using shown hotkeys, also as change manual webcam focus and webcam fps (for example to 30 or 60) through settings.xml\
-According images in "example_images" folder you will need to find what are best colors in your case (don't forget to save all changes by menu or Ctrl+S):**\
+**Press "Test Webcam".**\
+**Note: You can set manual webcam focus (for example to 300) if it support it by using shown hotkeys, also as change manual webcam focus and webcam fps (for example to 30 or 60) through settings.xml**\
+**According images in "example_images" folder you will need to find what are best colors in your case (don't forget to save all changes by menu or Ctrl+S):**\
 <code><B_range>[10-160][150-205][60-120]</B_range>\
 <G_range>[60-210][120-150][10-110]</G_range></code>
 - **B_range of colors (highlighted as Blue during test) is used for detection:**
-	- left corner edge of Hismith: **<font color="red">left border of which should be always fully visible, if it is not - try to change web camera position, if it doesn't help try to extend it by something which will be detected as set related to it color</font>**
+	- **left corner edge of Hismith: <font color="red">left border of which should be always fully visible, if it is not - try to change web camera position, if it doesn't help try to extend it by something which will be detected as set related to it color</font>**
 	- center of rotation (for detect it's placement)
 	- and for right connection of moving telescopic motor rocker arm
 - **G_range of colors (highlighted as Green during test) is used for detection:**
@@ -38,20 +41,18 @@ According images in "example_images" folder you will need to find what are best 
 - **Intersected color ranges of B_range with G_range will be highlighted as Red and will be treated as related to Green:**
 	- rotation part of telescopic motor rocker arm which perform circular movements.
 
-If all is highlighted well you will need to go to next step
+If all is highlighted well you will need to go to next steps
 
 4) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
 By default it will start Hismith on mostly very low speed 5, which you can change to any other for check how good it can track all without errors.\
 After 10 seconds it will show in top average speed value.
-5) If you plan to use other device or for getting the best results **it is highly recommended to run "Get Hismith Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
-In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed.
+5) **If you plan to use other device or for getting the best results it is highly recommended to run "Get Hismith Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
+In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed. You can set at which range regenerate data and stop to "Get Hismith Statistics Data" at any time. Also after checking each speed it generate separate file data\speed_statistics_data_[speed].txt
 6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
-7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in 3rdParty VLC fork project:\
-https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases \
-You can also use standard VLC but be aware that desynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds.\
-Also you will need to enabler HTTP request supports in VLC according\
-https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer \
+7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)\
+You can also use standard VLC but be aware that resynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds.\
+Also you will need to enabler HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)\
 Don't forget to align used settings with settings.xml fields:\
 <code><vlc_url>http://127.0.0.1</vlc_url>\
 <vlc_port>8080</vlc_port>\
@@ -83,19 +84,17 @@ Also after play you can open new generated res_data\\!results_[date].txt for che
 
 ## <font color="red">! WARNING !</font>
 **<font color="red">Be aware to stop Hismith by power button or hotkeys to stop running.</font>**\
-Due to different reasons like computer freeze or "Intiface Central" lose Hismith device or "Funscript - some of which has very fast stroking on scenes where they are totally missed or not".\
-If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI.\
+Due to different reasons like computer freeze or "Intiface Central" lose Hismith device or "Funscript - some of which has very fast stroking or vibration simulations on scenes where they are totally missed or not".\
+If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI also recommend to minimize stroke length in this case.\
 So I highly recommend checking each scene before usage.\
 **To minimize risks I have initially set "Hismith Speed Limit" to 50 (50%) by default, but you will get less good experience in this case.**\
-You can simply play video with turned on program for check how it work or use OpenFunscripter https://github.com/OpenFunscripter/OFS to check script on high intensity moves.\
+You can simply play video with turned on program for check how it work or use [OpenFunscripter](https://github.com/OpenFunscripter/OFS) to check script on high intensity moves.\
+Also sometimes it start too quick during video navigation, especially if you moved to intensive part of scene without pause video and HismithControl.\
+**So i recommend to pause video and pause HismithControl ("Pause Run" hotkey) before navigation on video.**\
 **For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
-## Notes
-Left corner edge of Hismith: **<font color="red">left border of which should be always fully visible, if it is not - try to change web camera position, if it doesn't help try to extend it by something which will be detected as set related to it color.</font>**
-
-**You can set manual webcam focus (for example to 300) if it support it and webcam fps (for example to 30 or 60) through settings.xml, also you can adjust manual webcam focus during "Test Webcam"**\
-\
-Min Funscript Relative Move - is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"
+## Min Funscript Relative Move
+It is used for modify funscript actions, if move change from up to down (or vice versa) according funscript are lover then "Min Funscript Relative Move"
 it will try to find the first next move with which min to max positions will be >= "Min Funscript Relative Move" if such found it will combine from min to max all actions with averaging values in move.
 For more details which actions was averaged you can see in "res_data\\!results_for_get_parsed_funscript_data.txt"\
 Also program save result parsed funscript to "res_data" folder with same name as original file used.
@@ -104,7 +103,7 @@ Also program save result parsed funscript to "res_data" folder with same name as
 You can use this option for get better experience on simple moves.\
 In most cases funscripts use simple patterns for "in"(going inside) and "out"(going outside) moves without details how to make it (without additional points inside such moves).\
 In case of turn on this feature ("Use Modify Funscript Functions" CheckBox) it will automatically replace such simple moves by adding additional move detail points inside moves.\
-You can turn on/off or switch used Modify Funscript Functions even during execution by using hotkey (<hotkey_use_modify_funscript_functions> in settings.xml).\
+**You can turn on/off or switch used Modify Funscript Functions even during execution by using hotkey (<hotkey_use_modify_funscript_functions> in settings.xml).**\
 \
 Variants of such added points are defined in "Functions move variants:" GUI (<functions_move_variants> in settings.xml).\
 Its format is:\
