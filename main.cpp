@@ -7,7 +7,7 @@ using namespace Gdiplus;
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "4.0";
+QString g_cur_version = "4.10";
 
 //---------------------------------------------------------------
 
@@ -93,7 +93,7 @@ QString g_modify_funscript_function_move_in_out_variants;
 // it's value should be from 1 to num in g_modify_funscript_function_move_in_out_variants
 int g_functions_move_in_out_variant = 1;
 
-const int max_search_pos_dif = 45;
+const int g_max_search_pos_dif = 45;
 
 //---------------------------------------------------------------
 
@@ -427,6 +427,7 @@ void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int er
 	}
 }
 
+// return pos in range: [0;360]
 bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "Get Hismith Pos By Image", QString add_data = QString())
 {
 	static cv::Mat prev_frame;
@@ -937,6 +938,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool show_results = fals
 
 							// From scalar vector multiplication a_vec * b_vac
 							// cos(alpha) = (a_x*b_x + a_y*b_y)/|a|*|b|
+							// std::acos return: [0, M_PI] aacording https://en.cppreference.com/w/cpp/numeric/math/acos
 							double alpha = std::acos((double)((g_to_c_cx * r_to_c_cx) + (g_to_c_cy_inv * r_to_c_cy_inv)) / (g_to_c_distance * r_to_c_distance));
 
 							// From cross product (vector product of vectors) [a_vec * b_vac]
@@ -2659,15 +2661,7 @@ int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int
 	return h_speed;
 }
 
-int get_d_form_poses(const int &abs_pos1, const int &pos2)
-{
-	int abs_dif1 = abs((abs_pos1 % 360) - pos2);
-	int abs_dif2 = abs((abs_pos1 % 360) + 360 - pos2);
-	int abs_dif3 = abs((abs_pos1 % 360) - pos2 - 360);
-	int first_min = min(abs_dif1, abs_dif2);
-	return min(first_min, abs_dif3);
-}
-
+// return value in range: target_pos + (-180;180]
 int get_abs_to_target_pos(int cur_pos, int target_pos)
 {
 	int dif = (cur_pos % 360) - (target_pos % 360);
@@ -2682,7 +2676,8 @@ int get_abs_to_target_pos(int cur_pos, int target_pos)
 	return target_pos + dif;
 }
 
-int get_d_in_front_form_poses(int abs_pos1, int pos2, int max_search_dif)
+// return value in range: (-360 + max_search_dif; max_search_dif]
+int get_d_in_front_from_poses(int abs_pos1, int pos2, int max_search_dif)
 {
 	abs_pos1 %= 360;
 	pos2 %= 360;
@@ -3380,7 +3375,7 @@ void run_funscript()
 	bool is_video_paused = false;
 	QString video_filename, last_play_video_filename;
 	std::vector<QPair<int, int>> funscript_data_maped_full;
-	bool get_next_frame_and_cur_speed_res = true;
+	bool get_res = true;
 	bool is_vlc_time_in_milliseconds = true;
 	int res;
 
@@ -3476,7 +3471,7 @@ void run_funscript()
 
 	g_functions_move_in_out_variant = pW->ui->functionsMoveInOutVariants->currentIndex() + 1;
 
-	while (!g_stop_run && get_next_frame_and_cur_speed_res)
+	while (!g_stop_run && get_res)
 	{
 		set_hismith_speed(0.0);
 		QueryPerformanceCounter(&set_hismith_speed_time);
@@ -3669,8 +3664,8 @@ void run_funscript()
 			if (is_vlc_time_in_milliseconds && is_video_paused)
 			{
 				get_new_camera_frame(capture, frame, msec_video_cur_pos);
-				get_next_frame_and_cur_speed_res = get_hismith_pos_by_image(frame, cur_pos);
-				if (!get_next_frame_and_cur_speed_res)
+				get_res = get_hismith_pos_by_image(frame, cur_pos);
+				if (!get_res)
 				{
 					show_msg(QString("Failed to get device position accoring webcam frame."));
 					g_stop_run = true;
@@ -3678,9 +3673,9 @@ void run_funscript()
 				}
 				abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[0].second);
 
-				d_from_search_start_pos = get_d_in_front_form_poses(abs_cur_pos, funscript_data_maped[0].second, max_search_pos_dif);
+				d_from_search_start_pos = get_d_in_front_from_poses(abs_cur_pos, funscript_data_maped[0].second, g_max_search_pos_dif);
 
-				if (d_from_search_start_pos < -max_search_pos_dif)
+				if (d_from_search_start_pos < -g_max_search_pos_dif)
 				{
 					dpos = funscript_data_maped[0].second - abs_cur_pos;
 					if (dpos < 0) dpos += 360;
@@ -3716,9 +3711,9 @@ void run_funscript()
 								std::thread t1( [&cur_video_pos, &is_video_paused, &video_filename, &is_vlc_time_in_milliseconds] { 
 									cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds); 
 									} );
-								std::thread t2([&get_next_frame_and_cur_speed_res, &capture, &frame, &abs_cur_pos, 
+								std::thread t2([&get_res, &capture, &frame, &abs_cur_pos, 
 									&cur_pos, &msec_video_cur_pos, &cur_speed, &msec_video_prev_pos, &abs_prev_pos] {
-									get_next_frame_and_cur_speed_res = get_next_frame_and_cur_speed(capture, frame,
+									get_res = get_next_frame_and_cur_speed(capture, frame,
 										abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 										msec_video_prev_pos, abs_prev_pos);
 									} );
@@ -3726,7 +3721,7 @@ void run_funscript()
 								t2.join();
 							}
 
-							if (!get_next_frame_and_cur_speed_res)
+							if (!get_res)
 							{
 								show_msg(QString("Failed to get next webcam frame and current rotation speed."));
 								g_stop_run = true;
@@ -3736,8 +3731,8 @@ void run_funscript()
 							exp_abs_pos_before_speed_change = abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0);
 
 							d_from_search_start_pos = max(
-								get_d_in_front_form_poses(exp_abs_pos_before_speed_change, funscript_data_maped[0].second, max_search_pos_dif),
-								get_d_in_front_form_poses(abs_cur_pos, funscript_data_maped[0].second, max_search_pos_dif) );
+								get_d_in_front_from_poses(exp_abs_pos_before_speed_change, funscript_data_maped[0].second, g_max_search_pos_dif),
+								get_d_in_front_from_poses(abs_cur_pos, funscript_data_maped[0].second, g_max_search_pos_dif) );
 
 							if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos))
 							{
@@ -3782,9 +3777,11 @@ void run_funscript()
 				show_msg("Runing!", 2000, false, g_modify_funscript);
 			}
 
+			start_info += QString("\ncur_video_time:%1 before wait for video run").arg(VideoTimeToStr(cur_video_pos).c_str());
+
 			while (
 				is_video_paused ||
-				( (cur_video_pos < funscript_data_maped[0].first - g_speed_change_delay) && position_was_aligned )
+				( (cur_video_pos < funscript_data_maped[0].first - g_speed_change_delay - 100) && position_was_aligned )
 				)
 			{
 				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
@@ -3796,16 +3793,25 @@ void run_funscript()
 					break;
 				}
 			}
+
+			start_info += QString("\ncur_video_time:%1 after wait for video run").arg(VideoTimeToStr(cur_video_pos).c_str());
 			
+			int action_id = 1;
+
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
-			get_next_frame_and_cur_speed_res = get_hismith_pos_by_image(frame, cur_pos);
-			if (!get_next_frame_and_cur_speed_res)
+			get_res = get_hismith_pos_by_image(frame, cur_pos);
+			if (!get_res)
 			{
 				show_msg(QString("Failed to get device position accoring webcam frame."));
 				g_stop_run = true;
 				break;
 			}
-			abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[0].second);
+			abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[action_id - 1].second);
+			start_info += QString("\nSetting abs_cur_pos to abs_cur_pos:%1 req_actio_start_pos:%2 cur_pos:%3 with action_id:%4")
+				.arg(abs_cur_pos)
+				.arg(funscript_data_maped[action_id - 1].second)
+				.arg(cur_pos)
+				.arg(action_id - 1);
 
 			if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first + 200) || (cur_video_pos < search_video_pos))
 			{
@@ -3818,7 +3824,7 @@ void run_funscript()
 						.arg(VideoTimeToStr(start_video_pos).c_str())
 						.arg(start_video_pos)
 						.arg(abs_cur_pos)
-						.arg(funscript_data_maped[0].second)
+						.arg(funscript_data_maped[action_id - 1].second)
 						.arg(start_info);
 					file.flush();
 					file.close();
@@ -3826,8 +3832,6 @@ void run_funscript()
 
 				continue;
 			}
-
-			int action_id;
 
 			LARGE_INTEGER action_start_time, speed_change_time, prev_get_speed_time = start_time;
 			int start_abs_pos, exp_abs_cur_pos_to_req_time, tmp_val, dif_cur_vs_req_action_start_time, last_set_action_id_for_dif_cur_vs_req_exp_pos;
@@ -3846,8 +3850,6 @@ void run_funscript()
 
 			LARGE_INTEGER t1, t2, t3, dt_total;
 
-			action_id = 1;
-
 			if (!is_vlc_time_in_milliseconds)
 			{
 				// for minimize time difference sync waiting for the nearest second change
@@ -3865,35 +3867,53 @@ void run_funscript()
 					break;
 				}
 
-				while (((funscript_data_maped[action_id - 1].first < cur_video_pos) || (funscript_data_maped[action_id - 1].second % 360 != 0)) && (action_id < actions_size))
+				// updating abs_cur_pos due to time freeze (possible device position was changed during it)
+				
+				get_new_camera_frame(capture, frame, msec_video_cur_pos);
+				get_res = get_hismith_pos_by_image(frame, cur_pos);
+				if (!get_res)
 				{
-					action_id++;
+					show_msg(QString("Failed to get device position accoring webcam frame."));
+					g_stop_run = true;
+					break;
 				}
-
-				if (action_id < actions_size)
-				{
-					abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[action_id - 1].second);
-				}
+				abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[action_id - 1].second);
+				start_info += QString("\nUpdating abs_cur_pos after wait to abs_cur_pos:%1 req_actio_start_pos:%2 cur_pos:%3 with action_id:%4")
+					.arg(abs_cur_pos)
+					.arg(funscript_data_maped[action_id - 1].second)
+					.arg(cur_pos)
+					.arg(action_id - 1);
 			}
 
-			if ( (action_id < actions_size) && (cur_video_pos >= funscript_data_maped[action_id - 1].first) )
+			while ((action_id < actions_size) && (cur_video_pos > funscript_data_maped[action_id - 1].first - g_speed_change_delay))
 			{
-				start_info += QString("\ncur_video_time:%1 >= actio_start_time:%2 => action_id:%3 ++")
+				start_info += QString("\ncur_video_time:%1 > (actio_start_time:%2 - speed_change_delay:%3) with action_id:%4 => action_id++")
 					.arg(VideoTimeToStr(cur_video_pos).c_str())
 					.arg(VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str())
+					.arg(g_speed_change_delay)
 					.arg(action_id);
 				action_id++;
+			}			
 
-				while ( (action_id < actions_size) && (cur_video_pos > funscript_data_maped[action_id - 1].first - g_speed_change_delay) )
-				{
-					start_info += QString("\ncur_video_time:%1 > (actio_start_time:%2 - speed_change_delay:%3) => action_id:%4 ++")
-						.arg(VideoTimeToStr(cur_video_pos).c_str())
-						.arg(VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str())
-						.arg(g_speed_change_delay)
-						.arg(action_id);
-					action_id++;
-				}
+			if ((action_id < actions_size) && (action_id > 1))
+			{
+				// cur_pos should be alredy uptodate
+				abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[action_id - 1].second);
+				start_info += QString("\nUpdating abs_cur_pos (due to action_id changed) to abs_cur_pos:%1 req_actio_start_pos:%2 cur_pos:%3 with action_id:%4")
+					.arg(abs_cur_pos)
+					.arg(funscript_data_maped[action_id - 1].second)
+					.arg(cur_pos)
+					.arg(action_id - 1);
 			}
+
+			//if ((action_id < actions_size) && (abs_cur_pos - funscript_data_maped[action_id - 1].second < -90) && (funscript_data_maped[action_id].first - cur_video_pos < 1000))
+			//{
+			//	abs_cur_pos += 360;
+			//	start_info += QString("\nSkipping first moves due to abs_cur_pos < -90 and action_end_video_time-cur_video_time<1second, abs_cur_pos += 360, abs_cur_pos:%1 req_actio_start_pos:%2 with action_id:%3")
+			//		.arg(abs_cur_pos)
+			//		.arg(funscript_data_maped[action_id - 1].second)
+			//		.arg(action_id - 1);
+			//}
 
 			start_abs_pos = abs_cur_pos;
 			last_set_action_id_for_dif_cur_vs_req_exp_pos = action_id - 1;
@@ -3922,6 +3942,17 @@ void run_funscript()
 				{
 					move_dif = move_dif - (move_dif % 360);
 					hismith_speed_changed += QString("[skip_part_of_moves_by_shift_abs_cur_pos_on:%1]").arg(move_dif);
+					abs_cur_pos += move_dif;
+					shift_get_next_frame_and_cur_speed_data(move_dif);
+				}
+
+				// in case if user manually changed speed higher than it should be or for some other reasons
+				if (move_dif < -360)
+				{
+					move_dif = -move_dif;
+					move_dif = move_dif - (move_dif % 360);
+					move_dif = -move_dif;
+					hismith_speed_changed += QString("[it_looks_user_manually_changed_speed][shift_abs_cur_pos_on:%1]").arg(move_dif);
 					abs_cur_pos += move_dif;
 					shift_get_next_frame_and_cur_speed_data(move_dif);
 				}
@@ -4015,11 +4046,11 @@ void run_funscript()
 					}
 
 					last_abs_prev_pos = abs_cur_pos;
-					get_next_frame_and_cur_speed_res = get_next_frame_and_cur_speed(capture, frame,
+					get_res = get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 						msec_video_prev_pos, abs_prev_pos);
 
-					if (!get_next_frame_and_cur_speed_res)
+					if (!get_res)
 					{
 						show_msg(QString("Failed to get next webcam frame and current rotation speed."));
 						g_stop_run = true;

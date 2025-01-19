@@ -94,8 +94,10 @@ If you are not sure about script or fear to get injury you can limit max speed i
 **To minimize risks I have initially set "Hismith Speed Limit" to 50 (50%) by default, but you will get less good experience in this case.**\
 You can simply play video with turned on program for check how it work or use [OpenFunscripter](https://github.com/OpenFunscripter/OFS) to check script on high intensity moves.\
 \
-Also sometimes it start too quick during video navigation, especially if you moved to intensive part of scene without pause video and HismithControl.\
+Sometimes it start too quick during video navigation, especially if you moved to intensive part of scene without pause video and HismithControl.\
 **So i recommend to pause video and pause HismithControl ("Pause Run" hotkey) before navigation on video.**\
+\
+**Look to important notes in "Known issues" topic before start to use.**\
 \
 **For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
@@ -166,6 +168,8 @@ additional detail points will be added from move variant with id == 1 (according
 additional detail points will be added from move variant with id == 2 (according pair: 1/2).
 
 ## Known issues
+Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication (Antivirus, System update, etc) with "Intiface Central" or its internal issue), in order to avoid such situations i recommend after each initial "Start" check how Run is going, with video navigation and etc, and only if going all well to use it, in other case reboot OS resolve an issue.\
+\
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
 \
 The most complex in case of automatic Hismith device control is to stop its rotation, according experiments there is a time delay ~150 milliseconds between setting speed change and real device speed changes appearance.
