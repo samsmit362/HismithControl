@@ -2,6 +2,8 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
 #include <gdiplus.h>
+#include <sys/timeb.h>
+
 using namespace Gdiplus;
 #pragma comment (lib,"Gdiplus.lib")
 
@@ -2867,14 +2869,20 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 	return reply_res;
 }
 
-int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req, bool &is_paused, QString &video_filename, bool &is_vlc_time_in_milliseconds)
+void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req, bool &is_paused, QString &video_filename, bool &is_vlc_time_in_milliseconds, int &video_pos, __int64 &vlc_sys_time)
 {
 	bool res = false;
-	int cur_video_pos = -1;
+	video_pos = -1;
+	vlc_sys_time = -1;
+	is_paused = true;
+	is_vlc_time_in_milliseconds = false;
+	video_filename.clear();
 	int length;
 	double position;
-	bool show_warning = true;
-	QString ReqUrl(g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/status.xml");
+	bool show_warning_vlc_is_not_started = true;
+	bool show_warning_no_video_selected = true;
+	QString sync_data;
+	QString ReqUrl(g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/status.xml");	
 
 	while (!res && !g_stop_run)
 	{
@@ -2882,8 +2890,6 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 		QNetworkReply* rep = manager->get(req);
 		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 		QByteArray reply_res;
-
-		video_filename.clear();
 
 		QEventLoop loop;
 		QObject::connect(rep, &QNetworkReply::finished, &loop, &QEventLoop::quit);
@@ -2893,12 +2899,11 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 		{
 			if (rep->error())
 			{
-				if (show_warning)
+				if (show_warning_vlc_is_not_started)
 				{
-					show_msg("Waiting for VLC is starded");
-					set_hismith_speed(0.0);
-					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-					show_warning = false;
+					show_msg("Can't get info from VLC: waiting for VLC is started or respond");
+					show_warning_vlc_is_not_started = false;
+					show_warning_no_video_selected = true;
 				}
 			}
 			else
@@ -2915,6 +2920,7 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 
 			QDomElement docElem = doc.documentElement();
 
+			bool got_sync_data = false;
 			QDomNode n = docElem.firstChild();
 			while (!n.isNull())
 			{
@@ -2928,7 +2934,12 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 					}
 					else if (tag_name == "time")
 					{
-						cur_video_pos = e.text().toInt();
+						video_pos = e.text().toInt();
+					}
+					else if (tag_name == "sync_data")
+					{
+						sync_data = e.text();
+						got_sync_data = true;
 					}
 					else if (tag_name == "length")
 					{
@@ -2988,26 +2999,61 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 
 			if (video_filename.size() == 0)
 			{
+				if (show_warning_no_video_selected)
+				{
+					show_msg("Video file is not selected in playlist: waiting for video file selection");
+					show_warning_no_video_selected = false;
+					show_warning_vlc_is_not_started = true;
+				}
 				res = false;
 			}
 			else
 			{
-				if (cur_video_pos < (int)((double)(length * 100) * position))
+				if (!got_sync_data)
 				{
-					is_vlc_time_in_milliseconds = false;
-					double cur_video_pos_alt = length * position;
-
-					if (cur_video_pos_alt < cur_video_pos + 1)
+					// in case of old VLC extended version with milliseconds support but without sync_data support
+					if (video_pos < (int)((double)(length * 100) * position))
 					{
-						cur_video_pos = max(cur_video_pos * 1000, (int)(cur_video_pos_alt * 1000.0));
+						is_vlc_time_in_milliseconds = false;
+						double video_pos_alt = length * position;
+
+						if (video_pos_alt < video_pos + 1)
+						{
+							video_pos = max(video_pos * 1000, (int)(video_pos_alt * 1000.0));
+						}
+						else
+						{
+							video_pos *= 1000;
+						}
 					}
 					else
 					{
-						cur_video_pos *= 1000;
+						is_vlc_time_in_milliseconds = true;
 					}
+				}
+				else if (sync_data.size() == 0)
+				{
+					res = false;
+					is_paused = true;
+					is_vlc_time_in_milliseconds = true;
 				}
 				else
 				{
+					QRegularExpression re_sync_data("^video_time:(\\d+):sys_time:(\\d+):paused:(\\d+)$");
+					QRegularExpressionMatch match;
+
+					match = re_sync_data.match(sync_data);
+					if (!match.hasMatch())
+					{
+						error_msg(QString("Got wrong sync_data format from VLC: %1").arg(sync_data));
+					}
+					else
+					{
+						video_pos = match.captured(1).toLongLong();
+						vlc_sys_time = match.captured(2).toLongLong();
+						is_paused = is_paused || (match.captured(3).toInt() == 1 ? true : false);
+					}
+
 					is_vlc_time_in_milliseconds = true;
 				}
 			}
@@ -3015,13 +3061,40 @@ int make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req
 
 		if (!res && !g_stop_run)
 		{
+			video_pos = -1;
+			vlc_sys_time = -1;
+			is_paused = true;
+			is_vlc_time_in_milliseconds = false;
+			video_filename.clear();
 			if (g_pMyDevice)
 				set_hismith_speed(0.0);
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		}
 	}
+}
 
-	return cur_video_pos;
+void get_cur_video_pos(bool is_paused, int video_pos, __int64 vlc_sys_time, LARGE_INTEGER &cur_time, int &cur_video_pos)
+{
+	if ((vlc_sys_time > 0) && !is_paused)
+	{
+		struct _timeb timebuffer;
+		_ftime(&timebuffer);
+		QueryPerformanceCounter(&cur_time);
+		__int64 cur_sys_time = (((__int64)timebuffer.time) * 1000) + timebuffer.millitm;
+		__int64 d_time = cur_sys_time - vlc_sys_time;
+
+		if ((d_time < 0) || (d_time > 2000))
+		{
+			error_msg(QString("ERROR: (d_time < 0) || (d_time > 2000): d_time = cur_time_in_milliseconds - sys_time_from_video_in_milliseconds == %1").arg(d_time));
+		}
+
+		cur_video_pos = video_pos + d_time;
+	}
+	else
+	{
+		cur_video_pos = video_pos;
+		QueryPerformanceCounter(&cur_time);
+	}
 }
 
 //---------------------------------------------------------------
@@ -3371,7 +3444,8 @@ void run_funscript()
 	int abs_cur_pos = 0, abs_prev_pos = 0, last_abs_prev_pos = 0;
 	int dpos;
 	double cur_speed, prev_cur_speed = 0, action_start_speed;
-	int cur_video_pos, start_video_pos;
+	int cur_video_pos, start_video_pos, video_pos;
+	__int64 vlc_sys_time = -1;
 	bool is_video_paused = false;
 	QString video_filename, last_play_video_filename;
 	std::vector<QPair<int, int>> funscript_data_maped_full;
@@ -3484,7 +3558,8 @@ void run_funscript()
 				break;
 		}		
 
-		cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+		make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+		get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 		last_play_video_filename = video_filename;
 
 		funscript_fname.clear();
@@ -3526,7 +3601,8 @@ void run_funscript()
 			do
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+				get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 			} while (last_play_video_filename == video_filename && !g_stop_run);
 			continue;
 		}
@@ -3550,7 +3626,8 @@ void run_funscript()
 				do
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 				} while (last_play_video_filename == video_filename && !g_stop_run);
 				continue;
 			}
@@ -3561,7 +3638,8 @@ void run_funscript()
 		int search_video_pos;
 		QString start_info;
 
-		cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+		make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+		get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 		search_video_pos = cur_video_pos;
 
 		for (int i = 0; i < funscript_data_maped_full.size(); i++)
@@ -3616,7 +3694,8 @@ void run_funscript()
 			do
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
+				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+				get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 			} while ((last_play_video_filename == video_filename) && (cur_video_pos >= search_video_pos) && !g_stop_run);
 			continue;
 		}
@@ -3708,8 +3787,8 @@ void run_funscript()
 						{							
 							// run in parallel
 							{
-								std::thread t1( [&cur_video_pos, &is_video_paused, &video_filename, &is_vlc_time_in_milliseconds] { 
-									cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds); 
+								std::thread t1( [&cur_video_pos, &is_video_paused, &video_filename, &is_vlc_time_in_milliseconds, &video_pos, &vlc_sys_time] {
+									make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
 									} );
 								std::thread t2([&get_res, &capture, &frame, &abs_cur_pos, 
 									&cur_pos, &msec_video_cur_pos, &cur_speed, &msec_video_prev_pos, &abs_prev_pos] {
@@ -3719,6 +3798,7 @@ void run_funscript()
 									} );
 								t1.join();
 								t2.join();
+								get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 							}
 
 							if (!get_res)
@@ -3764,8 +3844,9 @@ void run_funscript()
 				}
 			}
 
-			cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-			QueryPerformanceCounter(&start_time);
+			make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+			get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
+			start_time = cur_time;
 			start_video_pos = cur_video_pos;
 
 			if (is_video_paused)
@@ -3784,8 +3865,9 @@ void run_funscript()
 				( (cur_video_pos < funscript_data_maped[0].first - g_speed_change_delay - 100) && position_was_aligned )
 				)
 			{
-				cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-				QueryPerformanceCounter(&start_time);
+				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+				get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
+				start_time = cur_time;
 				start_video_pos = cur_video_pos;
 
 				if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first + 200) || (cur_video_pos < search_video_pos))
@@ -3857,8 +3939,9 @@ void run_funscript()
 				do
 				{
 					prev_video_pos = cur_video_pos;
-					cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds);
-					QueryPerformanceCounter(&start_time);
+					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
+					start_time = cur_time;
 					start_video_pos = cur_video_pos;
 				} while ((prev_video_pos / 1000 == cur_video_pos / 1000) && !g_stop_run);
 
@@ -3921,7 +4004,8 @@ void run_funscript()
 			int start_video_pos_dif;
 			int new_start_video_pos;
 			LARGE_INTEGER _tmp_cur_time;
-			int _tmp_cur_video_pos = -1;
+			int _tmp_video_pos = -1;
+			__int64 _tmp_vlc_sys_time = -1;
 			bool _tmp_is_paused = false;
 			QString _tmp_video_filename;
 			bool _tmp_is_vlc_time_in_milliseconds;
@@ -3972,8 +4056,8 @@ void run_funscript()
 
 				if (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) - cur_video_pos >= 250)
 				{
-					p_get_vlc_status = new std::thread([&_tmp_cur_video_pos, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds, &_tmp_cur_time] {
-						_tmp_cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds);
+					p_get_vlc_status = new std::thread([&_tmp_video_pos, &_tmp_vlc_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds, &_tmp_cur_time] {
+						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds, _tmp_video_pos, _tmp_vlc_sys_time);
 						QueryPerformanceCounter(&_tmp_cur_time);
 						}
 					);
@@ -4074,10 +4158,12 @@ void run_funscript()
 								delete p_get_vlc_status;
 								p_get_vlc_status = NULL;
 								prev_cur_video_pos = cur_video_pos;
-								cur_video_pos = _tmp_cur_video_pos;
 								is_video_paused = _tmp_is_paused;
+								video_pos = _tmp_video_pos;
+								vlc_sys_time = _tmp_vlc_sys_time;
 								video_filename = _tmp_video_filename;
 								is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
+								get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 
 								if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused || (cur_video_pos > (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency))) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 									(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
@@ -4087,17 +4173,26 @@ void run_funscript()
 
 								if (is_vlc_time_in_milliseconds)
 								{
-									new_start_video_pos = cur_video_pos - (int)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency));
-									start_video_pos_dif = new_start_video_pos - start_video_pos;
-									start_video_pos = new_start_video_pos;
-									hismith_speed_changed = QString("[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos) + hismith_speed_changed;
+									if (vlc_sys_time > 0)
+									{
+										new_start_video_pos = cur_video_pos - (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency));
+										start_video_pos_dif = new_start_video_pos - start_video_pos;										
+										hismith_speed_changed = QString("[get_vlc_status: start_video_pos_dif:%1]").arg(start_video_pos_dif) + hismith_speed_changed;
+									}
+									else
+									{
+										new_start_video_pos = cur_video_pos - (int)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency));
+										start_video_pos_dif = new_start_video_pos - start_video_pos;
+										start_video_pos = new_start_video_pos;
+										hismith_speed_changed = QString("[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos) + hismith_speed_changed;
+									}
 								}
 							}
 
 							if (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) - cur_video_pos >= 1000)
 							{
-								p_get_vlc_status = new std::thread([&_tmp_cur_video_pos, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds, &_tmp_cur_time] {
-									_tmp_cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds);
+								p_get_vlc_status = new std::thread([&_tmp_video_pos, &_tmp_vlc_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds, &_tmp_cur_time] {
+									make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds, _tmp_video_pos, _tmp_vlc_sys_time);
 									QueryPerformanceCounter(&_tmp_cur_time);
 									}
 								);
@@ -4212,12 +4307,13 @@ void run_funscript()
 					delete p_get_vlc_status;
 					p_get_vlc_status = NULL;
 					prev_cur_video_pos = cur_video_pos;
-					cur_video_pos = _tmp_cur_video_pos;
 					is_video_paused = _tmp_is_paused;
+					video_pos = _tmp_video_pos;
+					vlc_sys_time = _tmp_vlc_sys_time;
 					video_filename = _tmp_video_filename;
 					is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
-					new_start_video_pos = cur_video_pos - (int)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency));
-
+					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
+					
 					if (g_stop_run || g_pause || g_was_change_in_use_modify_funscript_functions || is_video_paused || (cur_video_pos > (start_video_pos + (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency))) + (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
 						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename))
 					{
@@ -4225,9 +4321,19 @@ void run_funscript()
 					}
 					else if (is_vlc_time_in_milliseconds)
 					{
-						start_video_pos_dif = new_start_video_pos - start_video_pos;
-						start_video_pos = new_start_video_pos;
-						hismith_speed_changed = QString("[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos) + hismith_speed_changed;
+						if (vlc_sys_time > 0)
+						{
+							new_start_video_pos = cur_video_pos - (int)(time_diff_in_milliseconds(cur_time, start_time, Frequency));
+							start_video_pos_dif = new_start_video_pos - start_video_pos;
+							hismith_speed_changed = QString("[get_vlc_status: start_video_pos_dif:%1]").arg(start_video_pos_dif) + hismith_speed_changed;
+						}
+						else
+						{
+							new_start_video_pos = cur_video_pos - (int)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency));
+							start_video_pos_dif = new_start_video_pos - start_video_pos;
+							start_video_pos = new_start_video_pos;
+							hismith_speed_changed = QString("[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos) + hismith_speed_changed;
+						}
 					}
 				}
 
@@ -5180,16 +5286,19 @@ void test_vlc()
 	g_NetworkRequest.setRawHeader("Authorization", headerData.toLocal8Bit());
 	g_NetworkRequest.setTransferTimeout(1000);
 
-	int cur_video_pos = 0, prev_video_pos = 0, dt;
+	int cur_video_pos = 0, prev_video_pos = 0, video_pos = 0, dt;
+	__int64 vlc_sys_time = -1;
 	bool is_video_paused, is_vlc_time_in_milliseconds;
 	QString cur_video_filename, prev_video_filename;
+	LARGE_INTEGER cur_time;
 
 	show_msg(QString("test_vlc started"));
 
 	while (1)
 	{
 		prev_video_pos = cur_video_pos;
-		cur_video_pos = make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, cur_video_filename, is_vlc_time_in_milliseconds);
+		make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time);
+		get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_time, cur_video_pos);
 		if (cur_video_filename != prev_video_filename)
 		{
 			prev_video_filename = cur_video_filename;

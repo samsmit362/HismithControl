@@ -23,8 +23,8 @@ Discussion forum on: [discuss.eroscripts.com](https://discuss.eroscripts.com/t/h
 ## How to use
 **If you have a camera with external or integrated backlight you will need only to add color markers.\
 I'm using for this blue and green insulating tapes (Multi Coloured Electrical Tape) which can be removed at any time.\
-Also you will need that used colors mostly will not be present on Web Camera scenes.\
-Example how to do this you can see in "example_images" folder.**\
+Also you will need that used colors mostly will not be present on Web Camera scene except tracked Hismith parts.\
+Example how to do this you can see in [example_images](https://github.com/samsmit362/HismithControl/tree/master/example_images) folder.**\
 So after getting all of this you will need:
 1) to start [Intiface Central](https://intiface.com/central/) (download: win: exe)\
 check that it can find your Hismith and you can change speed by using it.
@@ -54,14 +54,15 @@ In this case it will automatically run Hismith in range: "Start Speed"-"End Spee
 6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
 7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)\
-You can also use standard VLC but be aware that resynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds.\
+You can also try to use standard VLC but be aware that resynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.\
 Also you will need to enabler HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)\
 Don't forget to align used settings with settings.xml fields:\
 <code><vlc_url>http://127.0.0.1</vlc_url>\
 <vlc_port>8080</vlc_port>\
-<vlc_password>1234</vlc_password></code>\
-If you correctly configured VLC you will can check this in Firefox by using http://127.0.0.1:8080/requests/status.xml \
-(in my case Chrome doesn't open it)
+<vlc_password>1234</vlc_password></code>
+- If you correctly configured VLC you will can check this in Firefox (in my case Chrome doesn't open it) by using:
+	- start VLC and open some video in it (you can pause video)
+	- open http://127.0.0.1:8080/requests/status.xml in Firefox (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
 8) So if all is done now you can simply press button "Start".\
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
@@ -168,7 +169,7 @@ additional detail points will be added from move variant with id == 1 (according
 additional detail points will be added from move variant with id == 2 (according pair: 1/2).
 
 ## Known issues
-Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication (Antivirus, System update, etc) with "Intiface Central" or its internal issue), in order to avoid such situations i recommend after each initial "Start" check how Run is going, with video navigation and etc, and only if going all well to use it, in other case reboot OS resolve an issue.\
+Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication with "Intiface Central" (Antivirus, System update, etc) or its "Intiface Central" internal issue), in order to avoid such situations i recommend to: after each initial "Start" to check how Run is going with video navigation and etc, and only if all is going well to use it, in other case reboot OS resolve an issue.\
 \
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
 \
