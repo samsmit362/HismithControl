@@ -83,7 +83,7 @@ void test_camera();
 void disconnect_from_hismith();
 bool connect_to_hismith();
 void error_msg(QString msg, cv::Mat* p_frame = NULL, cv::Mat* p_frame_upd = NULL, cv::Mat* p_prev_frame = NULL, int x1 = -1, int y1 = -1, int x2 = -1, int y2 = -1);
-void make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req, bool& is_paused, QString& video_filename, bool& is_vlc_time_in_milliseconds, int& video_pos, __int64& vlc_sys_time);
+void make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req, bool& is_paused, QString& video_filename, bool& is_vlc_time_in_milliseconds, int& video_pos, __int64& vlc_sys_time, double& rate);
 QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl);
 bool get_devices_list(bool show_msgs = true);
 void SaveSettings();
