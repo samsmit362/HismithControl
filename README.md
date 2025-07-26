@@ -9,18 +9,22 @@ For minimize complexity of used computer vision algorithms, also as for increase
 ## Forum
 Discussion forum on: [discuss.eroscripts.com](https://discuss.eroscripts.com/t/hismithcontrol-hismith-control-with-funscripts-support/169661)
 
-## What is required for its work
+## Supported Features
+- **Video Speed Rate Changes**
+- **Modify Funscript Functions**
+
+## What Is Required For Its Work
 - You will need:
-	- Hismith with remote control support or possibly any other similar form Fucking Machine
+	- Hismith with remote control support or possibly any other similar machine
 	- Web Camera **with external or integrated backlight**, i have tested on:
 		- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
 		- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got average 45fps during "Test Performance".
-		- External backlight: I'm using external backlight with Ring Light which is set to minimum. Web Camera is placed in the center of it.
+		- External backlight: I'm using external backlight with Ring Light which is set almost to a minimum. Web Camera is placed in the center of it.
 	- Personal computer (PC) with Windows OS
 	- Add color markers to Hismith (which will be tracked)
 	- **Highly recommended** to use some remote controller on which you can map keyboard hotkeys, i'm using Xbox Wireless Controller for PC + [JoyToKey](https://joytokey.net/en/)
 
-## How to use
+## How To Use
 **If you have a camera with external or integrated backlight you will need only to add color markers.\
 I'm using for this blue and green insulating tapes (Multi Coloured Electrical Tape) which can be removed at any time.\
 Also you will need that used colors mostly will not be present on Web Camera scene except tracked Hismith parts.\
@@ -167,6 +171,9 @@ additional detail points will be added from move variant with id == 1 (according
 	additional detail points will be added from move variant with id == 3 (according pair: 2/3) or id == 2 (according pair: 3/2) or 'random' (according pair: random/random) randomly.
 - If simple move type is "out" and its average speed in rpm >= 200 and <= maximum (in range [200, maximum]) then\
 additional detail points will be added from move variant with id == 2 (according pair: 1/2).
+
+## Video Speed Rate Changes
+From v5.0 this program also supports video speed rate changes, so you can assign hotkeys for slow down or increase video speed in VLC, and this application will automatically detect it in real time.
 
 ## Known issues
 Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication with "Intiface Central" (Antivirus, System update, etc) or its "Intiface Central" internal issue), in order to avoid such situations i recommend to: after each initial "Start" to check how Run is going with video navigation and etc, and only if all is going well to use it, in other case reboot OS resolve an issue.\

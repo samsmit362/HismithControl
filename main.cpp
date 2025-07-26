@@ -9,7 +9,7 @@ using namespace Gdiplus;
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "4.10";
+QString g_cur_version = "5.00";
 
 //---------------------------------------------------------------
 
@@ -3991,6 +3991,7 @@ void run_funscript()
 			double optimal_hismith_speed = 0, hismith_speed_prev = 0, optimal_hismith_start_speed = 0, avg_hismith_speed_prev = 0;
 			QString actions_end_with = "success";
 			bool speed_change_was_obtained = false;
+			bool add_speed_change_was_made = false;
 			QString hismith_speed_changed;
 
 			msec_video_prev_pos = -1;
@@ -4169,7 +4170,7 @@ void run_funscript()
 					cur_set_hismith_speed = optimal_hismith_start_speed;
 					QueryPerformanceCounter(&set_hismith_speed_time);
 
-					hismith_speed_changed += QString("[spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_spd: %4 req_pos_vs_cur: %5]")
+					hismith_speed_changed += QString("[act_start spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_spd: %4 req_pos_vs_cur: %5]")
 						.arg((int)(cur_set_hismith_speed * 100.0))
 						.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * cur_rate)))
 						.arg(cur_speed)
@@ -4178,6 +4179,7 @@ void run_funscript()
 				}
 				
 				speed_change_was_obtained = false;
+				add_speed_change_was_made = false;
 
 				dtime = (action_id < actions_size - 1) ? g_speed_change_delay : 0;
 
@@ -4305,12 +4307,12 @@ void run_funscript()
 							{
 								if (cur_set_hismith_speed == 0)
 								{
-									hismith_speed_changed += QString("[forcing_to_stop_device: dt:%1 ->]").arg((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)));
+									hismith_speed_changed += QString("[dt_from_prev_set_zero_speed:%1]").arg((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)));
 								}
 
 								cur_set_hismith_speed = set_hismith_speed(0.0);
 								QueryPerformanceCounter(&set_hismith_speed_time);
-								hismith_speed_changed += QString("[spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]")
+								hismith_speed_changed += QString("[force_stop spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]")
 									.arg((int)(cur_set_hismith_speed * 100.0))
 									.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * cur_rate)))
 									.arg(cur_speed)
@@ -4328,8 +4330,8 @@ void run_funscript()
 								speed_change_was_obtained = true;
 							}
 
-							if (speed_change_was_obtained)
-							{								
+							if (speed_change_was_obtained && ((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)) >= 100))
+							{
 								double optimal_speed = (double)get_optimal_hismith_speed(all_speeds_data, (int)(cur_set_hismith_speed * 100.0), cur_speed, dpos, dt) / 100.0;
 								if (cur_set_hismith_speed != optimal_speed)
 								{
@@ -4338,14 +4340,18 @@ void run_funscript()
 										if ( (!((optimal_speed < cur_set_hismith_speed) && (cur_speed < req_cur_speed))) && 
 											 (!((optimal_speed > cur_set_hismith_speed) && (cur_speed > req_cur_speed))) )
 										{
-											cur_set_hismith_speed = set_hismith_speed(optimal_speed);
-											QueryPerformanceCounter(&set_hismith_speed_time);
-											hismith_speed_changed += QString("[spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]")
-												.arg((int)(cur_set_hismith_speed * 100.0))
-												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * cur_rate)))
-												.arg(cur_speed)
-												.arg(req_cur_speed)
-												.arg(funscript_data_maped[action_id].second - abs_cur_pos);
+											if ((optimal_speed < cur_set_hismith_speed) || !add_speed_change_was_made)
+											{
+												cur_set_hismith_speed = set_hismith_speed(optimal_speed);
+												QueryPerformanceCounter(&set_hismith_speed_time);
+												hismith_speed_changed += QString("[add spd_change: new_set_h_spd:%1 tm_ofs_to_end:%2 cur_spd: %3 req_cur_spd: %4 req_pos_vs_cur: %5]")
+													.arg((int)(cur_set_hismith_speed * 100.0))
+													.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * cur_rate)))
+													.arg(cur_speed)
+													.arg(req_cur_speed)
+													.arg(funscript_data_maped[action_id].second - abs_cur_pos);
+												add_speed_change_was_made = true;
+											}
 										}
 									}
 								}
