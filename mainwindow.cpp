@@ -48,17 +48,17 @@ void GetStatisticsController::handleResults()
 
 UINT get_key_mod(QString &ks)
 {
-    UINT res = 0; 
+    UINT res = 0;
     for (QString &str: ks.split("+"))
     {
         if(str == "Ctrl")
         {
             res |= MOD_CONTROL;
-        } 
+        }
         else if(str == "Alt")
         {
             res |= MOD_ALT;
-        } 
+        }
         else if(str == "Shift")
         {
             res |= MOD_SHIFT;
@@ -130,7 +130,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->functionsMoveVariants->installEventFilter(this);
 
     chart = new QChart();
-    chart->legend()->hide();    
+    chart->legend()->hide();
     chart->setTitle("Modify Funscript Function");
     QChartView* chartView = new QChartView(chart);
     chartView->setRenderHint(QPainter::Antialiasing);
@@ -215,7 +215,7 @@ void MainWindow::handleCheckFunscript()
         {
             if (result_details.size() > 0)
             {
-                result_details = QString("File path: ") + funscript + "\n----------\n" + result_details + "\n----------\n";                
+                result_details = QString("File path: ") + funscript + "\n----------\n" + result_details + "\n----------\n";
             }
             else
             {
@@ -368,7 +368,7 @@ void MainWindow::handleFunctionsMoveVariantsChanged(const QString& str)
 {
     int cur_id = ui->functionsMoveVariants->currentIndex();
 
-    g_modify_funscript_function_move_variants = "";    
+    g_modify_funscript_function_move_variants = "";
     for (int id = 0; id < ui->functionsMoveVariants->count(); id++)
     {
         if (id > 0)
@@ -615,7 +615,7 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
     MSG* msg = static_cast<MSG*>(message);
     if (msg->message == WM_HOTKEY) {
         WPARAM wp = msg->wParam;
-        
+
         {
             if (wp == HOTKEY_PAUSE_ID)
             {
@@ -634,7 +634,7 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
                 handleUseModifyFunscriptFunctions();
             }
         }
-        
+
         return(true);
 
     }

@@ -8,6 +8,9 @@
  <dt_for_get_cur_speed>120</dt_for_get_cur_speed>
  <increase_hismith_speed_start_multiplier>1.25</increase_hismith_speed_start_multiplier>
  <slowdown_hismith_speed_start_multiplier>1.5</slowdown_hismith_speed_start_multiplier>
+ <min_dt_between_speed_changes_on_slow_moves>100</min_dt_between_speed_changes_on_slow_moves>
+ <min_dt_between_speed_changes_on_fast_moves>200</min_dt_between_speed_changes_on_fast_moves>
+ <fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes>40</fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes>
  <speed_change_delay>-1</speed_change_delay>
  <cpu_freezes_timeout>300</cpu_freezes_timeout>
  <B_range>[5-160][144-205][60-125]</B_range>
