@@ -9,7 +9,7 @@ using namespace Gdiplus;
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "5.00";
+QString g_cur_version = "6.00";
 
 //---------------------------------------------------------------
 
@@ -60,6 +60,7 @@ QString g_hotkey_use_modify_funscript_functions;
 
 QString g_root_dir;
 QString g_results_file_path;
+QString g_results_file_data;
 
 Client* g_pClient = NULL;
 std::vector<DeviceClass> g_myDevices;
@@ -298,14 +299,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 
 	disconnect_from_hismith();
 
-	QFile file(g_results_file_path);
-	if (file.open(QFile::WriteOnly | QFile::Append | QFile::Text))
-	{
-		QTextStream ts(&file);
-		ts << QString("\nerror_msg:\n") << msg << QString("\n");
-		file.flush();
-		file.close();
-	}
+	g_results_file_data += QString("\nerror_msg:\n") + msg + QString("\n");
 
 	auto t = std::time(nullptr);
 	auto tm = *std ::localtime(&t);
@@ -341,14 +335,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 
 void warning_msg(QString msg, QString title = "")
 {
-	QFile file(g_results_file_path);
-	if (file.open(QFile::WriteOnly | QFile::Append | QFile::Text))
-	{
-		QTextStream ts(&file);
-		ts << QString("\warning_msg:\n") << msg << QString("\n");
-		file.flush();
-		file.close();
-	}
+	g_results_file_data += QString("\nwarning_msg:\n") + msg + QString("\n");
 	MessageBoxPos(NULL, msg.toStdWString().c_str(), title.toStdWString().c_str(), MB_OK | MB_SETFOREGROUND | MB_SYSTEMMODAL | MB_ICONWARNING);
 }
 
@@ -1310,6 +1297,8 @@ void set_webcam_fps(cv::VideoCapture& capture)
 
 void test_camera()
 {
+	show_msg("Connecting to Web Camera with getting initial frames\n"
+			 "for get better focus...", 3000);
 	int video_dev_id = get_video_dev_id();
 	if (video_dev_id == -1)
 		return;
@@ -2685,15 +2674,15 @@ int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int
 	return h_speed;
 }
 
-// return value in range: target_pos + (-180;180]
+// return value in range: target_pos + [-90;270)
 int get_abs_to_target_pos(int cur_pos, int target_pos)
 {
 	int dif = (cur_pos % 360) - (target_pos % 360);
-	if (dif > 180)
+	if (dif >= 270)
 	{
 		dif -= 360;
 	}
-	else if (dif <= -180)
+	else if (dif < -90)
 	{
 		dif += 360;
 	}
@@ -3469,10 +3458,25 @@ void show_msg(QString msg, int timeout, bool always, bool drow_modify_funscript_
 
 //---------------------------------------------------------------
 
+void save_results_file_data()
+{
+	QFile file(g_results_file_path);
+	if (file.open(QFile::WriteOnly | QFile::Text))
+	{
+		QTextStream ts(&file);
+		ts << g_results_file_data << "\n";
+		file.flush();
+		file.close();
+	}
+}
+
+//---------------------------------------------------------------
+
 void run_funscript()
 {
 	g_results_file_path = g_root_dir + "\\res_data\\!results_" + get_cur_time_str() + ".txt";
-	QString funscript_fname, last_load_funscript_fname;
+	g_results_file_data.clear();
+	QString funscript_fname, last_load_funscript_fname, last_load_funscript_video_filename;
 	int d_from_search_start_pos, cur_pos, search_start_pos;
 	__int64 msec_video_cur_pos, msec_video_prev_pos;
 	double dt = 0, dmove = 0;
@@ -3487,20 +3491,26 @@ void run_funscript()
 	std::vector<QPair<int, int>> funscript_data_maped_full;
 	bool get_res = true;
 	bool is_vlc_time_in_milliseconds = true;
+	double cur_set_hismith_speed = 0;
 	int res;
 
-	LARGE_INTEGER start_time, cur_time, set_hismith_speed_time, prev_set_hismith_speed_time, Frequency;
+	LARGE_INTEGER start_time, cur_time, prev_time, set_hismith_speed_time, prev_set_hismith_speed_time, Frequency;
 	QueryPerformanceFrequency(&Frequency);
 
 	//-----------------------------------------------------
 	// Connecting to Hismith
 	// NOTE: At first start: intiface central
 
+	show_msg("Connecting to Hismith...", 2000);
+
 	if (!connect_to_hismith())
 		return;
 
 	//-----------------------------------------------------
 	// Connecting to Web Camera
+
+	show_msg("Connecting to Web Camera with getting initial frames\n"
+			 "for get better focus...", 3000);
 
 	cv::Mat frame, prev_frame;
 	int video_dev_id = get_video_dev_id();
@@ -3544,6 +3554,8 @@ void run_funscript()
 	//-----------------------------------------------------
 	// Connecting to VLC player with already opened video
 
+	show_msg("Connecting to VLC player...", 2000);
+
 	g_pNetworkAccessManager = new QNetworkAccessManager();
 
 	QString concatenated = ":" + g_vlc_password; //username:password
@@ -3560,44 +3572,60 @@ void run_funscript()
 		g_speed_change_delay = g_avg_time_delay;
 	}
 
+	g_results_file_data += QString(	"min_dt_between_speed_changes_on_slow_moves:%1\n"
+									"min_dt_between_speed_changes_on_fast_moves:%2\n"
+									"fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes:%3\n"
+									"speed_change_delay:%4\n" )
+		.arg(g_min_dt_between_speed_changes_on_slow_moves)
+		.arg(g_min_dt_between_speed_changes_on_fast_moves)
+		.arg(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes)
+		.arg(g_speed_change_delay);
+	g_results_file_data += QString("get_speed_statistics_data:\naverage_time_delay:%1\n").arg(g_avg_time_delay);
+	for (int h_speed = 1; h_speed <= 100; h_speed++)
 	{
-		QFile file(g_results_file_path);
-		if (file.open(QFile::WriteOnly | QFile::Append | QFile::Text))
-		{
-			QTextStream ts(&file);
-			ts << QString(	"min_dt_between_speed_changes_on_slow_moves:%1\n"
-							"min_dt_between_speed_changes_on_fast_moves:%2\n"
-							"fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes:%3\n"
-							"speed_change_delay:%4\n")
-				.arg(g_min_dt_between_speed_changes_on_slow_moves)
-				.arg(g_min_dt_between_speed_changes_on_fast_moves)
-				.arg(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes)
-				.arg(g_speed_change_delay);
-			ts << QString("get_speed_statistics_data:\naverage_time_delay:%1\n").arg(g_avg_time_delay);
-			for (int h_speed = 1; h_speed <= 100; h_speed++)
-			{
-				ts << QString("h_speed:%1 total_average_speed:%2 time_delay:%3\n")
-					.arg(h_speed)
-					.arg(all_speeds_data.speed_data_vector[h_speed - 1].total_average_speed)
-					.arg(all_speeds_data.speed_data_vector[h_speed - 1].time_delay);
-			}
-			ts << QString("\n");
-			file.flush();
-			file.close();
-		}
+		g_results_file_data += QString("h_speed:%1 total_average_speed:%2 time_delay:%3\n")
+			.arg(h_speed)
+			.arg(all_speeds_data.speed_data_vector[h_speed - 1].total_average_speed)
+			.arg(all_speeds_data.speed_data_vector[h_speed - 1].time_delay);
 	}
+	g_results_file_data += QString("\n");
 
 	g_functions_move_in_out_variant = pW->ui->functionsMoveInOutVariants->currentIndex() + 1;
 
-	set_hismith_speed(0.0);
+	cur_set_hismith_speed = set_hismith_speed(0.0);
 	QueryPerformanceCounter(&set_hismith_speed_time);
 	prev_set_hismith_speed_time = set_hismith_speed_time;
+	cur_time = set_hismith_speed_time;
+	prev_time = cur_time;
+
+	struct time_statistic
+	{
+		int dt1;
+		int dt2;
+		int dt3;
+		int dt4;
+		int dt5;
+		int dt6;
+	};
+	time_statistic time_stat;
 
 	while (!g_stop_run && get_res)
 	{
-		set_hismith_speed(0.0);
-		prev_set_hismith_speed_time = set_hismith_speed_time;
-		QueryPerformanceCounter(&set_hismith_speed_time);
+		QueryPerformanceCounter(&cur_time);
+		time_stat.dt6 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
+		time_stat.dt1 = -1;
+		time_stat.dt2 = -1;
+		time_stat.dt3 = -1;
+		time_stat.dt4 = -1;
+		time_stat.dt5 = -1;
+		prev_time = cur_time;
+
+		if (cur_set_hismith_speed != 0.0)
+		{
+			set_hismith_speed(0.0);
+			prev_set_hismith_speed_time = set_hismith_speed_time;
+			QueryPerformanceCounter(&set_hismith_speed_time);
+		}
 
 		if (g_pause)
 		{
@@ -3621,7 +3649,6 @@ void run_funscript()
 			g_video_freezed = false;
 			make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
 			get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_rate, cur_time, cur_video_pos);
-			last_play_video_filename = video_filename;
 
 			if (g_video_freezed)
 			{
@@ -3633,56 +3660,64 @@ void run_funscript()
 				} while (g_video_freezed && !g_stop_run && !g_pause);
 			}
 		}
+		last_play_video_filename = video_filename;
 
 		if (g_stop_run || g_pause)
 		{
 			continue;
 		}
 
-		funscript_fname.clear();
-		QByteArray vlc_reply = get_vlc_reply(g_pNetworkAccessManager, g_NetworkRequest, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
-		QDomDocument doc("data");
-		doc.setContent(vlc_reply);
-		QDomElement docElem = doc.documentElement();
-		QDomNode n = docElem.firstChild().firstChild();
-		QString uri, current;
-		while (!n.isNull()) {
-			QDomElement e = n.toElement(); // try to convert the node to an element.
-			if (!e.isNull()) {
-				QString tag_name = e.tagName();
-				if (tag_name == "leaf")
-				{
-					uri = e.attribute("uri");
-					current = e.attribute("current");
-
-					if (current == "current")
+		if (last_load_funscript_video_filename != last_play_video_filename)
+		{
+			funscript_fname.clear();
+			QByteArray vlc_reply = get_vlc_reply(g_pNetworkAccessManager, g_NetworkRequest, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
+			QDomDocument doc("data");
+			doc.setContent(vlc_reply);
+			QDomElement docElem = doc.documentElement();
+			QDomNode n = docElem.firstChild().firstChild();
+			QString uri, current;
+			while (!n.isNull()) {
+				QDomElement e = n.toElement(); // try to convert the node to an element.
+				if (!e.isNull()) {
+					QString tag_name = e.tagName();
+					if (tag_name == "leaf")
 					{
-						QString fpath = QUrl(uri).toLocalFile();
-						QFileInfo info(fpath);
-						QString fname = info.fileName();
-						funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
-						break;
+						uri = e.attribute("uri");
+						current = e.attribute("current");
+
+						if (current == "current")
+						{
+							QString fpath = QUrl(uri).toLocalFile();
+							QFileInfo info(fpath);
+							QString fname = info.fileName();
+							funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
+							break;
+						}
 					}
 				}
-			}
-			n = n.nextSibling();
-		}
-
-		if (!((funscript_fname.size() > 0) && QFile::exists(funscript_fname)))
-		{
-			if ((funscript_fname.size() > 0) && !QFile::exists(funscript_fname))
-			{
-				show_msg(QString("WARNING: Funscript not found (for current video): %1").arg(funscript_fname), 5000);
+				n = n.nextSibling();
 			}
 
-			do
+			if (!((funscript_fname.size() > 0) && QFile::exists(funscript_fname)))
 			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
-				get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_rate, cur_time, cur_video_pos);
-			} while (last_play_video_filename == video_filename && !g_stop_run);
-			continue;
+				if ((funscript_fname.size() > 0) && !QFile::exists(funscript_fname))
+				{
+					show_msg(QString("WARNING: Funscript not found (for current video): %1").arg(funscript_fname), 5000);
+				}
+
+				do
+				{
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
+					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_rate, cur_time, cur_video_pos);
+				} while (last_play_video_filename == video_filename && !g_stop_run);
+				continue;
+			}
 		}
+
+		QueryPerformanceCounter(&cur_time);
+		time_stat.dt1 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
+		prev_time = cur_time;
 
 		//-----------------------------------------------------
 		// Load Funscript and Hismith statistical data
@@ -3691,6 +3726,7 @@ void run_funscript()
 		if ( (last_load_funscript_fname != funscript_fname) || g_was_change_in_use_modify_funscript_functions )
 		{
 			last_load_funscript_fname = funscript_fname;
+			last_load_funscript_video_filename = last_play_video_filename;
 			funscript_data_maped_full.clear();
 
 			g_change_in_use_modify_funscript_functions_mutex.lock();
@@ -3709,6 +3745,10 @@ void run_funscript()
 				continue;
 			}
 		}
+
+		QueryPerformanceCounter(&cur_time);
+		time_stat.dt2 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
+		prev_time = cur_time;
 
 		bool found_start = false;
 		int pos_offset;
@@ -3785,6 +3825,10 @@ void run_funscript()
 			}
 		}
 
+		QueryPerformanceCounter(&cur_time);
+		time_stat.dt3 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
+		prev_time = cur_time;
+
 		if (capture.isOpened())
 		{
 			int actions_size = funscript_data_maped.size();
@@ -3858,7 +3902,7 @@ void run_funscript()
 
 						show_msg(QString("Align device position for run funscript actions..."), min(1000, dt));
 
-						set_hismith_speed((double)hspeed / 100.0);
+						cur_set_hismith_speed = set_hismith_speed((double)hspeed / 100.0);
 						prev_set_hismith_speed_time = set_hismith_speed_time;
 						QueryPerformanceCounter(&set_hismith_speed_time);
 						msec_video_prev_pos = -1;
@@ -3907,7 +3951,7 @@ void run_funscript()
 							(d_from_search_start_pos < 0) &&
 							(exp_abs_pos_before_speed_change < funscript_data_maped[0].second + 360) );
 
-						set_hismith_speed(0.0);
+						cur_set_hismith_speed = set_hismith_speed(0.0);
 						prev_set_hismith_speed_time = set_hismith_speed_time;
 						QueryPerformanceCounter(&set_hismith_speed_time);
 
@@ -3949,9 +3993,14 @@ void run_funscript()
 
 			start_info += QString("\ncur_video_time:%1 before wait for video run").arg(VideoTimeToStr(cur_video_pos).c_str());
 
+			QueryPerformanceCounter(&cur_time);
+			time_stat.dt4 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
+			prev_time = cur_time;
+
 			while (
 				is_video_paused ||
-				( ((int)((double)(funscript_data_maped[0].first - cur_video_pos) / cur_rate) > g_speed_change_delay + 100) && position_was_aligned )
+				( ((int)((double)(funscript_data_maped[0].first - cur_video_pos) / cur_rate) > g_speed_change_delay + g_min_dt_between_speed_changes_on_fast_moves) && position_was_aligned ) ||
+				((int)((double)(funscript_data_maped[0].first - cur_video_pos) / cur_rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
 				)
 			{
 				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
@@ -3986,21 +4035,14 @@ void run_funscript()
 
 			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / cur_rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != cur_rate))
 			{
-				QFile file(g_results_file_path);
-				if (file.open(QFile::WriteOnly | QFile::Append | QFile::Text))
-				{
-					QTextStream ts(&file);
-					ts << QString("video_name:%1 start_t:%2[%3 msec] start_pos:%4 req_pos:%5\nvideo_speed_rate:%6\n%7\n\n")
-						.arg(start_video_name)
-						.arg(VideoTimeToStr(start_video_pos).c_str())
-						.arg(start_video_pos)
-						.arg(abs_cur_pos)
-						.arg(funscript_data_maped[action_id - 1].second)
-						.arg(cur_rate)
-						.arg(start_info);
-					file.flush();
-					file.close();
-				}
+				g_results_file_data += QString("video_name:%1 start_t:%2[%3 msec] start_pos:%4 req_pos:%5\nvideo_speed_rate:%6\n%7\n\n")
+					.arg(start_video_name)
+					.arg(VideoTimeToStr(start_video_pos).c_str())
+					.arg(start_video_pos)
+					.arg(abs_cur_pos)
+					.arg(funscript_data_maped[action_id - 1].second)
+					.arg(cur_rate)
+					.arg(start_info);
 
 				continue;
 			}
@@ -4092,12 +4134,15 @@ void run_funscript()
 			bool _tmp_is_paused = false;
 			QString _tmp_video_filename;
 			bool _tmp_is_vlc_time_in_milliseconds;
-			double cur_set_hismith_speed = 0;
 			int prev_cur_video_pos = cur_video_pos;
 			std::thread* p_get_vlc_status = NULL;
 
+			QueryPerformanceCounter(&cur_time);
+			time_stat.dt5 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
+			prev_time = cur_time;
 			// required for check computer freezes
-			QueryPerformanceCounter(&prev_get_speed_time);
+			prev_get_speed_time = cur_time;
+
 			while (action_id < actions_size)
 			{
 				QueryPerformanceCounter(&cur_time);
@@ -4112,9 +4157,14 @@ void run_funscript()
 					actual_action_id--;
 				}
 
-				int dpos_exp = ( (funscript_data_maped[actual_action_id].second - funscript_data_maped[actual_action_id - 1].second) *
-					(actual_video_pos - funscript_data_maped[actual_action_id - 1].first) ) /
-					(funscript_data_maped[actual_action_id].first - funscript_data_maped[actual_action_id - 1].first);
+				int dpos_exp = 0;
+				if ( (actual_video_pos > funscript_data_maped[actual_action_id - 1].first) &&
+					 (actual_video_pos <= funscript_data_maped[actual_action_id].first) )
+				{
+					dpos_exp = ((funscript_data_maped[actual_action_id].second - funscript_data_maped[actual_action_id - 1].second) *
+						(actual_video_pos - funscript_data_maped[actual_action_id - 1].first)) /
+						(funscript_data_maped[actual_action_id].first - funscript_data_maped[actual_action_id - 1].first);
+				}
 				int req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[actual_action_id - 1].second - dpos_exp;
 				int cur_dpos = funscript_data_maped[action_id].second - abs_cur_pos;
 
@@ -4551,6 +4601,9 @@ void run_funscript()
 				action_id++;
 			}
 
+			QueryPerformanceCounter(&cur_time);
+			prev_time = cur_time;
+
 			QString result_str = start_info + QString("\n");
 			for (int i = 0; i < actions_size; i++)
 			{
@@ -4580,28 +4633,31 @@ void run_funscript()
 			}
 			result_str += QString("actions_end_with: %1\n\n").arg(actions_end_with);
 
-			QFile file(g_results_file_path);
-			if (file.open(QFile::WriteOnly | QFile::Append | QFile::Text))
-			{
-				QTextStream ts(&file);
-				ts << QString("video_name:%1 start_t:%2[%3 msec] start_pos:%4 req_pos:%5\nvideo_speed_rate:%6\n%7")
-							.arg(start_video_name)
-							.arg(VideoTimeToStr(start_video_pos).c_str())
-							.arg(start_video_pos)
-							.arg(start_abs_pos)
-							.arg(funscript_data_maped[0].second)
-							.arg(cur_rate)
-							.arg(result_str);
-				file.flush();
-				file.close();
-			}
+			g_results_file_data += QString(	"time_statistic: dt1:%1 dt2:%2 dt3:%3 dt4:%4 dt5:%5 dt6:%6\n"
+							"video_name:%7 start_t:%8[%9 msec] start_pos:%10 req_pos:%11\n"
+							"video_speed_rate:%12\n"
+							"%13")
+				.arg(time_stat.dt1)
+				.arg(time_stat.dt2)
+				.arg(time_stat.dt3)
+				.arg(time_stat.dt4)
+				.arg(time_stat.dt5)
+				.arg(time_stat.dt6)
+				.arg(start_video_name)
+				.arg(VideoTimeToStr(start_video_pos).c_str())
+				.arg(start_video_pos)
+				.arg(start_abs_pos)
+				.arg(funscript_data_maped[0].second)
+				.arg(cur_rate)
+				.arg(result_str);
 
-			set_hismith_speed(0.0);
+			cur_set_hismith_speed = set_hismith_speed(0.0);
 			prev_set_hismith_speed_time = set_hismith_speed_time;
 			QueryPerformanceCounter(&set_hismith_speed_time);
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		}
 	}
+
+	save_results_file_data();
 
 	disconnect_from_hismith();
 
@@ -5085,11 +5141,16 @@ void test_hismith(int hismith_speed)
 	// Connecting to Hismith
 	// NOTE: At first start: intiface central
 
+	show_msg("Connecting to Hismith...", 2000);
+
 	if (!connect_to_hismith())
 		return;
 
 	//-----------------------------------------------------
 	// Connecting to Web Camera
+
+	show_msg("Connecting to Web Camera with getting initial frames\n"
+			"for get better focus...", 3000);
 
 	cv::Mat frame, prev_frame, res_frame;
 	int video_dev_id = get_video_dev_id();
@@ -5498,7 +5559,6 @@ int main(int argc, char *argv[])
 
     QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();
-	g_results_file_path = g_root_dir + "\\res_data\\!results_" + get_cur_time_str() + ".txt";
 
 	{
 		QFile file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt");

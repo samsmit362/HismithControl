@@ -176,6 +176,8 @@ additional detail points will be added from move variant with id == 2 (according
 From v5.0 this program also supports video speed rate changes, so you can assign hotkeys for slow down or increase video speed in VLC, and this application will automatically detect it in real time.
 
 ## Known issues
+**Sometimes "Intiface Central" lost Hismith device, in such case device continue to run on last set speed, in such case be ready to stop it moves by using its original wired controller.**\
+\
 Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication with "Intiface Central" (Antivirus, System update, etc) or its "Intiface Central" internal issue), in order to avoid such situations i recommend to: after each initial "Start" to check how Run is going with video navigation and etc, and only if all is going well to use it, in other case reboot OS resolve an issue.\
 \
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
