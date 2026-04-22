@@ -25,11 +25,13 @@ int g_speed_change_delay;
 int g_min_dt_between_speed_changes_on_slow_moves;
 int g_min_dt_between_speed_changes_on_fast_moves;
 int g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes;
+int g_min_dt_start_for_speed_40;
 int g_cpu_freezes_timeout;
 
 double g_video_cur_rate = 1.0;
 int g_cur_video_pos = 0;
 int g_video_cur_actions_end_time = 0;
+int g_video_cur_actions_start_pos = 0;
 bool g_initial_start = true;
 
 //YUV:
@@ -42,6 +44,7 @@ double g_max_telescopic_motor_rocker_arm_proportions;
 double g_min_telescopic_motor_rocker_arm_center_x_proportions;
 double g_max_telescopic_motor_rocker_arm_center_x_proportions;
 
+cv::VideoCapture *g_pCapture = NULL;
 QString g_req_webcam_name;
 int g_webcam_frame_width;
 int g_webcam_frame_height;
@@ -108,7 +111,9 @@ QString g_modify_funscript_function_move_in_out_variants;
 // it's value should be from 1 to num in g_modify_funscript_function_move_in_out_variants
 int g_functions_move_in_out_variant = 1;
 
-const int g_max_search_pos_dif = 45;
+const int g_hspeed_for_set_initial_pos = 5;
+const int g_min_search_pos_dif = -10;
+const int g_max_search_pos_dif = 70;
 
 //---------------------------------------------------------------
 
@@ -2922,7 +2927,7 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &re
 	QString sync_data;
 	QString ReqUrl(g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/status.xml" + command);
 
-	while (!res && !g_stop_run)
+	do
 	{
 		req.setUrl(QUrl(ReqUrl));
 		QNetworkReply* rep = manager->get(req);
@@ -3112,7 +3117,7 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &re
 				set_hismith_speed(0.0);
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		}
-	}
+	} while (!res && !g_stop_run);
 }
 
 void get_cur_video_pos(bool is_paused, int video_pos, __int64 vlc_sys_time, double rate, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
@@ -3388,6 +3393,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+// NOT: if message is always (always == true):
+// then this message will replace all previous messages (no matter always or not)
+// and only last next new message which is not "always" will be accumulated with it
 void show_msg(QString msg, int timeout, bool always, bool drow_modify_funscript_functions, double msg_wnd_y_offset_from_top)
 {
 	if (always)
@@ -3546,14 +3554,38 @@ QString get_add_msg_data()
     std::ostringstream oss;
     oss << std::put_time(&tm, "%H:%M:%S");
     QString time_str = oss.str().c_str();
+	int abs_cur_pos, cur_pos;
+	__int64 msec_video_cur_pos;
+	cv::Mat frame;
+	bool get_res;
+
+	if (g_initial_start)
+	{
+		return "";
+	}
+
+	//get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
+	//get_res = get_hismith_pos_by_image(frame, cur_pos);
+	//if (!get_res)
+	//{
+	//	show_msg(QString("Failed to get device position accoring webcam frame."));
+	//	g_stop_run = true;
+	//	return "";
+	//}
+	//abs_cur_pos = get_abs_to_target_pos(cur_pos, g_video_cur_actions_start_pos);
+	//int d_from_search_start_pos = abs_cur_pos - g_video_cur_actions_start_pos;
+
     QString add_msg_data = QString(
-        "Current time: %1\n"
-        "Current video actions end: %2\n"
+        "Current time: %1 (hour:min:sec)\n"
+		"Current video actions will end in: %2 (min:sec)\n"
         "Video speed rate: %3"
+		//"Diff start hismith pos: %4"
         )
         .arg(time_str)
         .arg(get_time_to_cur_actions_end())
-        .arg(g_video_cur_rate);
+        .arg(g_video_cur_rate)
+		//.arg(d_from_search_start_pos)
+		;
     if (g_modify_funscript)
     {
         add_msg_data += QString("\nUse Modify Funscript Functions variant %1/%2 : %3")
@@ -3575,7 +3607,7 @@ void run_funscript()
 	g_results_file_path = g_root_dir + "\\res_data\\!results_" + get_cur_time_str() + ".txt";
 	g_results_file_data.clear();
 	QString funscript_fname, last_load_funscript_fname, last_load_funscript_video_filename;
-	int d_from_search_start_pos, cur_pos, search_start_pos;
+	int d_cur_from_search_start_pos, d_exp_from_search_start_pos, d_from_search_start_pos, cur_pos, search_start_pos;
 	__int64 msec_video_cur_pos, msec_video_prev_pos;
 	double dt = 0, dmove = 0;
 	int abs_cur_pos = 0, abs_prev_pos = 0, last_abs_prev_pos = 0;
@@ -3614,39 +3646,44 @@ void run_funscript()
 	int video_dev_id = get_video_dev_id();
 	if (video_dev_id == -1)
 		return;
-	cv::VideoCapture capture(video_dev_id);
+	g_pCapture = new cv::VideoCapture(video_dev_id);
 
-	if (capture.isOpened())
+	if (g_pCapture->isOpened())
 	{
-		capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
-		capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
+		g_pCapture->set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
+		g_pCapture->set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
 
-		set_webcam_fps(capture);
+		set_webcam_fps(*g_pCapture);
 
 		if (g_webcam_focus >= 0)
 		{
-			capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
-			capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+			g_pCapture->set(cv::CAP_PROP_AUTOFOCUS, 0);
+			g_pCapture->set(cv::CAP_PROP_FOCUS, g_webcam_focus);
 		}
 
-		capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
+		g_pCapture->set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 		// geting first g_webcam_fps frames for get better camera focus
 		for (int i = 0; i < g_webcam_fps; i++)
 		{
-			get_new_camera_frame(capture, frame, msec_video_cur_pos);
+			get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 		}
 
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
-			capture.release();
+			g_pCapture->release();
+			delete g_pCapture;
+			g_pCapture = NULL;
 			return;
 		}
 		abs_cur_pos = get_abs_to_target_pos(cur_pos, 0);
 	}
 	else
 	{
+		delete g_pCapture;
+		g_pCapture = NULL;
 		error_msg("ERROR: Failed to connect to Web Camera");
+		return;
 	}
 
 	//-----------------------------------------------------
@@ -3951,6 +3988,7 @@ void run_funscript()
 				}
 			}
 			g_video_cur_actions_end_time = funscript_data_maped[last_i].first;
+			g_video_cur_actions_start_pos = funscript_data_maped[0].second;
 		}
 
 		if (g_initial_start)
@@ -3966,7 +4004,7 @@ void run_funscript()
 		time_stat.dt3 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
 		prev_time = cur_time;
 
-		if (capture.isOpened())
+		if (g_pCapture->isOpened())
 		{
 			int actions_size = funscript_data_maped.size();
 
@@ -4005,7 +4043,7 @@ void run_funscript()
 
 			if (is_vlc_time_in_milliseconds && is_video_paused)
 			{
-				get_new_camera_frame(capture, frame, msec_video_cur_pos);
+				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 				get_res = get_hismith_pos_by_image(frame, cur_pos);
 				if (!get_res)
 				{
@@ -4014,98 +4052,97 @@ void run_funscript()
 					break;
 				}
 				abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[0].second);
+				d_from_search_start_pos = abs_cur_pos - funscript_data_maped[0].second;
 
-				d_from_search_start_pos = get_d_in_front_from_poses(abs_cur_pos, funscript_data_maped[0].second, g_max_search_pos_dif);
-
-				if (d_from_search_start_pos < -g_max_search_pos_dif)
+				if ((d_from_search_start_pos < g_min_search_pos_dif) || (d_from_search_start_pos > g_max_search_pos_dif))
 				{
 					dpos = funscript_data_maped[0].second - abs_cur_pos;
 					if (dpos < 0) dpos += 360;
 					dt = (int)((double)(funscript_data_maped[0].first - g_cur_video_pos) / g_video_cur_rate) - g_speed_change_delay;
-					int req_hspeed = is_video_paused ? 0 : get_optimal_hismith_speed(all_speeds_data, 0, 0, dpos, dt);
 
-					int avg_id = 1;
-					while ( (funscript_data_maped[avg_id].second - funscript_data_maped[0].second < 360) && (avg_id < actions_size - 1) )
+					int hspeed = g_hspeed_for_set_initial_pos;
+
+					show_msg(QString("Align device position for run funscript actions..."), 5000, true);
+
+					cur_set_hismith_speed = set_hismith_speed((double)hspeed / 100.0);
+					prev_set_hismith_speed_time = set_hismith_speed_time;
+					QueryPerformanceCounter(&set_hismith_speed_time);
+					msec_video_prev_pos = -1;
+					abs_prev_pos = 0;
+					cur_speed = 0;
+					int exp_abs_pos_before_speed_change_to_target_pos = 0;
+					int abs_cur_pos_to_target_pos = 0;
+
+					do
 					{
-						avg_id++;
-					}
-					int req_avg_by_actions_hspeed = get_optimal_hismith_speed(all_speeds_data, 0, 0,
-						funscript_data_maped[avg_id].second - funscript_data_maped[0].second,
-						(int)((double)(funscript_data_maped[avg_id].first - funscript_data_maped[0].first) / g_video_cur_rate));
-
-					if ((req_hspeed < req_avg_by_actions_hspeed) || (req_hspeed <= 10))
-					{
-						int hspeed = max(5, req_hspeed);
-
-						show_msg(QString("Align device position for run funscript actions..."), min(1000, dt));
-
-						cur_set_hismith_speed = set_hismith_speed((double)hspeed / 100.0);
-						prev_set_hismith_speed_time = set_hismith_speed_time;
-						QueryPerformanceCounter(&set_hismith_speed_time);
-						msec_video_prev_pos = -1;
-						abs_prev_pos = 0;
-						cur_speed = 0;
-						int exp_abs_pos_before_speed_change = 0;
-
-						do
+						// run in parallel
 						{
-							// run in parallel
-							{
-								std::thread t1( [&is_video_paused, &video_filename, &is_vlc_time_in_milliseconds, &video_pos, &vlc_sys_time] {
-									make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-									} );
-								std::thread t2([&get_res, &capture, &frame, &abs_cur_pos,
-									&cur_pos, &msec_video_cur_pos, &cur_speed, &msec_video_prev_pos, &abs_prev_pos] {
-									get_res = get_next_frame_and_cur_speed(capture, frame,
-										abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-										msec_video_prev_pos, abs_prev_pos);
-									} );
-								t1.join();
-								t2.join();
-								get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, g_cur_video_pos);
-							}
-
-							if (!get_res)
-							{
-								show_msg(QString("Failed to get hismith position.\nPausing video if not and pausing hismith control."), 5000, true);
+							std::thread t1( [&is_video_paused, &video_filename, &is_vlc_time_in_milliseconds, &video_pos, &vlc_sys_time] {
 								make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-								if (!is_video_paused)
-								{
-									make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
-								}
-								g_pause = true;
-								break;
-							}
+								} );
+							std::thread t2([&get_res, &frame, &abs_cur_pos,
+								&cur_pos, &msec_video_cur_pos, &cur_speed, &msec_video_prev_pos, &abs_prev_pos] {
+								get_res = get_next_frame_and_cur_speed(*g_pCapture, frame,
+									abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
+									msec_video_prev_pos, abs_prev_pos);
+								} );
+							t1.join();
+							t2.join();
+							get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, g_cur_video_pos);
+						}
 
-							exp_abs_pos_before_speed_change = abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0);
-
-							d_from_search_start_pos = max(
-								get_d_in_front_from_poses(exp_abs_pos_before_speed_change, funscript_data_maped[0].second, g_max_search_pos_dif),
-								get_d_in_front_from_poses(abs_cur_pos, funscript_data_maped[0].second, g_max_search_pos_dif) );
-
-							if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (g_cur_video_pos > funscript_data_maped[1].first) || (g_cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate))
+						if (!get_res)
+						{
+							show_msg(QString("Failed to get hismith position.\nPausing video if not and pausing hismith control."), 5000, true);
+							make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+							if (!is_video_paused)
 							{
-								break;
+								make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
 							}
-
-						} while ( !g_stop_run &&
-							is_video_paused &&
-							(d_from_search_start_pos < 0) &&
-							(exp_abs_pos_before_speed_change < funscript_data_maped[0].second + 360) );
-
-						cur_set_hismith_speed = set_hismith_speed(0.0);
-						prev_set_hismith_speed_time = set_hismith_speed_time;
-						QueryPerformanceCounter(&set_hismith_speed_time);
-
-						if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (g_cur_video_pos > funscript_data_maped[1].first) || (g_cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate))
-						{
-							continue;
+							g_pause = true;
+							break;
 						}
 
-						if ((int)((double)(funscript_data_maped[0].first - g_cur_video_pos) / g_video_cur_rate) > g_speed_change_delay)
+						d_cur_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
+						d_exp_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0), funscript_data_maped[0].second) - funscript_data_maped[0].second;
+
+						if (g_stop_run || g_pause || g_video_freezed || !is_video_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (g_cur_video_pos > funscript_data_maped[1].first) || (g_cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate))
 						{
-							position_was_aligned = true;
+							break;
 						}
+
+					} while ( (d_cur_from_search_start_pos < g_min_search_pos_dif) ||
+							(d_cur_from_search_start_pos > g_max_search_pos_dif) ||
+							(d_exp_from_search_start_pos < g_min_search_pos_dif) ||
+							(d_exp_from_search_start_pos > g_max_search_pos_dif) );
+
+					cur_set_hismith_speed = set_hismith_speed(0.0);
+					prev_set_hismith_speed_time = set_hismith_speed_time;
+					QueryPerformanceCounter(&set_hismith_speed_time);
+
+					do
+					{
+						get_res = get_next_frame_and_cur_speed(*g_pCapture, frame,
+							abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
+							msec_video_prev_pos, abs_prev_pos);
+					} while (cur_speed > 0);
+
+					d_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
+
+					//show_msg(QString("Diff start hismith pos befor stop / exp pos: %1 / %2\n"
+					//				"Diff start hismith pos after stop: %3")
+					//	.arg(d_cur_from_search_start_pos)
+					//	.arg(d_exp_from_search_start_pos)
+					//	.arg(d_from_search_start_pos), 10000, true);
+
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (g_cur_video_pos > funscript_data_maped[1].first) || (g_cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate))
+					{
+						continue;
+					}
+
+					if ((d_from_search_start_pos < g_min_search_pos_dif) || (d_from_search_start_pos > g_max_search_pos_dif))
+					{
+						position_was_aligned = true;
 					}
 				}
 				else
@@ -4126,11 +4163,28 @@ void run_funscript()
 
 			if (is_video_paused)
 			{
-				show_msg(QString("Ready to go!\nVideo speed rate: %1%2").arg(g_video_cur_rate).arg(g_modify_funscript ? QString("") : QString("\nModify Funscript Functions Off")), 2000, false, g_modify_funscript);
+				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
+				get_res = get_hismith_pos_by_image(frame, cur_pos);
+				if (!get_res)
+				{
+					show_msg(QString("Failed to get device position accoring webcam frame."));
+					g_stop_run = true;
+					break;
+				}
+				abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[0].second);
+				d_from_search_start_pos = abs_cur_pos - funscript_data_maped[0].second;
+
+				show_msg(QString("Ready to go!\n"
+					"Video speed rate: %1\n"
+					"Diff start hismith pos: %2\n"
+					"%3")
+					.arg(g_video_cur_rate)
+					.arg(d_from_search_start_pos)
+					.arg(g_modify_funscript ? QString("") : QString("Use Modify Funscript Functions: Off")), 5000, true, g_modify_funscript);
 			}
 			else
 			{
-				show_msg("Runing!", 2000, false, g_modify_funscript);
+				show_msg("Runing!", 2000, true, g_modify_funscript);
 			}
 
 			start_info += QString("\ncur_video_time:%1 before wait for video run").arg(VideoTimeToStr(g_cur_video_pos).c_str());
@@ -4158,9 +4212,9 @@ void run_funscript()
 
 			start_info += QString("\ncur_video_time:%1 after wait for video run").arg(VideoTimeToStr(g_cur_video_pos).c_str());
 
-			int action_id = 1;
+			int action_id = 1, action_id_start = 0;
 
-			get_new_camera_frame(capture, frame, msec_video_cur_pos);
+			get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 			get_res = get_hismith_pos_by_image(frame, cur_pos);
 			if (!get_res)
 			{
@@ -4168,7 +4222,7 @@ void run_funscript()
 				g_stop_run = true;
 				break;
 			}
-			abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[0].second);
+			abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[action_id_start].second);
 			start_info += QString("\nSetting abs_cur_pos to abs_cur_pos:%1 req_actio_start_pos:%2 cur_pos:%3 with action_id:%4")
 				.arg(abs_cur_pos)
 				.arg(funscript_data_maped[action_id - 1].second)
@@ -4227,7 +4281,7 @@ void run_funscript()
 
 				// updating abs_cur_pos due to time freeze (possible device position was changed during it)
 
-				get_new_camera_frame(capture, frame, msec_video_cur_pos);
+				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 				get_res = get_hismith_pos_by_image(frame, cur_pos);
 				if (!get_res)
 				{
@@ -4253,15 +4307,38 @@ void run_funscript()
 				action_id++;
 			}
 
-			if ((action_id < actions_size) && (action_id > 1))
+			while ( (action_id < actions_size) &&
+				 ( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - g_cur_video_pos)
+				  > 1.2 * ( ((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) /
+				  		    (double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first) ) )
+					)
 			{
-				// cur_pos should be alredy uptodate
-				abs_cur_pos = get_abs_to_target_pos(cur_pos, funscript_data_maped[action_id - 1].second);
-				start_info += QString("\nUpdating abs_cur_pos (due to action_id changed) to abs_cur_pos:%1 req_actio_start_pos:%2 cur_pos:%3 with action_id:%4")
-					.arg(abs_cur_pos)
-					.arg(funscript_data_maped[action_id - 1].second)
-					.arg(cur_pos)
-					.arg(action_id - 1);
+				start_info += QString("\nreq_speed/actions_speed:%1 > 1.2 with action_id:%4 => action_id++")
+					.arg(((double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - g_cur_video_pos)) /
+						((((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first))))
+					.arg(action_id);
+				action_id++;
+			}
+
+			int avg_req_speed, avg_req_hismith_speed, req_dt;
+
+			avg_req_speed = (((double)(funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) /
+				((double)(funscript_data_maped[action_id].first - g_cur_video_pos) / g_video_cur_rate));
+			avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
+			req_dt = (g_min_dt_start_for_speed_40 * avg_req_hismith_speed) / 40;
+
+			while (funscript_data_maped[action_id].first - g_cur_video_pos < req_dt)
+			{
+				start_info += QString("\n(action_id_end_time - cur_video_pos):%1 < req_dt:%2 (for avg_req_speed: %3) => action_id++")
+					.arg(funscript_data_maped[action_id].first - g_cur_video_pos)
+					.arg(req_dt)
+					.arg(avg_req_hismith_speed);
+
+				action_id++;
+				avg_req_speed = (((double)(funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) /
+					((double)(funscript_data_maped[action_id].first - g_cur_video_pos) / g_video_cur_rate));
+				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
+				req_dt = (g_min_dt_start_for_speed_40 * avg_req_hismith_speed) / 40;
 			}
 
 			start_abs_pos = abs_cur_pos;
@@ -4284,6 +4361,19 @@ void run_funscript()
 			prev_time = cur_time;
 			// required for check computer freezes
 			prev_get_speed_time = cur_time;
+
+			start_info += QString("\n\nInitial target action_id:%1 action_id_start:%2\n"
+				"dstart_pos_cur_vs_act_id_0:%3 dstart_time_cur_vs_act_id_0:%4\n"
+				"dstart_pos_cur_vs_act_id_start:%5 dstart_time_cur_vs_act_id_start:%6\n"
+				"req_speed/actions_speed:%7\n")
+				.arg(action_id)
+				.arg(action_id_start)
+				.arg(abs_cur_pos - funscript_data_maped[0].second)
+				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[0].first)
+				.arg(abs_cur_pos - funscript_data_maped[action_id_start].second)
+				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[action_id_start].first)
+				.arg(( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - g_cur_video_pos) ) /
+				     ( (((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first)) ));
 
 			while (action_id < actions_size)
 			{
@@ -4339,10 +4429,10 @@ void run_funscript()
 					fut_action_id++;
 				}
 
-				int avg_req_speed = ( ((double)(funscript_data_maped[fut_action_id].second - funscript_data_maped[actual_action_id - 1].second) * 1000.0) /
+				avg_req_speed = ( ((double)(funscript_data_maped[fut_action_id].second - funscript_data_maped[actual_action_id - 1].second) * 1000.0) /
 										((double)(funscript_data_maped[fut_action_id].first - funscript_data_maped[actual_action_id - 1].first) / g_video_cur_rate) );
 
-				int avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
+				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 
 				int min_dt_between_speed_changes = g_min_dt_between_speed_changes_on_slow_moves;
 
@@ -4458,7 +4548,7 @@ void run_funscript()
 					}
 
 					last_abs_prev_pos = abs_cur_pos;
-					get_res = get_next_frame_and_cur_speed(capture, frame,
+					get_res = get_next_frame_and_cur_speed(*g_pCapture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 						msec_video_prev_pos, abs_prev_pos);
 
@@ -4814,9 +4904,18 @@ void run_funscript()
 
 	disconnect_from_hismith();
 
-	g_pNetworkAccessManager->deleteLater();
+	g_pCapture->release();
+	delete g_pCapture;
+	g_pCapture = NULL;
 
-	capture.release();
+	make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+	if (!is_video_paused)
+	{
+		make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
+	}
+
+	g_pNetworkAccessManager->deleteLater();
+	g_pNetworkAccessManager = NULL;
 }
 
 void disconnect_from_hismith()
@@ -5437,6 +5536,7 @@ void SaveSettings()
 	add_xml_element(document, root, "min_dt_between_speed_changes_on_slow_moves", QString::number(g_min_dt_between_speed_changes_on_slow_moves));
 	add_xml_element(document, root, "min_dt_between_speed_changes_on_fast_moves", QString::number(g_min_dt_between_speed_changes_on_fast_moves));
 	add_xml_element(document, root, "fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes", QString::number(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes));
+	add_xml_element(document, root, "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40));
 	add_xml_element(document, root, "speed_change_delay", QString::number(g_speed_change_delay));
 	add_xml_element(document, root, "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout));
 
@@ -5533,6 +5633,7 @@ bool LoadSettings()
 	g_min_dt_between_speed_changes_on_slow_moves = data_map["min_dt_between_speed_changes_on_slow_moves"].toInt();
 	g_min_dt_between_speed_changes_on_fast_moves = data_map["min_dt_between_speed_changes_on_fast_moves"].toInt();
 	g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes = data_map["fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes"].toInt();
+	g_min_dt_start_for_speed_40 = data_map["min_dt_start_for_speed_40"].toInt();
 	g_speed_change_delay = data_map["speed_change_delay"].toInt();
 	g_cpu_freezes_timeout = data_map["cpu_freezes_timeout"].toInt();
 
@@ -5738,7 +5839,9 @@ int main(int argc, char *argv[])
 	//test_err_frame(g_root_dir + "\\error_data\\2025.08.05_18.14.09_frame_orig.bmp");
 	//test_err_frame(g_root_dir + "\\error_data\\2026.04.15_19.42.19_frame_orig.bmp");
 
-	//show_msg(QString("123"), 5000, true, false, 0.1);
+	//show_msg(QString("test message"), 5000, true, false, 0.1);
+	//show_msg(QString("123"));
+	//show_msg(QString("567"));
 	//show_msg("", 0, true);
 
 	//test_hismith(5);
