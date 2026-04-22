@@ -73,9 +73,13 @@ extern QString g_hotkey_pause;
 extern QString g_hotkey_resume;
 extern QString g_hotkey_use_modify_funscript_functions;
 
+extern double g_video_cur_rate;
+
+extern bool g_initial_start;
+
 //---------------------------------------------------------------
 
-void show_msg(QString msg, int timeout = 5000, bool always = false, bool drow_modify_funscript_functions = false);
+void show_msg(QString msg, int timeout = 5000, bool always = false, bool drow_modify_funscript_functions = false, double msg_wnd_y_offset_from_top = 0.5);
 void run_funscript();
 void test_hismith(int hismith_speed);
 void get_performance_with_hismith(int hismith_speed);
@@ -83,13 +87,15 @@ void test_camera();
 void disconnect_from_hismith();
 bool connect_to_hismith();
 void error_msg(QString msg, cv::Mat* p_frame = NULL, cv::Mat* p_frame_upd = NULL, cv::Mat* p_prev_frame = NULL, int x1 = -1, int y1 = -1, int x2 = -1, int y2 = -1);
-void make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req, bool& is_paused, QString& video_filename, bool& is_vlc_time_in_milliseconds, int& video_pos, __int64& vlc_sys_time, double& rate);
+void make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req, bool& is_paused, QString& video_filename, bool& is_vlc_time_in_milliseconds, int& video_pos, __int64& vlc_sys_time, double& rate, QString command = QString());
 QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl);
 bool get_devices_list(bool show_msgs = true);
 void SaveSettings();
 void get_statistics_with_hismith(int start_speed, int end_speed);
 bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
 bool get_speed_statistics_data(speeds_data& all_speeds_data);
+QString get_time_to_cur_actions_end();
+QString get_add_msg_data();
 
 //---------------------------------------------------------------
 

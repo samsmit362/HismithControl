@@ -24,14 +24,14 @@ namespace mhl {
 			break;
 		case mhl::MessageTypes::ServerInfo:
 			// Set message type and convert to class from json.
-			std::cout << "Server info!" << std::endl;
+			DEBUG_MSG("Server info!");
 			messageType = mhl::MessageTypes::ServerInfo;
 			serverInfo = msg.get<msg::ServerInfo>();
 			break;
 		case mhl::MessageTypes::ScanningFinished:
 			break;
 		case mhl::MessageTypes::DeviceList:
-			std::cout << "Device list!" << std::endl;
+			DEBUG_MSG("Device list!");
 			messageType = mhl::MessageTypes::DeviceList;
 			deviceList = msg.get<msg::DeviceList>();
 			break;
@@ -85,6 +85,12 @@ namespace mhl {
 		case mhl::MessageTypes::ScalarCmd:
 			j = req.scalarCmd;
 			break;
+		case mhl::MessageTypes::LinearCmd:
+			j = req.linearCmd;
+			break;
+		case mhl::MessageTypes::RotateCmd:
+			j = req.rotateCmd;
+			break;
 		case mhl::MessageTypes::SensorReadCmd:
 			j = req.sensorReadCmd;
 			break;
@@ -95,6 +101,12 @@ namespace mhl {
 			j = req.sensorUnsubscribeCmd;
 			break;
 		}
+
+		std::cout << j.begin().key()<< std::endl;
+		if (j.begin().key().compare("RequestServerInfo")) {
+			q_sent.push_back(std::make_pair(j.begin().key(), j.begin().value().at("Id")));
+		}
+
 		return j;
 	}
 }

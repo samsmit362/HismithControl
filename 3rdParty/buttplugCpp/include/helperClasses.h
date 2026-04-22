@@ -1,13 +1,15 @@
 #include <string>
 #include <vector>
+#include <iostream>
 
-#ifdef DEBUG
-#define DEBUG_MSG(str) do { std::cout << str << std::endl; } while( false )
+// Define debug macro that checks for BUTTPLUG_DEBUG being defined
+#ifdef BUTTPLUG_DEBUG
+#define DEBUG_MSG(str) do { std::cout << "[DEBUG] " << str << std::endl; } while( false )
 #else
 #define DEBUG_MSG(str) do { } while ( false )
 #endif
 
-
+// Class representing device command attributes used to define properties of device features
 class DeviceCmdAttr {
 public:
 	std::string FeatureDescriptor = "";
@@ -18,6 +20,7 @@ public:
 	//std::vector<std::string> Endpoints;
 };
 
+// Class representing a command that a device supports
 class DeviceCmd {
 public:
 	std::string CmdType = "";
@@ -25,6 +28,7 @@ public:
 	std::vector<DeviceCmdAttr> DeviceCmdAttributes;
 };
 
+// Class representing a device connected to the buttplug server
 class Device {
 public:
 	std::string DeviceName;
@@ -34,9 +38,26 @@ public:
 	std::vector<DeviceCmd> DeviceMessages;
 };
 
+// Class representing a scalar command that can be sent to a device
 class Scalar {
 public:
 	unsigned int Index;
 	double ScalarVal;
 	std::string ActuatorType;
+};
+
+// Class representing a linear movement command for a device
+class Linear {
+public:
+	unsigned int Index;
+	double Duration;
+	double Position;
+};
+
+// Class representing a rotational movement command for a device
+class Rotate {
+public:
+	unsigned int Index;
+	double Speed;
+	bool Clockwise;
 };

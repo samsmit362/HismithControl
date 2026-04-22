@@ -26,6 +26,34 @@ namespace msg {
 		j["StopAllDevices"] = { {"Id", k.Id} };
 	}
 
+	void to_json(json& j, const LinearCmd& k) {
+		j["LinearCmd"] = { {"Id", k.Id}, {"DeviceIndex", k.DeviceIndex} };
+		j["LinearCmd"]["Vectors"] = json::array();
+		
+		for (auto& vec : k.Vectors) {
+			json jTemp = { 
+				{ "Index", vec.Index }, 
+				{ "Duration", vec.Duration }, 
+				{ "Position", vec.Position }
+			};
+			j["LinearCmd"]["Vectors"].insert(j["LinearCmd"]["Vectors"].end(), jTemp);
+		}
+	}
+	
+	void to_json(json& j, const RotateCmd& k) {
+		j["RotateCmd"] = { {"Id", k.Id}, {"DeviceIndex", k.DeviceIndex} };
+		j["RotateCmd"]["Rotations"] = json::array();
+		
+		for (auto& rot : k.Rotations) {
+			json jTemp = { 
+				{ "Index", rot.Index }, 
+				{ "Speed", rot.Speed }, 
+				{ "Clockwise", rot.Clockwise }
+			};
+			j["RotateCmd"]["Rotations"].insert(j["RotateCmd"]["Rotations"].end(), jTemp);
+		}
+	}
+	
 	void to_json(json& j, const ScalarCmd& k) {
 		j["ScalarCmd"] = { {"Id", k.Id}, {"DeviceIndex", k.DeviceIndex} };
 		j["ScalarCmd"]["Scalars"] = json::array();
@@ -88,8 +116,6 @@ namespace msg {
 		if (jTemp["Devices"].size() > 0) {
 			for (auto& el : jTemp["Devices"].items()) {
 				Device tempD;
-				//std::cout << el.value() << std::endl;
-				auto test = el.value().contains("DeviceMessageTimingGap");
 				if (el.value().contains("DeviceName")) tempD.DeviceName = el.value()["DeviceName"];
 
 				if (el.value().contains("DeviceIndex")) tempD.DeviceIndex = el.value()["DeviceIndex"];
@@ -124,7 +150,7 @@ namespace msg {
 							if (el3.value().contains("SensorType")) tempAttr.SensorType = el3.value()["SensorType"];
 
 							if (el3.value().contains("SensorRange")) {
-								//std::cout << el3.value()["SensorRange"] << std::endl;
+								DEBUG_MSG("Processing SensorRange values");
 								for (auto& el4 : el3.value()["SensorRange"].items()) {
 									tempAttr.SensorRange.push_back(el4.value()[0]);
 									tempAttr.SensorRange.push_back(el4.value()[1]);
@@ -187,7 +213,7 @@ namespace msg {
 					if (el3.value().contains("SensorType")) tempAttr.SensorType = el3.value()["SensorType"];
 
 					if (el3.value().contains("SensorRange")) {
-						//std::cout << el3.value()["SensorRange"] << std::endl;
+						DEBUG_MSG("Processing SensorRange values");
 						for (auto& el4 : el3.value()["SensorRange"].items()) {
 							tempAttr.SensorRange.push_back(el4.value()[0]);
 							tempAttr.SensorRange.push_back(el4.value()[1]);

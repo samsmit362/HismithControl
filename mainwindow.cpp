@@ -15,6 +15,9 @@
 void StartWorker::doWork()
 {
     g_work_in_progress = true;
+    g_initial_start = true;
+    g_stop_run = false;
+    g_pause = false;
     run_funscript();
     emit resultReady();
 }
@@ -544,7 +547,7 @@ void MainWindow::handleRefreshDevicesButton()
 
 void MainWindow::handleStopStart()
 {
-    if (g_work_in_progress)
+    if (g_work_in_progress && !g_initial_start)
     {
         std::lock_guard lk(g_stop_mutex);
         show_msg("Stop pressed", 1000);
@@ -555,10 +558,11 @@ void MainWindow::handleStopStart()
 
 void MainWindow::handlePauseStart()
 {
-    if (g_work_in_progress)
+    if (g_work_in_progress && !g_initial_start)
     {
         std::lock_guard lk(g_stop_mutex);
-        show_msg("Pause pressed", 2000, true, g_modify_funscript);
+        show_msg(QString("Pause pressed\n%1").arg(get_add_msg_data()),
+            5000, true, g_modify_funscript);
         g_pause = true;
         g_stop_cvar.notify_all();
     }
@@ -566,10 +570,11 @@ void MainWindow::handlePauseStart()
 
 void MainWindow::handleResumeStart()
 {
-    if (g_work_in_progress)
+    if (g_work_in_progress && !g_initial_start)
     {
         std::lock_guard lk(g_stop_mutex);
-        show_msg("Resume pressed", 2000, true, g_modify_funscript);
+        show_msg(QString("Resume pressed\n%1").arg(get_add_msg_data()),
+            3000, true, g_modify_funscript);
         g_pause = false;
         g_stop_cvar.notify_all();
     }
@@ -577,7 +582,7 @@ void MainWindow::handleResumeStart()
 
 void MainWindow::handleUseModifyFunscriptFunctions()
 {
-    if (g_work_in_progress)
+    if (g_work_in_progress && !g_initial_start)
     {
         std::lock_guard lk(g_change_in_use_modify_funscript_functions_mutex);
         g_was_change_in_use_modify_funscript_functions = true;

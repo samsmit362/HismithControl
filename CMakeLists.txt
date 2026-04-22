@@ -1,18 +1,6 @@
-cmake_minimum_required (VERSION 3.8)
-include("3rdParty/buttplugCpp/cmake/HunterGate.cmake")
+cmake_minimum_required(VERSION 3.12)
 
-HunterGate(
-    URL "https://github.com/cpp-pm/hunter/archive/v0.24.18.tar.gz"
-    SHA1 "1292e4d661e1770d6d6ca08c12c07cf34a0bf718"
-)
-
-# Enable Hot Reload for MSVC compilers if supported.
-if (POLICY CMP0141)
-  cmake_policy(SET CMP0141 NEW)
-  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
-endif()
-
-project(HismithControl VERSION 0.1 LANGUAGES CXX)
+project(HismithControl VERSION 7.0 LANGUAGES CXX)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
@@ -68,12 +56,10 @@ else()
     endif()
 endif()
 
-hunter_add_package(nlohmann_json)
-hunter_add_package(ZLIB)
-find_package(ixwebsocket CONFIG REQUIRED)
-find_package(nlohmann_json 3.2.0 REQUIRED)
-find_package(ZLIB REQUIRED)
+# Find dependencies
 find_package(Threads REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(ixwebsocket REQUIRED)
 
 target_include_directories(HismithControl PUBLIC
 	 ${OpenCV_INCLUDE_DIRS}
@@ -86,8 +72,10 @@ set_target_properties(OpenCVLib PROPERTIES
 
 target_link_libraries(HismithControl
 					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt::Charts Qt::Core Qt::Gui
-					PUBLIC ixwebsocket::ixwebsocket nlohmann_json::nlohmann_json Threads::Threads OpenCVLib)
-
+					PUBLIC ixwebsocket::ixwebsocket nlohmann_json::nlohmann_json Threads::Threads bcrypt OpenCVLib)
+	
+target_compile_options(HismithControl PRIVATE /W4)
+	
 set_target_properties(HismithControl PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER my.example.com
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
