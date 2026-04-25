@@ -15,6 +15,7 @@
 void StartWorker::doWork()
 {
     g_work_in_progress = true;
+    g_runing_funscript = false;
     g_initial_start = true;
     g_stop_run = false;
     g_pause = false;
@@ -26,6 +27,7 @@ void StartController::handleResults()
 {
     g_stop_run = false;
     g_work_in_progress = false;
+    show_msg("", 0, true);
     p_parent->show();
     p_parent->trayIcon->hide();
 }
@@ -549,10 +551,9 @@ void MainWindow::handleStopStart()
 {
     if (g_work_in_progress && !g_initial_start)
     {
-        std::lock_guard lk(g_stop_mutex);
-        show_msg("Stop pressed", 1000);
+        std::lock_guard lk(g_update_mutex);
+        show_msg("Stop pressed", 5000, true);
         g_stop_run = true;
-        g_stop_cvar.notify_all();
     }
 }
 
@@ -560,23 +561,23 @@ void MainWindow::handlePauseStart()
 {
     if (g_work_in_progress && !g_initial_start)
     {
-        std::lock_guard lk(g_stop_mutex);
-        show_msg(QString("Pause pressed\n%1").arg(get_add_msg_data()),
-            5000, true, g_modify_funscript);
+        std::unique_lock lk(g_update_mutex);
+        show_msg(QString("Pause pressed"), 5000, true);
         g_pause = true;
-        g_stop_cvar.notify_all();
+        g_update = true;
+        g_update_cvar.wait(lk, [] { return !g_update; });
     }
 }
 
 void MainWindow::handleResumeStart()
 {
-    if (g_work_in_progress && !g_initial_start)
+    if (g_work_in_progress && !g_initial_start && !g_runing_funscript)
     {
-        std::lock_guard lk(g_stop_mutex);
-        show_msg(QString("Resume pressed\n%1").arg(get_add_msg_data()),
-            3000, true, g_modify_funscript);
+        std::unique_lock lk(g_update_mutex);
+        show_msg(QString("Resume pressed"), 5000, true);
         g_pause = false;
-        g_stop_cvar.notify_all();
+        g_update = true;
+        g_update_cvar.wait(lk, [] { return !g_update; });
     }
 }
 
@@ -584,27 +585,38 @@ void MainWindow::handleUseModifyFunscriptFunctions()
 {
     if (g_work_in_progress && !g_initial_start)
     {
-        std::lock_guard lk(g_change_in_use_modify_funscript_functions_mutex);
-        g_was_change_in_use_modify_funscript_functions = true;
-
-        if (g_modify_funscript)
         {
-            if (g_functions_move_in_out_variant == ui->functionsMoveInOutVariants->count())
+            std::lock_guard lk(g_change_in_use_modify_funscript_functions_mutex);
+            g_was_change_in_use_modify_funscript_functions = true;
+
+            if (g_modify_funscript)
             {
-                g_functions_move_in_out_variant = 1;
-                g_modify_funscript = false;
-                show_msg("Turn Off Use Modify Funscript Functions", 4000, true);
+                if (g_functions_move_in_out_variant == ui->functionsMoveInOutVariants->count())
+                {
+                    g_functions_move_in_out_variant = 1;
+                    g_modify_funscript = false;
+                    //show_msg("Turn Off Use Modify Funscript Functions", 4000, true);
+                }
+                else
+                {
+                    g_functions_move_in_out_variant++;
+                    //show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
+                }
             }
             else
             {
-                g_functions_move_in_out_variant++;
-                show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
+                g_modify_funscript = true;
+                //show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
             }
         }
-        else
+
         {
-            g_modify_funscript = true;
-            show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
+            std::unique_lock lk(g_update_mutex);
+            if (g_pause)
+            {
+                g_update = true;
+                g_update_cvar.wait(lk, [] { return !g_update; });
+            }
         }
     }
 }

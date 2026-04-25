@@ -48,11 +48,12 @@ extern QString g_cur_version;
 
 extern bool g_pause;
 extern bool g_stop_run;
+extern bool g_update;
 extern bool g_was_change_in_use_modify_funscript_functions;
 
-extern std::mutex g_stop_mutex;
+extern std::mutex g_update_mutex;
 extern std::mutex g_change_in_use_modify_funscript_functions_mutex;
-extern std::condition_variable g_stop_cvar;
+extern std::condition_variable g_update_cvar;
 
 extern int g_max_allowed_hismith_speed;
 extern int g_min_funscript_relative_move;
@@ -67,6 +68,7 @@ extern QString g_hismith_device_name;
 extern std::vector<DeviceClass> g_myDevices;
 
 extern bool g_work_in_progress;
+extern bool g_runing_funscript;
 
 extern QString g_hotkey_stop;
 extern QString g_hotkey_pause;
