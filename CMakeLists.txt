@@ -34,9 +34,11 @@ set(PROJECT_SOURCES
 )
 
 if(6 GREATER_EQUAL 6)
+	set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
     qt_add_executable(HismithControl
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+		${app_icon_resource_windows}
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET HismithControl APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
@@ -93,7 +95,7 @@ add_custom_command(
 
 # Resources:
 set(systray_resource_files
-	"images/icon.png"
+	"images/icon.ico"
 	"images/folder.png"
 )
 

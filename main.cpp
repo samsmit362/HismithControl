@@ -5885,6 +5885,8 @@ int main(int argc, char *argv[])
 
     QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();
+	QIcon icon(":/images/icon.ico");
+	a.setWindowIcon(icon);
 
 	{
 		QFile file(g_root_dir + "\\res_data\\!results_for_get_parsed_funscript_data.txt");
