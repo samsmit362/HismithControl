@@ -571,10 +571,10 @@ void MainWindow::handlePauseStart()
 
 void MainWindow::handleResumeStart()
 {
-    if (g_work_in_progress && !g_initial_start && !g_runing_funscript)
+    if (g_work_in_progress && !g_initial_start)
     {
         std::unique_lock lk(g_update_mutex);
-        show_msg(QString("Resume pressed"), 5000, true);
+        show_msg(QString("Resume pressed"), g_runing_funscript ? 2000 : 5000, true);
         g_pause = false;
         g_update = true;
         g_update_cvar.wait(lk, [] { return !g_update; });

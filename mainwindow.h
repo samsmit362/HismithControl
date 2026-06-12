@@ -96,8 +96,6 @@ void SaveSettings();
 void get_statistics_with_hismith(int start_speed, int end_speed);
 bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
 bool get_speed_statistics_data(speeds_data& all_speeds_data);
-QString get_time_to_cur_actions_end();
-QString get_add_msg_data();
 
 //---------------------------------------------------------------
 
