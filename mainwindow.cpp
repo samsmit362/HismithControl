@@ -27,7 +27,7 @@ void StartController::handleResults()
 {
     g_stop_run = false;
     g_work_in_progress = false;
-    show_msg("", 0, true);
+    show_msg("", 0, MessageType::Clean);
     p_parent->show();
     p_parent->trayIcon->hide();
 }
@@ -186,6 +186,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->openFunscript, &QToolButton::released, this, &MainWindow::handleOpenFunscript);
 
     connect(ui->checkFunscript, &QPushButton::released, this, &MainWindow::handleCheckFunscript);
+
+    connect(this, &MainWindow::errorOccurred, this, &MainWindow::showErrorMsg, Qt::QueuedConnection);
+    connect(this, &MainWindow::warningOccurred, this, &MainWindow::showWarningMsg, Qt::QueuedConnection);
+    connect(this, &MainWindow::msgOccurred, this, &MainWindow::showMsg, Qt::QueuedConnection);
 }
 
 void MainWindow::handleOpenFunscript()
@@ -241,8 +245,21 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+void MainWindow::showErrorMsg(const QString& msg) {
+    QMessageBox::critical(this, "Error", msg);
+}
+
+void MainWindow::showWarningMsg(const QString& msg, const QString& title) {
+    QMessageBox::warning(this, title, msg);
+}
+
+void MainWindow::showMsg(const QString& msg, const QString& title) {
+    QMessageBox::information(this, title, msg);
+}
+
 void MainWindow::handleStartButton()
 {
+    g_functions_move_in_out_variant = ui->functionsMoveInOutVariants->currentIndex() + 1;
     hide();
     trayIcon->show();
     emit ctrlStart.operate();
@@ -266,7 +283,7 @@ void MainWindow::handleGetStatistics()
     }
     else if (!g_stop_run)
     {
-        show_msg("Stop pressed", 1000);
+        show_msg("Stop pressed", 1000, MessageType::Clean);
         g_stop_run = true;
     }
 }
@@ -549,10 +566,10 @@ void MainWindow::handleRefreshDevicesButton()
 
 void MainWindow::handleStopStart()
 {
-    if (g_work_in_progress && !g_initial_start)
+    if (g_work_in_progress)
     {
         std::lock_guard lk(g_update_mutex);
-        show_msg("Stop pressed", 5000, true);
+        show_msg("Stop pressed", 5000, MessageType::Clean);
         g_stop_run = true;
     }
 }
@@ -562,7 +579,7 @@ void MainWindow::handlePauseStart()
     if (g_work_in_progress && !g_initial_start)
     {
         std::unique_lock lk(g_update_mutex);
-        show_msg(QString("Pause pressed"), 5000, true);
+        show_msg(QString("Pause pressed"), 5000, MessageType::Clean);
         g_pause = true;
         g_update = true;
         g_update_cvar.wait(lk, [] { return !g_update; });
@@ -574,7 +591,7 @@ void MainWindow::handleResumeStart()
     if (g_work_in_progress && !g_initial_start)
     {
         std::unique_lock lk(g_update_mutex);
-        show_msg(QString("Resume pressed"), g_runing_funscript ? 2000 : 5000, true);
+        show_msg(QString("Resume pressed"), g_runing_funscript ? 2000 : 5000, MessageType::Clean);
         g_pause = false;
         g_update = true;
         g_update_cvar.wait(lk, [] { return !g_update; });
@@ -595,18 +612,15 @@ void MainWindow::handleUseModifyFunscriptFunctions()
                 {
                     g_functions_move_in_out_variant = 1;
                     g_modify_funscript = false;
-                    //show_msg("Turn Off Use Modify Funscript Functions", 4000, true);
                 }
                 else
                 {
                     g_functions_move_in_out_variant++;
-                    //show_msg(QString("Change Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
                 }
             }
             else
             {
                 g_modify_funscript = true;
-                //show_msg(QString("Turn On Use Modify Funscript Functions to\nvariant %1/%2 : %3").arg(g_functions_move_in_out_variant).arg(ui->functionsMoveInOutVariants->count()).arg(ui->functionsMoveInOutVariants->itemText(g_functions_move_in_out_variant - 1)), 4000, true, true);
             }
         }
 

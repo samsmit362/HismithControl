@@ -81,7 +81,9 @@ extern bool g_initial_start;
 
 //---------------------------------------------------------------
 
-void show_msg(QString msg, int timeout = 5000, bool always = false, bool drow_modify_funscript_functions = false, double msg_wnd_y_offset_from_top = 0.5);
+enum MessageType {Add, Always, Clean};
+
+void show_msg(QString msg, int timeout = 5000, MessageType msg_type = MessageType::Add, bool drow_modify_funscript_functions = false, double msg_wnd_y_offset_from_top = 0.5);
 void run_funscript();
 void test_hismith(int hismith_speed);
 void get_performance_with_hismith(int hismith_speed);
@@ -228,6 +230,16 @@ public:
 
     bool eventFilter(QObject* obj, QEvent* event);
     void RegisterHotKeys();
+
+signals:
+    void errorOccurred(const QString& msg);
+    void warningOccurred(const QString& msg, const QString& title);
+    void msgOccurred(const QString& msg, const QString& title);
+
+public slots:
+    void showErrorMsg(const QString& msg);
+    void showWarningMsg(const QString& msg, const QString& title);
+    void showMsg(const QString& msg, const QString& title);
 
 private slots:
     void handleStartButton();

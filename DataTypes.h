@@ -91,7 +91,7 @@ inline bool operator==(const color_range& lhs, const color_range& rhs)
 enum TextAlignment : int {
 	Center = 0,
 	Left,
-	Right,	
+	Right,
 	Any
 };
 
@@ -347,7 +347,7 @@ public:
 		if (other.m_data)
 		{
 			m_data = other.m_data;
-		}		
+		}
 
 		return *this;
 	}
@@ -477,7 +477,7 @@ public:
 		m_pData = obj.m_pData + offset;
 		m_size = obj.m_size - offset;
 		m_need_to_release = false;
-		
+
 	}
 
 	custom_buffer<T>& operator= (const custom_buffer<T> &obj)
@@ -560,7 +560,7 @@ public:
 	void copy_data(T* pData, int size)
 	{
 		custom_assert(size >= 0, "custom_buffer<T>::copy_data(T* pData, int size): not: size >= 0");
-		custom_assert(size <= m_size, "custom_buffer<T>::copy_data(T* pData, int size): not: size <= m_size");		
+		custom_assert(size <= m_size, "custom_buffer<T>::copy_data(T* pData, int size): not: size <= m_size");
 
 		if (size > 0)
 		{
@@ -681,7 +681,7 @@ public:
 
 	simple_buffer(T* pData, int size) : custom_buffer<T>(pData, size)
 	{
-	}	
+	}
 
 	simple_buffer(int size) : custom_buffer<T>(size)
 	{
@@ -798,7 +798,7 @@ public:
 		this->m_need_to_release = obj.m_need_to_release;
 
 		if (this->m_need_to_release)
-		{			
+		{
 			memcpy(this->m_pData, obj.m_pData, this->m_size * sizeof(T));
 		}
 		else
@@ -806,7 +806,7 @@ public:
 			this->m_pData = obj.m_pData;
 		}
 
-		return *this;		
+		return *this;
 	}
 
 	void operator+=(custom_buffer<T>& obj)
@@ -836,7 +836,7 @@ public:
 	{
 		custom_assert(size >= 0, "simple_buffer<T>::copy_data(const custom_buffer<T>& obj, int size): not: size >= 0");
 		custom_assert(size <= obj.m_size, "simple_buffer<T>::copy_data(const custom_buffer<T>& obj, int size): not: size <= obj.m_size");
-		custom_assert(size <= this->m_size, "simple_buffer<T>::copy_data(const custom_buffer<T>& obj, int size): not: size <= this->m_size");		
+		custom_assert(size <= this->m_size, "simple_buffer<T>::copy_data(const custom_buffer<T>& obj, int size): not: size <= this->m_size");
 
 		if (size > 0)
 		{
@@ -848,7 +848,7 @@ public:
 	{
 		custom_assert(size >= 0, "simple_buffer<T>::copy_data(const custom_buffer<T>& src, int offset_dst, int offset_src, int size): not: size >= 0");
 		custom_assert(offset_dst + size - 1 <= this->m_size - 1, "simple_buffer<T>::copy_data(const custom_buffer<T>& src, int offset_dst, int offset_src, int size): not: offset_dst + size - 1 <= this->m_size - 1");
-		custom_assert(offset_src + size - 1 <= src.m_size - 1, "simple_buffer<T>::copy_data(const custom_buffer<T>& src, int offset_dst, int offset_src, int size): not: offset_src + size - 1 <= src.m_size - 1");		
+		custom_assert(offset_src + size - 1 <= src.m_size - 1, "simple_buffer<T>::copy_data(const custom_buffer<T>& src, int offset_dst, int offset_src, int size): not: offset_src + size - 1 <= src.m_size - 1");
 
 		if (size > 0)
 		{
@@ -859,7 +859,7 @@ public:
 	void copy_data(T* pData, int size)
 	{
 		custom_assert(size >= 0, "simple_buffer<T>::copy_data(T* pData, int size): not: size >= 0");
-		custom_assert(size <= this->m_size, "simple_buffer<T>::copy_data(T* pData, int size): not: size <= this->m_size");		
+		custom_assert(size <= this->m_size, "simple_buffer<T>::copy_data(T* pData, int size): not: size <= this->m_size");
 
 		if (size > 0)
 		{

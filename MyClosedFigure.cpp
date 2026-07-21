@@ -13,7 +13,7 @@ CMyClosedFigure::~CMyClosedFigure()
 }
 
 void CMyClosedFigure::operator=(CMyClosedFigure& other)
-{	
+{
 	m_PointsArray = other.m_PointsArray;
 	m_minX = other.m_minX;
 	m_maxX = other.m_maxX;
@@ -22,7 +22,7 @@ void CMyClosedFigure::operator=(CMyClosedFigure& other)
 }
 
 void CMyClosedFigure::operator+=(CMyClosedFigure& other)
-{	
+{
 	m_PointsArray += other.m_PointsArray;
 	if (other.m_minX < m_minX) m_minX = other.m_minX;
 	if (other.m_maxX > m_maxX) m_maxX = other.m_maxX;
