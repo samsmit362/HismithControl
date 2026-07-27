@@ -18,8 +18,9 @@ Discussion forum on: [discuss.eroscripts.com](https://discuss.eroscripts.com/t/h
 	- Hismith with remote control support or possibly any other similar machine
 	- Web Camera **with external or integrated backlight**, i have tested on:
 		- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
-		- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got average 45fps during "Test Performance".
-		- External backlight: I'm using external backlight with Ring Light which is set almost to a minimum. Web Camera is placed in the center of it.
+		- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got best results with average 60fps during "Test Performance".
+		- Smartphone with: USB connection, 720p+30fps (for decrease End-to-End Latency), "webcam_end_to_end_latency" set to 120, turned on Flash light, manual focus, manual temperature.
+	- External backlight: I'm using external backlight with Ring Light which is set almost to a minimum. Web Camera is placed in the center of it.
 	- Personal computer (PC) with Windows OS
 	- Add color markers to Hismith (which will be tracked)
 	- **Highly recommended** to use some remote controller on which you can map keyboard hotkeys, i'm using Xbox Wireless Controller for PC + [JoyToKey](https://joytokey.net/en/)
@@ -58,7 +59,7 @@ In this case it will automatically run Hismith in range: "Start Speed"-"End Spee
 6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
 7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)\
-You can also try to use standard VLC but be aware that resynchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.\
+You can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.\
 Also you will need to enabler HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)\
 Don't forget to align used settings with settings.xml fields:\
 <code><vlc_url>http://127.0.0.1</vlc_url>\
@@ -67,7 +68,32 @@ Don't forget to align used settings with settings.xml fields:\
 - If you correctly configured VLC you will can check this in Firefox (in my case Chrome doesn't open it) by using:
 	- start VLC and open some video in it (you can pause video)
 	- open http://127.0.0.1:8080/requests/status.xml in Firefox (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
-8) So if all is done now you can simply press button "Start".\
+8) **You possibly need to adjust "webcam_end_to_end_latency" in settings.xml especially if will use Smartphone even by USB connection**
+End-to-End Latency is difference in real image time and it’s obtain on PC, then higher this value then less possible any correct control, especially on speed 40+.
+- Known End-to-End Latency:
+	- Smartphone USB (wire) connection 120–160 ms
+	- Smartphone Wi-Fi (wireless) connection 200–350+ ms
+	- Webcam 1080p 60fps in good case 50–80 (In low light conditions, due to auto exposure, it increases to 100–120 ms)
+- The next statistic was obtain by tests:
+	- Smartphone 1280x720 30fps (for decrease End-to-End Latency) "webcam_end_to_end_latency" set to 120
+		- average_dif_end_pos: 6 deviation_dif_end_pos: 19
+		- average_dif_end_pos: 7 deviation_dif_end_pos: 23
+		- average_dif_end_pos: 12 deviation_dif_end_pos: 25
+		- average_dif_end_pos: 3 deviation_dif_end_pos: 25
+	- Webcam 1920x1080 60fps "webcam_end_to_end_latency" set to 0
+		- average_dif_end_pos: 6 deviation_dif_end_pos: 16
+		- average_dif_end_pos: 5 deviation_dif_end_pos: 21
+		- average_dif_end_pos: 8 deviation_dif_end_pos: 20
+		- average_dif_end_pos: 11 deviation_dif_end_pos: 21
+		- average_dif_end_pos: 2 deviation_dif_end_pos: 13
+	- Webcam 1920x1080 60fps "webcam_end_to_end_latency" set to 50
+		- average_dif_end_pos: 6 deviation_dif_end_pos: 18
+		- average_dif_end_pos: 7 deviation_dif_end_pos: 22
+		- average_dif_end_pos: 8 deviation_dif_end_pos: 19
+		- average_dif_end_pos: 8 deviation_dif_end_pos: 21
+		- average_dif_end_pos: 9 deviation_dif_end_pos: 20
+		- average_dif_end_pos: 3 deviation_dif_end_pos: 16
+9) So if all is done now you can simply press button "Start".\
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
 If VLC does not found it will show a message that it's waiting for it.\

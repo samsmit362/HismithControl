@@ -240,6 +240,7 @@ void MainWindow::handleCheckFunscript()
 
 MainWindow::~MainWindow()
 {
+    g_high_precision_timer_guard.Stop();
     trayIcon->hide();
     UnregisterHotKey((HWND)this->window()->winId(), HOTKEY_PAUSE_ID);
     delete ui;
