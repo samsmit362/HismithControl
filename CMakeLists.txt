@@ -30,10 +30,13 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
+        FastLatencyWindow.h
         mainwindow.ui
 		MyClosedFigure.cpp
 		MyClosedFigure.h
 		DataTypes.h
+        ThreadedCapture.h
+        HighPrecisionTimerGuard.h
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h
 		${BUTTPLUGCPP_SRC_FILES}

@@ -80,8 +80,6 @@ extern double g_video_cur_rate;
 
 extern bool g_initial_start;
 
-extern HighPrecisionTimerGuard g_high_precision_timer_guard;
-
 //---------------------------------------------------------------
 
 enum MessageType {Add, Always, Clean};
@@ -90,6 +88,7 @@ void show_msg(QString msg, int timeout = 5000, MessageType msg_type = MessageTyp
 void run_funscript();
 void test_hismith(int hismith_speed);
 void get_performance_with_hismith(int hismith_speed);
+void get_webcam_latency();
 void test_camera();
 void disconnect_from_hismith();
 bool connect_to_hismith();
@@ -101,71 +100,6 @@ void SaveSettings();
 void get_statistics_with_hismith(int start_speed, int end_speed);
 bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
 bool get_speed_statistics_data(speeds_data& all_speeds_data);
-
-//---------------------------------------------------------------
-
-class ThreadedCapture
-{
-public:
-    bool is_running{ false };
-
-private:
-    std::thread capture_thread;
-
-    std::mutex cap_mutex;
-    std::condition_variable cvar;
-
-    cv::VideoCapture* p_cap{ NULL};
-    cv::Mat latest_frame;
-    __int64 msec_pos_latest_frame;
-    bool has_new_frame{ false };
-
-    void capture_loop();
-
-public:
-    ThreadedCapture() = default;
-
-    ~ThreadedCapture() {
-        stop();
-    }
-
-    void start(cv::VideoCapture* p_capture);
-    void stop();
-    bool wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& msec_pos_output_frame);
-};
-
-//---------------------------------------------------------------
-
-class HighPrecisionTimerGuard {
-public:
-    bool was_set;
-
-    HighPrecisionTimerGuard() {
-        was_set = false;
-    }
-
-    void Start() {
-        if (!was_set)
-        {
-            was_set = true;
-            timeBeginPeriod(1);
-        }
-    }
-
-    void Stop() {
-        if (was_set)
-        {
-            was_set = false;
-            timeEndPeriod(1);
-        }
-    }
-
-    ~HighPrecisionTimerGuard() {
-    }
-
-    HighPrecisionTimerGuard(const HighPrecisionTimerGuard&) = delete;
-    HighPrecisionTimerGuard& operator=(const HighPrecisionTimerGuard&) = delete;
-};
 
 //---------------------------------------------------------------
 
@@ -310,6 +244,7 @@ public slots:
     void showMsg(const QString& msg, const QString& title);
 
 private slots:
+    void handleGetWebcamLatency();
     void handleStartButton();
     void handleTestButton();
     void handleGetPerformance();

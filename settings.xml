@@ -23,7 +23,8 @@
  <webcam_frame_height>1080</webcam_frame_height>
  <webcam_fps>-1</webcam_fps>
  <webcam_focus>-1</webcam_focus>
-<webcam_end_to_end_latency>0</webcam_end_to_end_latency>
+ <webcam_exposure>0</webcam_exposure>
+ <webcam_end_to_end_latency>50</webcam_end_to_end_latency>
  <intiface_central_client_url>ws://127.0.0.1</intiface_central_client_url>
  <intiface_central_client_port>12345</intiface_central_client_port>
  <hismith_device_name>Hismith Sex Machine</hismith_device_name>

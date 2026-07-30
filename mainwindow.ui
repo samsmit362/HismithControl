@@ -6,34 +6,21 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>869</width>
-    <height>666</height>
+    <width>979</width>
+    <height>492</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>MainWindow</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <widget class="QPushButton" name="startButton">
-    <property name="geometry">
-     <rect>
-      <x>620</x>
-      <y>170</y>
-      <width>131</width>
-      <height>51</height>
-     </rect>
-    </property>
-    <property name="text">
-     <string>Start</string>
-    </property>
-   </widget>
    <widget class="QGroupBox" name="groupBox">
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>20</y>
-      <width>241</width>
-      <height>261</height>
+      <y>10</y>
+      <width>201</width>
+      <height>271</height>
      </rect>
     </property>
     <property name="title">
@@ -42,8 +29,8 @@
     <widget class="QPushButton" name="testCameraButton">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>40</y>
+       <x>10</x>
+       <y>30</y>
        <width>181</width>
        <height>41</height>
       </rect>
@@ -55,8 +42,8 @@
     <widget class="QPushButton" name="testButton">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>90</y>
+       <x>10</x>
+       <y>80</y>
        <width>181</width>
        <height>41</height>
       </rect>
@@ -68,8 +55,8 @@
     <widget class="QLineEdit" name="testSpeed">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>160</y>
+       <x>10</x>
+       <y>150</y>
        <width>181</width>
        <height>24</height>
       </rect>
@@ -81,8 +68,8 @@
     <widget class="QLabel" name="label">
      <property name="geometry">
       <rect>
-       <x>40</x>
-       <y>140</y>
+       <x>30</x>
+       <y>130</y>
        <width>151</width>
        <height>16</height>
       </rect>
@@ -94,8 +81,8 @@
     <widget class="QPushButton" name="getPerformance">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>200</y>
+       <x>10</x>
+       <y>190</y>
        <width>181</width>
        <height>41</height>
       </rect>
@@ -108,10 +95,10 @@
    <widget class="QGroupBox" name="groupBox_2">
     <property name="geometry">
      <rect>
-      <x>260</x>
-      <y>20</y>
-      <width>241</width>
-      <height>311</height>
+      <x>430</x>
+      <y>10</y>
+      <width>201</width>
+      <height>271</height>
      </rect>
     </property>
     <property name="title">
@@ -120,10 +107,10 @@
     <widget class="QWidget" name="layoutWidget">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>40</y>
+       <x>10</x>
+       <y>30</y>
        <width>181</width>
-       <height>204</height>
+       <height>192</height>
       </rect>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
@@ -180,8 +167,8 @@
     <widget class="QPushButton" name="refreshDevices">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>260</y>
+       <x>10</x>
+       <y>230</y>
        <width>181</width>
        <height>31</height>
       </rect>
@@ -195,8 +182,8 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>290</y>
-      <width>241</width>
+      <y>280</y>
+      <width>201</width>
       <height>161</height>
      </rect>
     </property>
@@ -206,7 +193,7 @@
     <widget class="QLineEdit" name="funscriptPathEdit">
      <property name="geometry">
       <rect>
-       <x>20</x>
+       <x>10</x>
        <y>70</y>
        <width>181</width>
        <height>24</height>
@@ -216,7 +203,7 @@
     <widget class="QPushButton" name="checkFunscript">
      <property name="geometry">
       <rect>
-       <x>20</x>
+       <x>10</x>
        <y>100</y>
        <width>181</width>
        <height>41</height>
@@ -229,7 +216,7 @@
     <widget class="QLabel" name="label_7">
      <property name="geometry">
       <rect>
-       <x>50</x>
+       <x>40</x>
        <y>40</y>
        <width>151</width>
        <height>21</height>
@@ -242,7 +229,7 @@
     <widget class="QToolButton" name="openFunscript">
      <property name="geometry">
       <rect>
-       <x>20</x>
+       <x>10</x>
        <y>40</y>
        <width>22</width>
        <height>23</height>
@@ -256,98 +243,80 @@
    <widget class="QGroupBox" name="groupBox_4">
     <property name="geometry">
      <rect>
-      <x>260</x>
-      <y>340</y>
-      <width>241</width>
-      <height>281</height>
+      <x>220</x>
+      <y>280</y>
+      <width>251</width>
+      <height>161</height>
      </rect>
     </property>
     <property name="title">
      <string>Modify Funscript Functions</string>
     </property>
-    <widget class="QLabel" name="label_6">
+    <widget class="QWidget" name="verticalLayoutWidget">
      <property name="geometry">
       <rect>
-       <x>10</x>
+       <x>0</x>
        <y>30</y>
-       <width>141</width>
-       <height>16</height>
+       <width>241</width>
+       <height>131</height>
       </rect>
      </property>
-     <property name="text">
-      <string>Functions move variants:</string>
-     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_2">
+      <item>
+       <widget class="QLabel" name="label_6">
+        <property name="text">
+         <string>Functions move variants:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="functionsMoveVariants">
+        <property name="contextMenuPolicy">
+         <enum>Qt::CustomContextMenu</enum>
+        </property>
+        <property name="editable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_8">
+        <property name="text">
+         <string>Functions move in/out variants:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="functionsMoveInOutVariants">
+        <property name="contextMenuPolicy">
+         <enum>Qt::CustomContextMenu</enum>
+        </property>
+        <property name="editable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="modifyFunscript">
+        <property name="text">
+         <string>Use Modify Funscript Functions</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
-    <widget class="QLabel" name="label_8">
-     <property name="geometry">
-      <rect>
-       <x>10</x>
-       <y>80</y>
-       <width>181</width>
-       <height>16</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>Functions move in/out variants:</string>
-     </property>
-    </widget>
-    <widget class="QComboBox" name="functionsMoveVariants">
-     <property name="geometry">
-      <rect>
-       <x>10</x>
-       <y>50</y>
-       <width>221</width>
-       <height>24</height>
-      </rect>
-     </property>
-     <property name="contextMenuPolicy">
-      <enum>Qt::CustomContextMenu</enum>
-     </property>
-     <property name="editable">
-      <bool>true</bool>
-     </property>
-    </widget>
-    <widget class="QComboBox" name="functionsMoveInOutVariants">
-     <property name="geometry">
-      <rect>
-       <x>10</x>
-       <y>100</y>
-       <width>221</width>
-       <height>24</height>
-      </rect>
-     </property>
-     <property name="contextMenuPolicy">
-      <enum>Qt::CustomContextMenu</enum>
-     </property>
-     <property name="editable">
-      <bool>true</bool>
-     </property>
-    </widget>
-   </widget>
-   <widget class="QCheckBox" name="modifyFunscript">
-    <property name="geometry">
-     <rect>
-      <x>590</x>
-      <y>130</y>
-      <width>191</width>
-      <height>22</height>
-     </rect>
-    </property>
-    <property name="text">
-     <string>Use Modify Funscript Functions</string>
-    </property>
    </widget>
    <widget class="QFrame" name="chartFrame">
     <property name="geometry">
      <rect>
-      <x>520</x>
-      <y>290</y>
+      <x>640</x>
+      <y>0</y>
       <width>331</width>
-      <height>331</height>
+      <height>330</height>
      </rect>
     </property>
     <property name="frameShape">
-     <enum>QFrame::StyledPanel</enum>
+     <enum>QFrame::NoFrame</enum>
     </property>
     <property name="frameShadow">
      <enum>QFrame::Raised</enum>
@@ -356,20 +325,23 @@
    <widget class="QGroupBox" name="groupBox_5">
     <property name="geometry">
      <rect>
-      <x>10</x>
-      <y>460</y>
-      <width>241</width>
-      <height>161</height>
+      <x>220</x>
+      <y>10</y>
+      <width>201</width>
+      <height>141</height>
      </rect>
     </property>
     <property name="title">
      <string>Get Hismith Statistics Data</string>
     </property>
+    <property name="flat">
+     <bool>false</bool>
+    </property>
     <widget class="QPushButton" name="getStatistics">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>40</y>
+       <x>0</x>
+       <y>30</y>
        <width>181</width>
        <height>41</height>
       </rect>
@@ -381,8 +353,8 @@
     <widget class="QLabel" name="label_9">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>90</y>
+       <x>0</x>
+       <y>80</y>
        <width>71</width>
        <height>21</height>
       </rect>
@@ -397,8 +369,8 @@
     <widget class="QLineEdit" name="startSpeed">
      <property name="geometry">
       <rect>
-       <x>100</x>
-       <y>90</y>
+       <x>80</x>
+       <y>80</y>
        <width>101</width>
        <height>24</height>
       </rect>
@@ -410,8 +382,8 @@
     <widget class="QLabel" name="label_10">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>120</y>
+       <x>0</x>
+       <y>110</y>
        <width>71</width>
        <height>21</height>
       </rect>
@@ -426,8 +398,8 @@
     <widget class="QLineEdit" name="endSpeed">
      <property name="geometry">
       <rect>
-       <x>100</x>
-       <y>120</y>
+       <x>80</x>
+       <y>110</y>
        <width>101</width>
        <height>24</height>
       </rect>
@@ -437,14 +409,53 @@
      </property>
     </widget>
    </widget>
+   <widget class="QPushButton" name="startButton">
+    <property name="geometry">
+     <rect>
+      <x>740</x>
+      <y>370</y>
+      <width>131</width>
+      <height>51</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Start</string>
+    </property>
+   </widget>
+   <widget class="QGroupBox" name="groupBox_6">
+    <property name="geometry">
+     <rect>
+      <x>220</x>
+      <y>150</y>
+      <width>201</width>
+      <height>131</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>Get Webcam End-to-End Latency</string>
+    </property>
+    <widget class="QPushButton" name="getWebcamLatency">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>50</y>
+       <width>191</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Get Webcam End-to-End Latency</string>
+     </property>
+    </widget>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>869</width>
-     <height>21</height>
+     <width>979</width>
+     <height>22</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">

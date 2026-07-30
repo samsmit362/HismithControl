@@ -1,6 +1,8 @@
 
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "ThreadedCapture.h"
+#include "FastLatencyWindow.h"
 #include <gdiplus.h>
 #include <sys/timeb.h>
 #include <eh.h> // required for _set_se_translator
@@ -17,7 +19,7 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "8.00";
+QString g_cur_version = "9.00";
 
 //---------------------------------------------------------------
 
@@ -57,6 +59,7 @@ int g_webcam_frame_width;
 int g_webcam_frame_height;
 double g_webcam_fps;
 int g_webcam_focus;
+int g_webcam_exposure = 0;
 int g_webcam_end_to_end_latency = 0;
 bool g_webcam_msmf_supported = false;
 
@@ -1396,6 +1399,11 @@ public:
 	}
 };
 
+enum OpenCvExposureModes {
+	Manual = 1,
+	Auto = 2
+};
+
 void set_camera_settings(cv::VideoCapture& capture)
 {
 	int fourcc_yuy2 = cv::VideoWriter::fourcc('Y', 'U', 'Y', '2');
@@ -1424,6 +1432,17 @@ void set_camera_settings(cv::VideoCapture& capture)
 	{
 		capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
 		capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+	}
+
+	if (g_webcam_exposure < 0)
+	{
+		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
+		capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
+		capture.set(cv::CAP_PROP_GAIN, 0.0);
+	}
+	else
+	{
+		g_webcam_exposure = 0;
 	}
 
 	capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
@@ -1616,6 +1635,29 @@ void calculate_yuv_range(const cv::Mat& yuv_img, cv::Rect selection_rect, int(&r
 	}
 }
 
+void get_webcam_latency()
+{
+	g_pCapture = new cv::VideoCapture;
+
+	if (init_camera(*g_pCapture))
+	{
+		g_threaded_capture.start(g_pCapture);
+
+		FastLatencyWindow* latency_win = new FastLatencyWindow(nullptr);
+
+		latency_win->setFocus();
+
+		latency_win->showFullScreen();
+	}
+	else
+	{
+		delete g_pCapture;
+		g_pCapture = NULL;
+		error_msg("ERROR: Failed to connect to Webcam");
+		return;
+	}
+}
+
 void test_camera()
 {
 	cv::VideoCapture capture;
@@ -1698,7 +1740,8 @@ void test_camera()
 				"g[%13(%14)-%15(%16)][%17(%18)-%19(%20)][%21(%22)-%23(%24)]\n"
 				"Press b[q/w/e/r][a/s/d/f][z/x/c/v] | g[t/y/u/i][g/h/j/k][b/n/m/,] for change colors\n"
 				"Or hold Ctrl or Shift with select area by left mouse button for auto detect color\n"
-				"fps: %25 focus: %26 press '[' or ']' for change focus")
+				"fps: %25, focus: %26 press '[' or ']' for change, exposure: %27 press '-' or '=' for change"
+				)
 				.arg(B_range[0][0])
 				.arg(g_B_range[0][0])
 				.arg(B_range[0][1])
@@ -1725,6 +1768,7 @@ void test_camera()
 				.arg(g_G_range[2][1])
 				.arg(g_webcam_fps)
 				.arg(g_webcam_focus)
+				.arg(g_webcam_exposure)
 				, img);
 
 			if (g_selection.is_drawing) {
@@ -1886,6 +1930,55 @@ void test_camera()
 				{
 					capture.set(cv::CAP_PROP_AUTOFOCUS, 1);
 				}
+			}
+
+			//-----------------------
+
+			else if (key == '-')
+			{
+				if (g_webcam_exposure == 0)
+				{
+					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
+					capture.set(cv::CAP_PROP_GAIN, 0.0);
+					g_webcam_exposure = capture.get(cv::CAP_PROP_EXPOSURE);
+					if (g_webcam_exposure >= 0)
+					{
+						g_webcam_exposure = -1;
+					}
+				}
+				else
+				{
+					g_webcam_exposure--;
+				}
+
+				if (g_webcam_exposure < 0)
+				{
+					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
+					capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
+					capture.set(cv::CAP_PROP_GAIN, 0.0);
+				}
+			}
+			else if (key == '=')
+			{
+				if (g_webcam_exposure < 0)
+				{
+					g_webcam_exposure++;
+				}
+
+				if (g_webcam_exposure < 0)
+				{
+					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
+					capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
+					capture.set(cv::CAP_PROP_GAIN, 0.0);
+				}
+				else
+				{
+					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
+				}
+			}
+
+			{
+
 			}
 		}
 
@@ -6281,6 +6374,7 @@ void SaveSettings()
 	add_xml_element(document, root, "webcam_frame_height", QString::number(g_webcam_frame_height));
 	add_xml_element(document, root, "webcam_fps", QString::number(g_webcam_fps));
 	add_xml_element(document, root, "webcam_focus", QString::number(g_webcam_focus));
+	add_xml_element(document, root, "webcam_exposure", QString::number(g_webcam_exposure));
 	add_xml_element(document, root, "webcam_end_to_end_latency", QString::number(g_webcam_end_to_end_latency));
 
 	add_xml_element(document, root, "intiface_central_client_url", g_intiface_central_client_url.c_str());
@@ -6401,6 +6495,7 @@ bool LoadSettings()
 	g_webcam_frame_height = data_map["webcam_frame_height"].toInt();
 	g_webcam_fps = data_map["webcam_fps"].toDouble();
 	g_webcam_focus = data_map["webcam_focus"].toInt();
+	g_webcam_exposure = data_map["webcam_exposure"].toInt();
 	g_webcam_end_to_end_latency = data_map["webcam_end_to_end_latency"].toInt();
 
 	g_intiface_central_client_url = data_map["intiface_central_client_url"].toStdString();

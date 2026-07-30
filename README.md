@@ -17,16 +17,16 @@ Discussion forum on: [discuss.eroscripts.com](https://discuss.eroscripts.com/t/h
 - You will need:
 	- Hismith with remote control support or possibly any other similar machine
 	- Web Camera **with external or integrated backlight**, i have tested on:
+		- Web Camera with: Full HD support (1080p), 60fps, focus set to 300, exposure set to -7, "webcam_end_to_end_latency" set to 50. In this case i got best results with average 60fps during "Test Performance".
+		- Smartphone with: USB connection, 720p+30fps (for decrease End-to-End Latency), "webcam_end_to_end_latency" set to 120, turned on Flash light, manual focus, manual temperature, with using \"Camo Studio\".
 		- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
-		- Web Camera with: Full HD support (1080p), 60fps, auto focus (also as manual focus support: in my case set to 300). In this case i got best results with average 60fps during "Test Performance".
-		- Smartphone with: USB connection, 720p+30fps (for decrease End-to-End Latency), "webcam_end_to_end_latency" set to 120, turned on Flash light, manual focus, manual temperature.
 	- External backlight: I'm using external backlight with Ring Light which is set almost to a minimum. Web Camera is placed in the center of it.
-	- Personal computer (PC) with Windows OS
+	- Personal computer (PC) with Windows OS (but tested only on Windows 11 Pro)
 	- Add color markers to Hismith (which will be tracked)
 	- **Highly recommended** to use some remote controller on which you can map keyboard hotkeys, i'm using Xbox Wireless Controller for PC + [JoyToKey](https://joytokey.net/en/)
 
 ## How To Use
-**If you have a camera with external or integrated backlight you will need only to add color markers.\
+**If you have a Webcam with external or integrated backlight or Smartphone with not so bad camera and Flash light you will need only to add color markers.\
 I'm using for this blue and green insulating tapes (Multi Coloured Electrical Tape) which can be removed at any time.\
 Also you will need that used colors mostly will not be present on Web Camera scene except tracked Hismith parts.\
 Example how to do this you can see in [example_images](https://github.com/samsmit362/HismithControl/tree/master/example_images) folder.**\
@@ -36,7 +36,8 @@ check that it can find your Hismith and you can change speed by using it.
 2) to run this program
 3) select Web Camera in combo box which you wish to use for detect Hismith rotation angle.\
 **Press "Test Webcam".**\
-**Note: You can set manual webcam focus (for example to 300) if it support it by using shown hotkeys, also as change manual webcam focus and webcam fps (for example to 30 or 60) through settings.xml**\
+**<font color="red">IT IS HIGHLY RECOMMENDED TO SET MANUAL WEBCAM FOCUS AND MANUAL WEBCAM EXPOSURE TO ABOUT -7 (BEST VARIANT) OR -6 TO MINIMIZE WEBCAM END-TO-END LATENCY</font>**\
+**You can set manual webcam focus (for example to 300) and exposure if it support it by using shown hotkeys, also as change manual webcam focus, exposure and fps (for example to 30 or 60) through settings.xml**\
 **According images in "example_images" folder you will need to find what are best colors in your case, don't forget to save all changes by "Enter" during "Test Webcam" then after close "Test Webcam" by menu (File->"Save Settings") or hotkey (Ctrl+S):**\
 <code><B_range>[10-160][150-205][60-120]</B_range>\
 <G_range>[60-210][120-150][10-110]</G_range></code>
@@ -51,14 +52,35 @@ check that it can find your Hismith and you can change speed by using it.
 
 If all is highlighted well you will need to go to next steps
 
-4) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
+4) **It is highly recommended to set "webcam_end_to_end_latency" in settings.xml especially if will use Smartphone even by USB connection**\
+End-to-End Latency is difference in real image time and it’s obtain on PC, then higher this value then less possible any correct control, especially on speed 40+.\
+You can manually measure real "webcam_end_to_end_latency" by **press "Get Webcam End-to-End Latency".**\
+You will need to use monitor in this case, then higher monitor frame rate then more accurate data will be obtained.
+- Known End-to-End Latency:
+	- Smartphone USB (wire) connection 120–160 ms
+	- Smartphone Wi-Fi (wireless) connection 200–350+ ms
+	- Webcam 1080p 60fps in good case 50–80 (In low light conditions, due to auto exposure, it increases to 100–120 ms)
+- The next statistic was obtain by tests:
+	- Webcam 1920x1080 60fps "webcam_end_to_end_latency" set to 50
+		- average_dif_end_pos: 6 deviation_dif_end_pos: 18
+		- average_dif_end_pos: 7 deviation_dif_end_pos: 22
+		- average_dif_end_pos: 8 deviation_dif_end_pos: 19
+		- average_dif_end_pos: 8 deviation_dif_end_pos: 21
+		- average_dif_end_pos: 9 deviation_dif_end_pos: 20
+		- average_dif_end_pos: 3 deviation_dif_end_pos: 16
+	- Smartphone 1280x720 30fps (for decrease End-to-End Latency) "webcam_end_to_end_latency" set to 120
+		- average_dif_end_pos: 6 deviation_dif_end_pos: 19
+		- average_dif_end_pos: 7 deviation_dif_end_pos: 23
+		- average_dif_end_pos: 12 deviation_dif_end_pos: 25
+		- average_dif_end_pos: 3 deviation_dif_end_pos: 25
+5) Select Hismith device in the combo box or some similar which you plan to use. Press "Test Webcam+Hismith".\
 By default it will start Hismith on mostly very low speed 5, which you can change to any other for check how good it can track all without errors.\
 After 10 seconds it will show in top average speed value.
-5) **If you plan to use other device or for getting the best results it is highly recommended to run "Get Hismith Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
+6) **If you plan to use other device or for getting the best results it is highly recommended to run "Get Hismith Statistics Data"** (also it is recommended to run on same configuration which you mostly plan to use), it will takes ~20 minutes.\
 In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed. You can set at which range regenerate data and stop to "Get Hismith Statistics Data" at any time. Also after checking each speed it generate separate file data\speed_statistics_data_[speed].txt
-6) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
+7) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
-7) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)\
+8) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)\
 You can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.\
 Also you will need to enabler HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)\
 Don't forget to align used settings with settings.xml fields:\
@@ -68,31 +90,6 @@ Don't forget to align used settings with settings.xml fields:\
 - If you correctly configured VLC you will can check this in Firefox (in my case Chrome doesn't open it) by using:
 	- start VLC and open some video in it (you can pause video)
 	- open http://127.0.0.1:8080/requests/status.xml in Firefox (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
-8) **You possibly need to adjust "webcam_end_to_end_latency" in settings.xml especially if will use Smartphone even by USB connection**
-End-to-End Latency is difference in real image time and it’s obtain on PC, then higher this value then less possible any correct control, especially on speed 40+.
-- Known End-to-End Latency:
-	- Smartphone USB (wire) connection 120–160 ms
-	- Smartphone Wi-Fi (wireless) connection 200–350+ ms
-	- Webcam 1080p 60fps in good case 50–80 (In low light conditions, due to auto exposure, it increases to 100–120 ms)
-- The next statistic was obtain by tests:
-	- Smartphone 1280x720 30fps (for decrease End-to-End Latency) "webcam_end_to_end_latency" set to 120
-		- average_dif_end_pos: 6 deviation_dif_end_pos: 19
-		- average_dif_end_pos: 7 deviation_dif_end_pos: 23
-		- average_dif_end_pos: 12 deviation_dif_end_pos: 25
-		- average_dif_end_pos: 3 deviation_dif_end_pos: 25
-	- Webcam 1920x1080 60fps "webcam_end_to_end_latency" set to 0
-		- average_dif_end_pos: 6 deviation_dif_end_pos: 16
-		- average_dif_end_pos: 5 deviation_dif_end_pos: 21
-		- average_dif_end_pos: 8 deviation_dif_end_pos: 20
-		- average_dif_end_pos: 11 deviation_dif_end_pos: 21
-		- average_dif_end_pos: 2 deviation_dif_end_pos: 13
-	- Webcam 1920x1080 60fps "webcam_end_to_end_latency" set to 50
-		- average_dif_end_pos: 6 deviation_dif_end_pos: 18
-		- average_dif_end_pos: 7 deviation_dif_end_pos: 22
-		- average_dif_end_pos: 8 deviation_dif_end_pos: 19
-		- average_dif_end_pos: 8 deviation_dif_end_pos: 21
-		- average_dif_end_pos: 9 deviation_dif_end_pos: 20
-		- average_dif_end_pos: 3 deviation_dif_end_pos: 16
 9) So if all is done now you can simply press button "Start".\
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
@@ -110,11 +107,13 @@ Also after play you can open new generated res_data\\!results_[date].txt for che
 **dif_end_pos:-10** start_t:0:07:52:622 len:360 req_dpos:180+(122) ...\
 **dif_end_pos:-24** start_t:0:07:52:982 len:320 req_dpos:180+(47) ...\
 **dif_end_pos:0** start_t:0:07:53:302 len:361 req_dpos:180+(113) ...\
+...\
+**average_dif_end_pos**: 3 **deviation_dif_end_pos**: 16\
 ...</code>\
 **dif_end_pos** is the most important part it show difference with what should be and what was gotten in angle of rotation, where '360' is full circle of rotation. \
  '-' means that movement was end later then it was in scene. \
  '+' means that movement was end early then it was in scene. \
- '-90' -- '90' are mostly good results especially if they below '45'.
+ '-45' -- '45' are mostly good results.
 
 ## <font color="red">! WARNING !</font>
 **<font color="red">Be aware to stop Hismith by power button or hotkeys to stop running.</font>**\

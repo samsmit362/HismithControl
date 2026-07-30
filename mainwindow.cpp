@@ -1,6 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
-#include <windows.h>
+#include "HighPrecisionTimerGuard.h"
 #include <thread>
 #include <condition_variable>
 #include <mutex>
@@ -115,6 +115,7 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    connect(ui->getWebcamLatency, &QPushButton::released, this, &MainWindow::handleGetWebcamLatency);
     connect(ui->startButton, &QPushButton::released, this, &MainWindow::handleStartButton);
     connect(ui->testButton, &QPushButton::released, this, &MainWindow::handleTestButton);
     connect(ui->testCameraButton, &QPushButton::released, this, &MainWindow::handleTestCameraButton);
@@ -137,9 +138,12 @@ MainWindow::MainWindow(QWidget *parent)
     chart = new QChart();
     chart->legend()->hide();
     chart->setTitle("Modify Funscript Function");
+    chart->setMargins(QMargins(0, 0, 0, 0));
     QChartView* chartView = new QChartView(chart);
     chartView->setRenderHint(QPainter::Antialiasing);
     QVBoxLayout* layout = new QVBoxLayout(ui->chartFrame);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
     layout->addWidget(chartView);
 
     connect(ui->functionsMoveInOutVariants, SIGNAL(editTextChanged(const QString&)), this, SLOT(handleFunctionsMoveInOutVariantsChanged(const QString&)));
@@ -256,6 +260,11 @@ void MainWindow::showWarningMsg(const QString& msg, const QString& title) {
 
 void MainWindow::showMsg(const QString& msg, const QString& title) {
     QMessageBox::information(this, title, msg);
+}
+
+void MainWindow::handleGetWebcamLatency()
+{
+    get_webcam_latency();
 }
 
 void MainWindow::handleStartButton()
