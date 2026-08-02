@@ -1,7 +1,7 @@
 # Hismith Control With Funscripts Support
 ## About Project
-This project is trying to fully reproduce described movements in funscripts by Hismith (not only speed) with video synchronization in VLC video player.\
-After all steps required for it to work you will need only Start application and it will automatically detect what video do you play in VLC and execute related to it funscript with related scene synchronization.\
+This project is trying to fully reproduce described movements in funscripts by Hismith (not only speed) with video synchronization in video player.\
+After all steps required for it to work you will need only Start application and it will automatically detect what video do you play in video player and execute related to it funscript with related scene synchronization.\
 To be able to do this it uses computer vision with using your Web Camera which tracks Hismith rotation (angle position at each moment) and tries by manipulation with speed changes to achieve all required movements.\
 For this moment it has very good results when speed is not too high, especially in slow movements (it can track very good all changes). In case of high speed 3-4+ strokes per second now it also has not so bad results.\
 For minimize complexity of used computer vision algorithms, also as for increase accuracy and speed for making decision, it use color markers which you will need to place on Hismith (more details below)
@@ -80,20 +80,34 @@ After 10 seconds it will show in top average speed value.
 In this case it will automatically run Hismith in range: "Start Speed"-"End Speed" (by default: 1-100) for about 3+7 seconds on each speed. You can set at which range regenerate data and stop to "Get Hismith Statistics Data" at any time. Also after checking each speed it generate separate file data\speed_statistics_data_[speed].txt
 7) You can also run "Test Performance" in my case avg_dt_\* results are ~42 (milliseconds) max_dt_\* ~67-93 and it is enough for get good results.\
 Than low values than more accurate and often application will can control the device.
-8) **Highly recommended to use special VLC build with milliseconds support for get best results** (standard VLC currently doesn't support it, it can sync only by seconds) you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)\
-You can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.\
-Also you will need to enabler HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)\
-Don't forget to align used settings with settings.xml fields:\
-<code><vlc_url>http://127.0.0.1</vlc_url>\
-<vlc_port>8080</vlc_port>\
-<vlc_password>1234</vlc_password></code>
+8) **Supported video players**
+- This project now supports:
+	- **Highly recommended: VLC special build** - which provides high sync with video do to not only providing video time in milliseconds but it also provides real system time related to it and correct video playback rate, you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)
+	- Random Video Player - is also mostly accurate due to providing video time in milliseconds, but in version 1.64 it has set of issues:
+		- incorrectly reports video playback rate (always report 1 in variables.html)
+		- doesn't always provide correct play/pause state (if set to pause and change video position it can start to play video but still report by variables.html that it is on pause)
+		- doesn't provides real system time in milliseconds related to video time for make video sync more accurate
+	- Standard VLC -  you can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.
+- If you will use VLC:
+	- You will need to enable HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)
+	- Don't forget to align used settings with settings.xml fields:
+	```xml
+	<vlc>
+		<url>http://127.0.0.1</url>
+		<port>8080</port>
+		<password>1234</password>
+	</vlc>
+	```
 - If you correctly configured VLC you will can check this in Firefox (in my case Chrome doesn't open it) by using:
 	- start VLC and open some video in it (you can pause video)
-	- open http://127.0.0.1:8080/requests/status.xml in Firefox (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
+	- open http://127.0.0.1:8080/requests/status.xml in Firefox or Chrome (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
+- If you will use Random Video Player:
+	- You will need to activate 'Start timecode server' in Settings -> Sync tab
+	- start Random Video Player and open http://127.0.0.1:13579/variables.html in Firefox or Chrome, it will should show video statistic
 9) So if all is done now you can simply press button "Start".\
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\
-If VLC does not found it will show a message that it's waiting for it.\
+If video player does not found it will show a message that it's waiting for it.\
 When you select or open a video file (in playlist) which has funscript located near a video file with the same base name it will show "Ready to go" or "Running" depending from is video on pause or not.\
 **See available hotkeys and actions in the tray menu where the app will be hidden.**\
 Also after play you can open new generated res_data\\!results_[date].txt for check results:\

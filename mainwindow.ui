@@ -316,7 +316,7 @@
      </rect>
     </property>
     <property name="frameShape">
-     <enum>QFrame::NoFrame</enum>
+     <enum>QFrame::Box</enum>
     </property>
     <property name="frameShadow">
      <enum>QFrame::Raised</enum>
@@ -412,7 +412,7 @@
    <widget class="QPushButton" name="startButton">
     <property name="geometry">
      <rect>
-      <x>740</x>
+      <x>840</x>
       <y>370</y>
       <width>131</width>
       <height>51</height>
@@ -445,6 +445,29 @@
      </property>
      <property name="text">
       <string>Get Webcam End-to-End Latency</string>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QGroupBox" name="groupBox_7">
+    <property name="geometry">
+     <rect>
+      <x>640</x>
+      <y>360</y>
+      <width>191</width>
+      <height>61</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>Video Player</string>
+    </property>
+    <widget class="QComboBox" name="videoPlayerType">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>30</y>
+       <width>191</width>
+       <height>22</height>
+      </rect>
      </property>
     </widget>
    </widget>

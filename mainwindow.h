@@ -36,8 +36,18 @@
 
 #include "3rdParty/buttplugCpp/include/buttplugclient.h"
 #include "3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h"
-#include "DataTypes.h"
-#include "MyClosedFigure.h"
+
+//---------------------------------------------------------------
+
+#ifndef max
+#define max(a,b)            (((a) > (b)) ? (a) : (b))
+#endif
+
+#ifndef min
+#define min(a,b)            (((a) < (b)) ? (a) : (b))
+#endif
+
+//---------------------------------------------------------------
 
 class MainWindow;
 struct speeds_data;
@@ -93,13 +103,67 @@ void test_camera();
 void disconnect_from_hismith();
 bool connect_to_hismith();
 void error_msg(QString msg, cv::Mat* p_frame = NULL, cv::Mat* p_frame_upd = NULL, cv::Mat* p_prev_frame = NULL, int x1 = -1, int y1 = -1, int x2 = -1, int y2 = -1);
-void make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest& req, bool& is_paused, QString& video_filename, bool& is_vlc_time_in_milliseconds, int& video_pos, __int64& vlc_sys_time, double& rate, QString command = QString());
-QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl);
+void make_vlc_status_request(QNetworkAccessManager* manager, QNetworkRequest* req, bool& is_paused, QString& video_filename, bool& is_vlc_time_in_milliseconds, int& video_pos, __int64& vlc_sys_time, double& rate, QString command = QString());
+QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest* req, QString ReqUrl);
 bool get_devices_list(bool show_msgs = true);
 void SaveSettings();
 void get_statistics_with_hismith(int start_speed, int end_speed);
 bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
 bool get_speed_statistics_data(speeds_data& all_speeds_data);
+
+//---------------------------------------------------------------
+
+enum VideoPlayerTypes
+{
+    VLC,
+    RVP,
+    UNKNOWN
+};
+
+enum VideoPlayerCommand
+{
+    None,
+    Pause,
+    Play,
+    Stop
+};
+
+class VideoPlayerTypesUtils
+{
+public:
+    static QString to_string(VideoPlayerTypes type)
+    {
+        switch (type)
+        {
+        case VideoPlayerTypes::VLC:   return "VLC";
+        case VideoPlayerTypes::RVP:   return "Random Video Player";
+        default:
+            error_msg(QString("UNKNOWN PLAYER TYPE"));
+            return "unknown";
+        }
+    }
+    static VideoPlayerTypes from_string(QString type)
+    {
+        if (type == VideoPlayerTypesUtils::to_string(VideoPlayerTypes::VLC))
+        {
+            return VideoPlayerTypes::VLC;
+        }
+        else if (type == VideoPlayerTypesUtils::to_string(VideoPlayerTypes::RVP))
+        {
+            return VideoPlayerTypes::RVP;
+        }
+        else
+        {
+            error_msg(QString("ERROR: Incorrect video player type name \"%1\" in settings.xml").arg(type));
+            return VideoPlayerTypes::VLC;
+        }
+    }
+    static QStringList get_types_list()
+    {
+        QStringList list = { VideoPlayerTypesUtils::to_string(VideoPlayerTypes::VLC), VideoPlayerTypesUtils::to_string(VideoPlayerTypes::RVP) };
+        return list;
+    }
+};
 
 //---------------------------------------------------------------
 

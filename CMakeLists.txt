@@ -32,9 +32,6 @@ set(PROJECT_SOURCES
         mainwindow.h
         FastLatencyWindow.h
         mainwindow.ui
-		MyClosedFigure.cpp
-		MyClosedFigure.h
-		DataTypes.h
         ThreadedCapture.h
         HighPrecisionTimerGuard.h
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp

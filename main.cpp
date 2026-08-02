@@ -19,7 +19,7 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "9.00";
+QString g_cur_version = "10.00";
 
 //---------------------------------------------------------------
 
@@ -67,9 +67,15 @@ std::string g_intiface_central_client_url;
 int g_intiface_central_client_port;
 QString g_hismith_device_name;
 
+VideoPlayerTypes g_video_player_type;
+
 QString g_vlc_url;
 int g_vlc_port;
 QString g_vlc_password;
+bool g_is_video_player_time_in_milliseconds = false;
+
+QString g_rvp_url;
+int g_rvp_port;
 
 QString g_hotkey_stop;
 QString g_hotkey_pause;
@@ -87,7 +93,7 @@ std::vector<DeviceClass> g_myDevices;
 DeviceClass* g_pMyDevice = NULL;
 
 QNetworkAccessManager* g_pNetworkAccessManager = NULL;
-QNetworkRequest g_NetworkRequest;
+QNetworkRequest* g_pNetworkRequest = NULL;
 
 bool g_stop_run = false;
 bool g_pause = false;
@@ -393,32 +399,6 @@ inline int pow2(int x)
 	return x * x;
 }
 
-void GreyscaleImageToMat(simple_buffer<u8>& ImGR, int w, int h, cv::Mat& res)
-{
-	res = cv::Mat(h, w, CV_8UC1);
-	custom_assert(w * h <= ImGR.m_size, "GreyscaleImageToMat(simple_buffer<u8>& ImGR, int w, int h, cv::Mat& res)\nnot: w * h <= ImGR.m_size");
-	memcpy(res.data, ImGR.m_pData, w * h);
-}
-
-void GreyscaleMatToImage(cv::Mat& ImGR, int w, int h, simple_buffer<u8>& res)
-{
-	res.copy_data(ImGR.data, w * h);
-}
-
-cv::Mat GetFigureMask(CMyClosedFigure* pFigure, int w, int h)
-{
-	int l, ii;
-	cv::Mat res(cv::Size(w, h), CV_8UC1, cv::Scalar(0));
-
-	for (l = 0; l < pFigure->m_PointsArray.m_size; l++)
-	{
-		ii = pFigure->m_PointsArray[l];
-		res.data[ii] = (u8)255;
-	}
-
-	return res;
-}
-
 void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int erosion_size)
 {
 	cv::inRange(img, cv::Scalar( range[0][0], range[1][0], range[2][0] ), cv::Scalar(range[0][1], range[1][1], range[2][1] ), img_res);
@@ -432,17 +412,51 @@ void get_binary_image(cv::Mat &img, int (&range)[3][2], cv::Mat& img_res, int er
 	}
 }
 
+struct ObjectData {
+	int m_minX;
+	int m_minY;
+	int width;
+	int height;
+	int m_size;
+	cv::Mat* p_labels;
+	int m_id;
+};
+
+void find_objects(const cv::Mat& mask, std::vector<ObjectData>& result, cv::Mat& labels)
+{
+	cv::Mat stats, centroids;
+
+	// Call the optimized C++ algorithm for marking connected components
+	// connectivity=8 takes into account diagonal touching of points
+	int num_labels = cv::connectedComponentsWithStats(mask, labels, stats, centroids, 8, CV_32S);
+
+	result.resize(num_labels - 1);
+
+	// Index 0 is always a black background, we completely ignore it (start with i = 1)
+	for (int i = 1; i < num_labels; ++i)
+	{
+		ObjectData &obj = result[i - 1];
+		obj.m_id = i;
+		obj.p_labels = &labels;
+		obj.m_size = stats.at<int>(i, cv::CC_STAT_AREA);
+		obj.m_minX = stats.at<int>(i, cv::CC_STAT_LEFT);
+		obj.m_minY = stats.at<int>(i, cv::CC_STAT_TOP);
+		obj.width = stats.at<int>(i, cv::CC_STAT_WIDTH);
+		obj.height = stats.at<int>(i, cv::CC_STAT_HEIGHT);
+	}
+}
+
 // return pos in range: [0;360]
 bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = false, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "Get Hismith Pos By Image", QString add_data = QString())
 {
 	static cv::Mat prev_frame;
 
 	bool res = true;
-	cv::Mat img, img_b, img_g, img_right;
-	custom_buffer<CMyClosedFigure> figures_b;
-	simple_buffer<CMyClosedFigure*> p_figures_b;
+	cv::Mat img, img_b, img_g, labels_b, labels_g, img_right;
+	std::vector<ObjectData> figures_b;
+	std::vector<ObjectData*> p_figures_b;
 	int figures_b_N;
-	custom_buffer<CMyClosedFigure> figures_g;
+	std::vector<ObjectData> figures_g;
 
 	LARGE_INTEGER start_time, t1, t2, Frequency;
 	QueryPerformanceFrequency(&Frequency);
@@ -456,47 +470,33 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 	int width = img.cols;
 	int height = img.rows;
 
-	simple_buffer<u8> Im_b(width * height);
-	simple_buffer<u8> Im_g(width * height);
-
 	concurrency::parallel_invoke(
-		[&img, &img_b, &Im_b, width, height] {
+		[&img, &img_b, width, height] {
 			get_binary_image(img, g_B_range, img_b, 3);
-			GreyscaleMatToImage(img_b, width, height, Im_b);
 		},
-		[&img, &img_g, &Im_g, width, height] {
+		[&img, &img_g, width, height] {
 			get_binary_image(img, g_G_range, img_g, 3);
-			GreyscaleMatToImage(img_g, width, height, Im_g);
 		}
 	);
 
 	concurrency::parallel_invoke(
-		[&Im_b, &Im_g, &figures_b, &p_figures_b, &figures_b_N, width, height] {
-
-			// intersection points be treated as related to green for get device position
-			for (int i = 0; i < width * height; i++)
-			{
-				if (Im_g[i])
-				{
-					Im_b[i] = 0;
-				}
-			}
-
-			SearchClosedFigures(Im_b, width, height, (u8)255, figures_b);
+		[&img_b, &img_g, &figures_b, &labels_b, &p_figures_b, &figures_b_N, width, height] {
+			img_b = img_b & (~img_g);
+			find_objects(img_b, figures_b, labels_b);
 
 			figures_b_N = figures_b.size();
 
 			if (figures_b_N > 0)
 			{
-				p_figures_b.set_size(figures_b_N);
+				p_figures_b.resize(figures_b_N);
 				for (int i = 0; i < figures_b_N; i++)
 				{
 					p_figures_b[i] = &(figures_b[i]);
 				}
 			}
 		},
-		[&Im_g, &figures_g, width, height] {
-			SearchClosedFigures(Im_g, width, height, (u8)255, figures_g);
+		[&img_g, &figures_g, &labels_g, width, height] {
+			find_objects(img_g, figures_g, labels_g);
 		}
 	);
 
@@ -505,24 +505,24 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 		QueryPerformanceCounter(&t1);
 	}
 
-	CMyClosedFigure* p_best_match_c_figure = NULL;
+	ObjectData* p_best_match_c_figure = NULL;
 	int c_x = -1, c_y = -1, c_w = -1, c_h = -1;
 	int max_size_c = 0;
-	CMyClosedFigure* p_best_match_l_figure = NULL;
+	ObjectData* p_best_match_l_figure = NULL;
 	int l_x = -1, l_y = -1, l_w = -1, l_h = -1, l_cx = -1, l_cy = -1;
 	int max_size_l = 0;
-	CMyClosedFigure* p_best_match_r_figure = NULL;
+	ObjectData* p_best_match_r_figure = NULL;
 	int r_x = -1, r_y = -1, r_w = -1, r_h = -1;
 	int max_size_r = 0;
-	CMyClosedFigure* p_best_match_g_figure = NULL;
+	ObjectData* p_best_match_g_figure = NULL;
 	int g_x = -1, g_y = -1, g_w = -1, g_h = -1;
 	int max_size_g = 0;
 
 	for (int id = 0; id < figures_b_N; id++)
 	{
-		CMyClosedFigure* pFigure = p_figures_b[id];
-		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
-		int size = pFigure->m_PointsArray.m_size;
+		ObjectData* pFigure = p_figures_b[id];
+		int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width, h = pFigure->height;
+		int size = pFigure->m_size;
 
 		if (((x + w) < (2 * width) / 3) && (x < width / 2) && (y > height / 30) && ((y + h / 2) < (3 * height) / 4))
 		{
@@ -541,47 +541,48 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 	if (p_best_match_l_figure)
 	{
 		int l, i, ii, x, y, n, min_y = -1, max_y = -1;
-		int size = p_best_match_l_figure->m_PointsArray.m_size;
-		int w = p_best_match_l_figure->width(), h = p_best_match_l_figure->height();
-		int* fmask = new int[w * h];
-		memset(fmask, 0, w * h);
+		int size = p_best_match_l_figure->m_size;
+		int w = p_best_match_l_figure->width, h = p_best_match_l_figure->height;
 
-		for (l = 0; l < size; l++)
+		cv::Rect obj_roi(p_best_match_l_figure->m_minX, p_best_match_l_figure->m_minY, w, h);
+		cv::Mat labels_roi = (*p_best_match_l_figure->p_labels)(obj_roi);
+		cv::Mat obj_mask = (labels_roi == p_best_match_l_figure->m_id);
+		uchar* p_mask_data = obj_mask.data;
+
+		if (!obj_mask.isContinuous())
 		{
-			i = p_best_match_l_figure->m_PointsArray[l];
-			x = (i % width) - l_x;
-			y = (i / width) - l_y;
-			ii = (y * w) + x;
-			fmask[ii] = 255;
-		}
-
-		for (y = 0, ii = 0; y < h; y++)
-		{
-			n = 0;
-			for (x = 0; x < w; x++, ii++)
-			{
-				if (fmask[ii]) n++;
-			}
-
-			if (n >= w / 4)
-			{
-				if (min_y == -1) min_y = y;
-				max_y = y;
-			}
-		}
-
-		delete[] fmask;
-
-		if (min_y == -1)
-		{
+			error_msg("ERROR: obj_mask.isContinuous() == false");
 			p_best_match_l_figure = NULL;
+			res = false;
 		}
 		else
 		{
-			l_y += min_y;
-			l_h = max_y - min_y + 1;
-			l_cx = l_x + (l_w / 2);
-			l_cy = l_y + (l_h / 2);
+			for (y = 0, ii = 0; y < h; y++)
+			{
+				n = 0;
+				for (x = 0; x < w; x++, ii++)
+				{
+					if (p_mask_data[ii]) n++;
+				}
+
+				if (n >= w / 4)
+				{
+					if (min_y == -1) min_y = y;
+					max_y = y;
+				}
+			}
+
+			if (min_y == -1)
+			{
+				p_best_match_l_figure = NULL;
+			}
+			else
+			{
+				l_y += min_y;
+				l_h = max_y - min_y + 1;
+				l_cx = l_x + (l_w / 2);
+				l_cy = l_y + (l_h / 2);
+			}
 		}
 	}
 
@@ -607,7 +608,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 			{
 				if (p_figures_b[id2]->m_minX < p_figures_b[id1]->m_minX)
 				{
-					CMyClosedFigure* pFigure = p_figures_b[id1];
+					ObjectData* pFigure = p_figures_b[id1];
 					p_figures_b[id1] = p_figures_b[id2];
 					p_figures_b[id2] = pFigure;
 				}
@@ -616,12 +617,12 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 
 		for (int id = 0; id < figures_b_N; id++)
 		{
-			CMyClosedFigure* pFigure = p_figures_b[id];
-			int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
+			ObjectData* pFigure = p_figures_b[id];
+			int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width, h = pFigure->height;
 			int rcx = x + (w / 2);
 			double wh_ratio = (double)w / (double)h;
 			double rcxlcx_lh_ratio = (double)(rcx - l_cx) / (double)max(l_h, l_w);
-			int size = pFigure->m_PointsArray.m_size;
+			int size = pFigure->m_size;
 
 			if (pFigure == p_best_match_l_figure)
 			{
@@ -673,9 +674,9 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 
 			for (int id = 0; id < figures_b_N; id++)
 			{
-				CMyClosedFigure* pFigure = p_figures_b[id];
-				int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
-				int size = pFigure->m_PointsArray.m_size;
+				ObjectData* pFigure = p_figures_b[id];
+				int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width, h = pFigure->height;
+				int size = pFigure->m_size;
 
 				if ((pFigure == p_best_match_l_figure) || (pFigure == p_best_match_r_figure))
 				{
@@ -752,132 +753,151 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 					int min_x_projection = width, max_x_projection = -1;
 					int v1_vec_len_pow2 = (v1_x * v1_x) + (v1_y * v1_y);
 
-					for (l = 0; l < p_best_match_c_figure->m_PointsArray.m_size; l++)
 					{
-						ii = p_best_match_c_figure->m_PointsArray[l];
+						cv::Rect obj_roi(p_best_match_c_figure->m_minX, p_best_match_c_figure->m_minY, p_best_match_c_figure->width, p_best_match_c_figure->height);
+						cv::Mat labels_roi = (*p_best_match_c_figure->p_labels)(obj_roi);
+						cv::Mat obj_mask = (labels_roi == p_best_match_c_figure->m_id);
+						uchar* p_mask_data = obj_mask.data;
 
-						// getting c_figure point position
-						x = ii % width;
-						y = ii / width;
-
-						// get v2 vector between center of the left blue figure and c_figure point position
-						v2_x = x - l_cx;
-						v2_y = y - l_cy;
-
-						// getting x coordinate of projection of v2 vector on v1 vector by using scalar product of v1 and v2 vectors
-						// it should be == l_cx + (v1_x*(v2_vec,v1_vec)/(v1_vec_len_pow2))
-						x_projection = l_cx + ((v1_x * ((v1_x * v2_x) + (v1_y * v2_y))) / v1_vec_len_pow2);
-
-						if (x_projection < min_x_projection)
+						if (!obj_mask.isContinuous())
 						{
-							min_x_projection = x_projection;
+							error_msg("ERROR: obj_mask.isContinuous() == false");
+							res = false;
 						}
-
-						if (x_projection > max_x_projection)
+						else
 						{
-							max_x_projection = x_projection;
-						}
-					}
-
-					c_cx = (min_x_projection + max_x_projection) / 2;
-					c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
-					c_w = c_h = max(r_w, r_h);
-					c_x = c_cx - (c_w / 2);
-					c_y = c_cy - (c_h / 2);
-
-					g_ccxlcx_lh_ratio = (double)(c_cx - l_cx) / (double)max(l_h, l_w);
-
-					if ((g_ccxlcx_lh_ratio < g_min_telescopic_motor_rocker_arm_center_x_proportions) ||
-						(g_ccxlcx_lh_ratio > g_max_telescopic_motor_rocker_arm_center_x_proportions))
-					{
-						if (!ignore_error)
-						{
-							cv::Mat img_res;
-							frame.copyTo(img_res);
-
-							img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
-							img_res.setTo(cv::Scalar(255, 255, 0), GetFigureMask(p_best_match_r_figure, width, height));
-							img_res.setTo(cv::Scalar(255, 0, 255), GetFigureMask(p_best_match_c_figure, width, height));
-
-							cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-							cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-							cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
-
-							cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
-							cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
-
-							error_msg(QString("ERROR: got strange center position:\n"
-								"telescopic_motor_rocker_arm_center_x_proportions:%1\n"
-								"min_telescopic_motor_rocker_arm_center_x_proportions:%2\n"
-								"max_telescopic_motor_rocker_arm_center_x_proportions:%3\n")
-								.arg(g_ccxlcx_lh_ratio)
-								.arg(g_min_telescopic_motor_rocker_arm_center_x_proportions)
-								.arg(g_max_telescopic_motor_rocker_arm_center_x_proportions),
-								&frame, &img_res);
-						}
-						res = false;
-					}
-					else
-					{
-						if (ccxlcx_lh_ratio_prev > 0)
-						{
-							double dif = (max(g_ccxlcx_lh_ratio, ccxlcx_lh_ratio_prev) / min(g_ccxlcx_lh_ratio, ccxlcx_lh_ratio_prev) - 1.0)*100.0;
-
-							if (dif > g_max_ccxlcx_lh_ratio_prev_to_cur_dif)
+							for (l = 0; l < p_best_match_c_figure->width * p_best_match_c_figure->height; l++)
 							{
-								g_max_ccxlcx_lh_ratio_prev_to_cur_dif = dif;
-							}
-
-							// more then 10%
-							if (dif > 10.0)
-							{
-								if (!ignore_error)
+								if (p_mask_data[l])
 								{
-									cv::Mat img_res;
-									frame.copyTo(img_res);
+									// getting c_figure point position
+									x = p_best_match_c_figure->m_minX + (l % p_best_match_c_figure->width);
+									y = p_best_match_c_figure->m_minY + (l / p_best_match_c_figure->width);
 
-									img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
-									img_res.setTo(cv::Scalar(255, 255, 0), GetFigureMask(p_best_match_r_figure, width, height));
-									img_res.setTo(cv::Scalar(255, 0, 255), GetFigureMask(p_best_match_c_figure, width, height));
+									// get v2 vector between center of the left blue figure and c_figure point position
+									v2_x = x - l_cx;
+									v2_y = y - l_cy;
 
+									// getting x coordinate of projection of v2 vector on v1 vector by using scalar product of v1 and v2 vectors
+									// it should be == l_cx + (v1_x*(v2_vec,v1_vec)/(v1_vec_len_pow2))
+									x_projection = l_cx + ((v1_x * ((v1_x * v2_x) + (v1_y * v2_y))) / v1_vec_len_pow2);
+
+									if (x_projection < min_x_projection)
 									{
-										int c_cx_exp = l_cx + (int)(ccxlcx_lh_ratio_prev * (double)l_h);
-										int c_w_exp = max(r_w, r_h);
-										int c_h_exp = c_w_exp;
-										int c_x_exp = c_cx_exp - (c_w_exp / 2);
-										int c_cy_exp = l_cy + (((r_cy - l_cy) * (c_cx_exp - l_cx)) / (r_cx - l_cx));
-										int c_y_exp = c_cy_exp - (c_h_exp / 2);
-										cv::circle(img_res, cv::Point(c_x_exp + int(c_w_exp / 2), c_y_exp + int(c_h_exp / 2)), int(max(c_w_exp / 2, c_h_exp / 2)), cv::Scalar(0, 255, 255), 2);
-										cv::line(img_res, cv::Point(c_cx_exp, c_cy_exp - int(c_h_exp / 4)), cv::Point(c_cx_exp, c_cy_exp + int(c_h_exp / 4)), cv::Scalar(0, 255, 255), 2);
+										min_x_projection = x_projection;
 									}
 
-									cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
-									cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
-									cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
-
-									cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
-									cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
-
-									error_msg(QString("ERROR: got strange center position of rocker arm rotation:\n"
-										"center position is different from previously obtained with diff: %1\%\n")
-										.arg(dif),
-										&frame, &img_res, &prev_frame);
+									if (x_projection > max_x_projection)
+									{
+										max_x_projection = x_projection;
+									}
 								}
-								res = false;
 							}
 						}
+					}
 
-						frame.copyTo(prev_frame);
+					if (res)
+					{
+						c_cx = (min_x_projection + max_x_projection) / 2;
+						c_cy = l_cy + (((r_cy - l_cy) * (c_cx - l_cx)) / (r_cx - l_cx));
+						c_w = c_h = max(r_w, r_h);
+						c_x = c_cx - (c_w / 2);
+						c_y = c_cy - (c_h / 2);
+
+						g_ccxlcx_lh_ratio = (double)(c_cx - l_cx) / (double)max(l_h, l_w);
+
+						if ((g_ccxlcx_lh_ratio < g_min_telescopic_motor_rocker_arm_center_x_proportions) ||
+							(g_ccxlcx_lh_ratio > g_max_telescopic_motor_rocker_arm_center_x_proportions))
+						{
+							if (!ignore_error)
+							{
+								cv::Mat img_res;
+								frame.copyTo(img_res);
+
+								img_res.setTo(cv::Scalar(255, 0, 0), *p_best_match_l_figure->p_labels == p_best_match_l_figure->m_id);
+								img_res.setTo(cv::Scalar(255, 255, 0), *p_best_match_r_figure->p_labels == p_best_match_r_figure->m_id);
+								img_res.setTo(cv::Scalar(255, 0, 255), *p_best_match_c_figure->p_labels == p_best_match_c_figure->m_id);
+
+								cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+								cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+								cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
+
+								cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
+								cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+
+								error_msg(QString("ERROR: got strange center position:\n"
+									"telescopic_motor_rocker_arm_center_x_proportions:%1\n"
+									"min_telescopic_motor_rocker_arm_center_x_proportions:%2\n"
+									"max_telescopic_motor_rocker_arm_center_x_proportions:%3\n")
+									.arg(g_ccxlcx_lh_ratio)
+									.arg(g_min_telescopic_motor_rocker_arm_center_x_proportions)
+									.arg(g_max_telescopic_motor_rocker_arm_center_x_proportions),
+									&frame, &img_res);
+							}
+							res = false;
+						}
+						else
+						{
+							if (ccxlcx_lh_ratio_prev > 0)
+							{
+								double dif = (max(g_ccxlcx_lh_ratio, ccxlcx_lh_ratio_prev) / min(g_ccxlcx_lh_ratio, ccxlcx_lh_ratio_prev) - 1.0) * 100.0;
+
+								if (dif > g_max_ccxlcx_lh_ratio_prev_to_cur_dif)
+								{
+									g_max_ccxlcx_lh_ratio_prev_to_cur_dif = dif;
+								}
+
+								// more then 10%
+								if (dif > 10.0)
+								{
+									if (!ignore_error)
+									{
+										cv::Mat img_res;
+										frame.copyTo(img_res);
+
+										img_res.setTo(cv::Scalar(255, 0, 0), *p_best_match_l_figure->p_labels == p_best_match_l_figure->m_id);
+										img_res.setTo(cv::Scalar(255, 255, 0), *p_best_match_r_figure->p_labels == p_best_match_r_figure->m_id);
+										img_res.setTo(cv::Scalar(255, 0, 255), *p_best_match_c_figure->p_labels == p_best_match_c_figure->m_id);
+
+										{
+											int c_cx_exp = l_cx + (int)(ccxlcx_lh_ratio_prev * (double)l_h);
+											int c_w_exp = max(r_w, r_h);
+											int c_h_exp = c_w_exp;
+											int c_x_exp = c_cx_exp - (c_w_exp / 2);
+											int c_cy_exp = l_cy + (((r_cy - l_cy) * (c_cx_exp - l_cx)) / (r_cx - l_cx));
+											int c_y_exp = c_cy_exp - (c_h_exp / 2);
+											cv::circle(img_res, cv::Point(c_x_exp + int(c_w_exp / 2), c_y_exp + int(c_h_exp / 2)), int(max(c_w_exp / 2, c_h_exp / 2)), cv::Scalar(0, 255, 255), 2);
+											cv::line(img_res, cv::Point(c_cx_exp, c_cy_exp - int(c_h_exp / 4)), cv::Point(c_cx_exp, c_cy_exp + int(c_h_exp / 4)), cv::Scalar(0, 255, 255), 2);
+										}
+
+										cv::rectangle(img_res, cv::Rect(l_x, l_y, l_w, l_h), cv::Scalar(0, 0, 255), 3);
+										cv::circle(img_res, cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), int(max(r_w / 2, r_h / 2)), cv::Scalar(0, 0, 255), 3);
+										cv::circle(img_res, cv::Point(c_x + int(c_w / 2), c_y + int(c_h / 2)), int(max(c_w / 2, c_h / 2)), cv::Scalar(0, 0, 255), 3);
+
+										cv::line(img_res, cv::Point(c_cx, c_cy - int(c_h / 4)), cv::Point(c_cx, c_cy + int(c_h / 4)), cv::Scalar(0, 170, 0), 5);
+										cv::line(img_res, cv::Point(l_x + int(l_w / 2), l_y + int(l_h / 2)), cv::Point(r_x + int(r_w / 2), r_y + int(r_h / 2)), cv::Scalar(0, 170, 0), 5);
+
+										error_msg(QString("ERROR: got strange center position of rocker arm rotation:\n"
+											"center position is different from previously obtained with diff: %1\%\n")
+											.arg(dif),
+											&frame, &img_res, &prev_frame);
+									}
+									res = false;
+								}
+							}
+
+							frame.copyTo(prev_frame);
+						}
 					}
 				}
 
 				if (res)
 				{
-					for (int id = 0; id < figures_g.m_size; id++)
+					for (int id = 0; id < figures_g.size(); id++)
 					{
-						CMyClosedFigure* pFigure = &(figures_g[id]);
-						int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width(), h = pFigure->height();
-						int size = pFigure->m_PointsArray.m_size;
+						ObjectData* pFigure = &(figures_g[id]);
+						int x = pFigure->m_minX, y = pFigure->m_minY, w = pFigure->width, h = pFigure->height;
+						int size = pFigure->m_size;
 
 						int g_to_c_distance_pow2 = pow2((x + (w / 2)) - c_cx) + pow2((y + (h / 2)) - c_cy);
 						int g_to_r_distance_pow2 = pow2((x + (w / 2)) - r_cx) + pow2((y + (h / 2)) - r_cy);
@@ -966,10 +986,10 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 
 								cv::Mat img_res = frame.clone();
 
-								img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_l_figure, width, height));
-								img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_r_figure, width, height));
-								img_res.setTo(cv::Scalar(255, 0, 0), GetFigureMask(p_best_match_c_figure, width, height));
-								img_res.setTo(cv::Scalar(0, 255, 0), GetFigureMask(p_best_match_g_figure, width, height));
+								img_res.setTo(cv::Scalar(255, 0, 0), *p_best_match_l_figure->p_labels == p_best_match_l_figure->m_id);
+								img_res.setTo(cv::Scalar(255, 0, 0), *p_best_match_r_figure->p_labels == p_best_match_r_figure->m_id);
+								img_res.setTo(cv::Scalar(255, 0, 0), *p_best_match_c_figure->p_labels == p_best_match_c_figure->m_id);
+								img_res.setTo(cv::Scalar(0, 255, 0), *p_best_match_g_figure->p_labels == p_best_match_g_figure->m_id);
 
 								if (ccxlcx_lh_ratio_prev > 0)
 								{
@@ -1428,24 +1448,45 @@ void set_camera_settings(cv::VideoCapture& capture)
 
 	set_webcam_fps(capture);
 
+	capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
+
 	if (g_webcam_focus >= 0)
 	{
 		capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
 		capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
 	}
+	else
+	{
+		capture.set(cv::CAP_PROP_AUTOFOCUS, 1);
+	}
 
 	if (g_webcam_exposure < 0)
 	{
+		cv::Mat frame;
+
+		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
+
+		for (int i = 0; i < g_webcam_fps / 2; i++)
+		{
+			capture.read(frame);
+		}
+
 		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
-		capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
+		capture.set(cv::CAP_PROP_EXPOSURE, -6);
 		capture.set(cv::CAP_PROP_GAIN, 0.0);
+
+		for (int i = 0; i < g_webcam_fps / 2; i++)
+		{
+			capture.read(frame);
+		}
+
+		capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
 	}
 	else
 	{
+		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
 		g_webcam_exposure = 0;
 	}
-
-	capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
 	int webcam_frame_width = capture.get(cv::CAP_PROP_FRAME_WIDTH);
 	int webcam_frame_height = capture.get(cv::CAP_PROP_FRAME_HEIGHT);
@@ -1484,7 +1525,7 @@ bool init_camera(cv::VideoCapture &capture)
 		set_camera_settings(capture);
 
 		cv::Mat frame;
-		for (int i = 0; i < 10; i++)
+		for (int i = 0; i < g_webcam_fps / 2; i++)
 		{
 			capture.read(frame);
 		}
@@ -3327,7 +3368,7 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
 	return res;
 }
 
-QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, QString ReqUrl)
+QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest* req, QString ReqUrl)
 {
 	QByteArray reply_res;
 	bool res = false;
@@ -3335,8 +3376,8 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 
 	while (!res && !g_stop_run)
 	{
-		req.setUrl(QUrl(ReqUrl));
-		QNetworkReply* rep = manager->get(req);
+		req->setUrl(QUrl(ReqUrl));
+		QNetworkReply* rep = manager->get(*req);
 		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 
 
@@ -3372,7 +3413,7 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest& req, Q
 	return reply_res;
 }
 
-void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &req, bool &is_paused, QString &video_filename, bool &is_vlc_time_in_milliseconds, int &video_pos, __int64 &vlc_sys_time, double& rate, QString command)
+void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest* req, bool &is_paused, QString &video_filename, bool &is_vlc_time_in_milliseconds, int &video_pos, __int64 &vlc_sys_time, double& rate, QString command)
 {
 	bool res = false;
 	video_pos = -1;
@@ -3390,8 +3431,8 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &re
 
 	do
 	{
-		req.setUrl(QUrl(ReqUrl));
-		QNetworkReply* rep = manager->get(req);
+		req->setUrl(QUrl(ReqUrl));
+		QNetworkReply* rep = manager->get(*req);
 		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 		QByteArray reply_res;
 
@@ -3579,6 +3620,163 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest &re
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		}
 	} while (!res && !g_stop_run);
+}
+
+void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* req, bool& is_paused, QString& video_filepath, int& video_pos, __int64& sys_time, double& rate)
+{
+	bool res = false;
+	video_pos = -1;
+	sys_time = -1;
+	is_paused = true;
+	rate = 1;
+	video_filepath.clear();
+	int length;
+	double position;
+	bool show_warning_rvp_is_not_started = true;
+	bool show_warning_no_video_selected = true;
+	QString sync_data;
+	QString ReqUrl(g_rvp_url + ":" + QString::number(g_rvp_port) + "/variables.html");
+
+	do
+	{
+		req->setUrl(QUrl(ReqUrl));
+		QNetworkReply* rep = manager->get(*req);
+		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
+		QString reply_res;
+
+		QEventLoop loop;
+		QObject::connect(rep, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+		int loop_res = loop.exec();
+
+		if (rep->isFinished() == true)
+		{
+			if (rep->error())
+			{
+				if (show_warning_rvp_is_not_started)
+				{
+					show_msg("Can't get info from RVP: waiting for RVP is started or respond");
+					show_warning_rvp_is_not_started = false;
+					show_warning_no_video_selected = true;
+				}
+			}
+			else
+			{
+				reply_res = QString::fromUtf8(rep->readAll());
+				res = true;
+			}
+		}
+
+		if (res)
+		{
+		   /*
+		   <p id="file">%file_name%</p>
+		   <p id="filepatharg">...</p>
+		   <p id="filepath">%file_path%</p>
+		   <p id="filedir">...</p>
+		   <p id="state">1</p>
+		   <p id="position">%number%</p>
+		   <p id="duration">%number%</p>
+		   <p id="volumelevel">5</p>
+		   <p id="playbackrate">1</p>
+		   */
+
+			QRegularExpression regex(R"(<p\s+id=\"([^\">]+)\">([\s\S]*?)<\/p>)", QRegularExpression::DotMatchesEverythingOption);
+			QRegularExpressionMatchIterator it = regex.globalMatch(reply_res);
+
+			int found = 0;
+			while (it.hasNext()) {
+				QRegularExpressionMatch match = it.next();
+				QString key = match.captured(1).toLower();
+				QString value = match.captured(2).trimmed();
+
+				if (key == "filepath")
+				{
+					video_filepath = value;
+					found++;
+				}
+				else if (key == "state")
+				{
+					int state = value.toInt();
+					if (state != 1)
+					{
+						is_paused = false;
+					}
+					found++;
+				}
+				else if (key == "position")
+				{
+					video_pos = value.toInt();
+					found++;
+				}
+				else if (key == "playbackrate")
+				{
+					rate = value.toDouble();
+					found++;
+				}
+			}
+
+			if (found != 4)
+			{
+				res = false;
+			}
+
+			if (res)
+			{
+				if (video_filepath.length() == 0)
+				{
+					if (show_warning_no_video_selected)
+					{
+						show_msg("Video file is not opened");
+						show_warning_no_video_selected = false;
+						show_warning_rvp_is_not_started = true;
+					}
+					res = false;
+				}
+			}
+		}
+
+		if (!res && !g_stop_run)
+		{
+			video_pos = -1;
+			sys_time = -1;
+			is_paused = true;
+			video_filepath.clear();
+			if (g_pMyDevice)
+				set_hismith_speed(0.0);
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		}
+	} while (!res && !g_stop_run);
+}
+
+
+void make_rvp_command(QNetworkAccessManager* manager, VideoPlayerCommand command)
+{
+	QString ReqUrl(g_rvp_url + ":" + QString::number(g_rvp_port) + "/command.html");
+	QNetworkRequest request;
+
+	request.setUrl(QUrl(ReqUrl));
+
+	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+
+	QByteArray postData;
+
+	if (command == VideoPlayerCommand::Pause)
+	{
+		postData.append("wm_command=888");
+	}
+
+	QNetworkReply* rep = manager->post(request, postData);
+	QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
+	QString reply_res;
+
+	QEventLoop loop;
+	QObject::connect(rep, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+	int loop_res = loop.exec();
+
+	/*if (!rep->isFinished())
+	{
+		error_msg("ERROR: failed to make make_rvp_command");
+	}*/
 }
 
 void get_cur_video_pos(bool is_paused, int video_pos, __int64 vlc_sys_time, double rate, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
@@ -4123,8 +4321,121 @@ public:
 
 //---------------------------------------------------------------
 
-void trans_func(unsigned int u, _EXCEPTION_POINTERS* pExp) {
+void trans_func(unsigned int u, _EXCEPTION_POINTERS* pExp)
+{
 	throw HardwareException(u);
+}
+
+//---------------------------------------------------------------
+
+void init_video_player_connection()
+{
+	g_video_player_type = VideoPlayerTypesUtils::from_string(g_pW->ui->videoPlayerType->currentText());
+
+	show_msg(QString("Connecting to \"%1\" video player...").arg(VideoPlayerTypesUtils::to_string(g_video_player_type)), 5000, MessageType::Clean);
+
+	if (g_video_player_type == VideoPlayerTypes::VLC)
+	{
+		g_pNetworkAccessManager = new QNetworkAccessManager();
+		g_pNetworkRequest = new QNetworkRequest();
+
+		QString concatenated = ":" + g_vlc_password; //username:password
+		QByteArray data = concatenated.toLocal8Bit().toBase64();
+		QString headerData = "Basic " + data;
+		g_pNetworkRequest->setRawHeader("Authorization", headerData.toLocal8Bit());
+		g_pNetworkRequest->setTransferTimeout(1000);
+	}
+	else if (g_video_player_type == VideoPlayerTypes::RVP)
+	{
+		g_is_video_player_time_in_milliseconds = true;
+		g_pNetworkAccessManager = new QNetworkAccessManager();
+		g_pNetworkRequest = new QNetworkRequest();
+	}
+}
+
+//---------------------------------------------------------------
+
+void stop_video_player_connection()
+{
+	if (g_video_player_type == VideoPlayerTypes::VLC || g_video_player_type == VideoPlayerTypes::RVP)
+	{
+		g_pNetworkAccessManager->deleteLater();
+		g_pNetworkAccessManager = NULL;
+		delete g_pNetworkRequest;
+		g_pNetworkRequest = NULL;
+	}
+}
+
+//---------------------------------------------------------------
+
+void make_video_player_status(bool& is_video_paused, QString& video_filepath, int& video_pos, __int64& sys_time, double& rate, VideoPlayerCommand command = VideoPlayerCommand::None)
+{
+	if (g_video_player_type == VideoPlayerTypes::VLC)
+	{
+		static QString _tmp_video_filename;
+		static QString _tmp_video_filepath;
+
+		QString vlc_command;
+		QString video_filename;
+
+		if (command == VideoPlayerCommand::Pause)
+		{
+			vlc_command = QString("?command=pl_pause");
+		}
+
+		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filename, g_is_video_player_time_in_milliseconds, video_pos, sys_time, g_video_cur_rate, vlc_command);
+
+		if (video_filename != _tmp_video_filename)
+		{
+			_tmp_video_filename = video_filename;
+			_tmp_video_filepath.clear();
+
+			QByteArray vlc_reply = get_vlc_reply(g_pNetworkAccessManager, g_pNetworkRequest, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
+			QDomDocument doc("data");
+			doc.setContent(vlc_reply);
+			QDomElement docElem = doc.documentElement();
+			QDomNode n = docElem.firstChild().firstChild();
+			QString uri, current;
+			while (!n.isNull()) {
+				QDomElement e = n.toElement();
+				if (!e.isNull()) {
+					QString tag_name = e.tagName();
+					if (tag_name == "leaf")
+					{
+						uri = e.attribute("uri");
+						current = e.attribute("current");
+
+						if (current == "current")
+						{
+							_tmp_video_filepath = QDir::toNativeSeparators(QUrl(uri).toLocalFile());
+							break;
+						}
+					}
+				}
+				n = n.nextSibling();
+			}
+
+			if (_tmp_video_filepath.length() == 0)
+			{
+				error_msg(QString("ERROR: Failed to get full video file path for video with name: %1").arg(video_filename));
+			}
+
+			video_filepath = _tmp_video_filepath;
+		}
+		else
+		{
+			video_filepath = _tmp_video_filepath;
+		}
+	}
+	else
+	{
+		make_rvp_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filepath, video_pos, sys_time, g_video_cur_rate);
+
+		if (command != VideoPlayerCommand::None)
+		{
+			make_rvp_command(g_pNetworkAccessManager, VideoPlayerCommand::Pause);
+		}
+	}
 }
 
 //---------------------------------------------------------------
@@ -4143,13 +4454,12 @@ void run_funscript()
 	double cur_speed, prev_cur_speed = 0, action_start_speed;
 	int start_video_pos, video_pos, cur_video_pos = 0;
 
-	__int64 vlc_sys_time = -1;
+	__int64 video_player_sys_time = -1;
 	double prev_rate = 1;
 	bool is_video_paused = false;
 	QString video_filename, last_play_video_filename;
 	std::vector<QPair<int, int>> funscript_data_maped_full;
 	bool get_res = true;
-	bool is_vlc_time_in_milliseconds = true;
 	double cur_set_hismith_speed = 0;
 	int res;
 
@@ -4169,6 +4479,12 @@ void run_funscript()
 		show_msg("", 0, MessageType::Clean);
 		return;
 	}
+
+	cur_set_hismith_speed = set_hismith_speed(0.0);
+	QueryPerformanceCounter(&set_hismith_speed_time);
+	prev_set_hismith_speed_time = set_hismith_speed_time;
+	cur_time = set_hismith_speed_time;
+	prev_time = cur_time;
 
 	//-----------------------------------------------------
 	// Connecting to Webcam
@@ -4216,17 +4532,23 @@ void run_funscript()
 		.arg(g_webcam_end_to_end_latency);
 
 	//-----------------------------------------------------
-	// Connecting to VLC player with already opened video
+	// Connecting to video player with already opened video
 
-	show_msg("Connecting to VLC player...", 120000, MessageType::Clean);
+	init_video_player_connection();
+	make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+	get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+	g_actual_video_pos = cur_video_pos;
+	prev_rate = g_video_cur_rate;
 
-	g_pNetworkAccessManager = new QNetworkAccessManager();
+	g_results_file_data += QString(
+		"video_player_type:%1\n"
+		"is_video_player_time_in_milliseconds:%2\n"
+		"video_player_sys_time:%3\n")
+		.arg(VideoPlayerTypesUtils::to_string(g_video_player_type))
+		.arg(g_is_video_player_time_in_milliseconds)
+		.arg(video_player_sys_time);
 
-	QString concatenated = ":" + g_vlc_password; //username:password
-	QByteArray data = concatenated.toLocal8Bit().toBase64();
-	QString headerData = "Basic " + data;
-	g_NetworkRequest.setRawHeader("Authorization", headerData.toLocal8Bit());
-	g_NetworkRequest.setTransferTimeout(1000);
+	//-----------------------------------------------------
 
 	speeds_data all_speeds_data;
 	get_speed_statistics_data(all_speeds_data);
@@ -4254,12 +4576,6 @@ void run_funscript()
 	}
 	g_results_file_data += QString("\n");
 
-	cur_set_hismith_speed = set_hismith_speed(0.0);
-	QueryPerformanceCounter(&set_hismith_speed_time);
-	prev_set_hismith_speed_time = set_hismith_speed_time;
-	cur_time = set_hismith_speed_time;
-	prev_time = cur_time;
-
 	struct time_statistic
 	{
 		int dt1;
@@ -4270,11 +4586,6 @@ void run_funscript()
 		int dt6;
 	};
 	time_statistic time_stat;
-
-	make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-	get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
-	g_actual_video_pos = cur_video_pos;
-	prev_rate = g_video_cur_rate;
 
 	bool clear_msgs = true;
 
@@ -4320,8 +4631,8 @@ void run_funscript()
 				do
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(300));
-					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
 					g_actual_video_pos = cur_video_pos;
 					if (prev_rate != g_video_cur_rate)
 					{
@@ -4339,16 +4650,16 @@ void run_funscript()
 				do
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
 					g_actual_video_pos = cur_video_pos;
 				} while (g_video_freezed && !g_stop_run && !g_pause);
 			}
 			else
 			{
 				g_video_freezed = false;
-				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-				get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+				make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+				get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 				g_actual_video_pos = cur_video_pos;
 
 				if (g_video_freezed)
@@ -4356,8 +4667,8 @@ void run_funscript()
 					do
 					{
 						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-						get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+						get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
 						g_actual_video_pos = cur_video_pos;
 					} while (g_video_freezed && !g_stop_run && !g_pause);
 				}
@@ -4371,34 +4682,8 @@ void run_funscript()
 
 			if (last_load_funscript_video_filename != last_play_video_filename)
 			{
-				funscript_fname.clear();
-				QByteArray vlc_reply = get_vlc_reply(g_pNetworkAccessManager, g_NetworkRequest, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
-				QDomDocument doc("data");
-				doc.setContent(vlc_reply);
-				QDomElement docElem = doc.documentElement();
-				QDomNode n = docElem.firstChild().firstChild();
-				QString uri, current;
-				while (!n.isNull()) {
-					QDomElement e = n.toElement(); // try to convert the node to an element.
-					if (!e.isNull()) {
-						QString tag_name = e.tagName();
-						if (tag_name == "leaf")
-						{
-							uri = e.attribute("uri");
-							current = e.attribute("current");
-
-							if (current == "current")
-							{
-								QString fpath = QUrl(uri).toLocalFile();
-								QFileInfo info(fpath);
-								QString fname = info.fileName();
-								funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
-								break;
-							}
-						}
-					}
-					n = n.nextSibling();
-				}
+				QFileInfo info(last_play_video_filename);
+				funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
 
 				if (!((funscript_fname.size() > 0) && QFile::exists(funscript_fname)))
 				{
@@ -4410,8 +4695,8 @@ void run_funscript()
 					do
 					{
 						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-						get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+						get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 						g_actual_video_pos = cur_video_pos;
 					} while (last_play_video_filename == video_filename && !g_stop_run);
 					continue;
@@ -4442,8 +4727,8 @@ void run_funscript()
 					do
 					{
 						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-						get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+						get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 						g_actual_video_pos = cur_video_pos;
 					} while (last_play_video_filename == video_filename && !g_stop_run);
 					continue;
@@ -4459,8 +4744,8 @@ void run_funscript()
 			int search_video_pos;
 			QString start_info;
 
-			make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-			get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+			make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+			get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 			g_actual_video_pos = cur_video_pos;
 			search_video_pos = cur_video_pos;
 			prev_rate = g_video_cur_rate;
@@ -4517,8 +4802,8 @@ void run_funscript()
 				do
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
 				} while ((last_play_video_filename == video_filename) && (cur_video_pos >= search_video_pos) && (cur_video_pos <= search_video_pos + 1000) && !g_stop_run);
 				continue;
@@ -4636,7 +4921,7 @@ void run_funscript()
 			bool position_was_aligned = false;
 			bool video_was_paused = is_video_paused;
 
-			if (is_vlc_time_in_milliseconds && is_video_paused)
+			if (g_is_video_player_time_in_milliseconds && is_video_paused)
 			{
 				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 				get_res = get_hismith_pos_by_image(frame, cur_pos);
@@ -4672,8 +4957,8 @@ void run_funscript()
 					{
 						// run in parallel
 						{
-							std::thread t1( [&is_video_paused, &video_filename, &is_vlc_time_in_milliseconds, &video_pos, &vlc_sys_time] {
-								make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+							std::thread t1( [&is_video_paused, &video_filename, &video_pos, &video_player_sys_time] {
+								make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
 								} );
 							std::thread t2([&get_res, &frame, &abs_cur_pos,
 								&cur_pos, &msec_video_cur_pos, &cur_speed, &msec_video_prev_pos, &abs_prev_pos] {
@@ -4683,7 +4968,7 @@ void run_funscript()
 								} );
 							t1.join();
 							t2.join();
-							get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+							get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 							g_actual_video_pos = cur_video_pos;
 						}
 
@@ -4701,11 +4986,11 @@ void run_funscript()
 						exp_abs_cur_pos = abs_cur_pos;
 						if (cur_speed > 0)
 						{
-							__int64 video_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
+							__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
 
-							if (video_time_diff > 0)
+							if (webcam_time_diff > 0)
 							{
-								int exp_abs_cur_dif = ((cur_speed * (double)(video_time_diff)) / 1000.0);
+								int exp_abs_cur_dif = ((cur_speed * (double)(webcam_time_diff)) / 1000.0);
 								exp_abs_cur_pos = abs_cur_pos + exp_abs_cur_dif;
 							}
 						}
@@ -4740,10 +5025,10 @@ void run_funscript()
 					{
 						if (g_pause)
 						{
-							make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+							make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
 							if (!is_video_paused && (video_filename.size() > 0))
 							{
-								make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
+								make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
 							}
 							if (g_update)
 							{
@@ -4765,21 +5050,21 @@ void run_funscript()
 				}
 			}
 
-			make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-			get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+			make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+			get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 			g_actual_video_pos = cur_video_pos;
 			start_time = cur_time;
 			start_video_pos = cur_video_pos;
 
 			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate) ||
-				(is_vlc_time_in_milliseconds && !video_was_paused && is_video_paused))
+				(g_is_video_player_time_in_milliseconds && !video_was_paused && is_video_paused))
 			{
 				if (g_pause)
 				{
-					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
 					if (!is_video_paused && (video_filename.size() > 0))
 					{
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
+						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
 					}
 					if (g_update)
 					{
@@ -4828,8 +5113,8 @@ void run_funscript()
 				((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_cur_rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
 				)
 			{
-				make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-				get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+				make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+				get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 				g_actual_video_pos = cur_video_pos;
 				start_time = cur_time;
 				start_video_pos = cur_video_pos;
@@ -4837,7 +5122,7 @@ void run_funscript()
 				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_cur_rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate) ||
 					(is_video_paused && g_update) ||
 					(is_video_paused && (cur_video_pos - search_video_pos >= 1000)) ||
-					(is_vlc_time_in_milliseconds && !video_was_paused && is_video_paused))
+					(g_is_video_player_time_in_milliseconds && !video_was_paused && is_video_paused))
 				{
 					break;
 				}
@@ -4849,7 +5134,7 @@ void run_funscript()
 			}
 
 			if ( (is_video_paused && g_update) ||
-				(is_vlc_time_in_milliseconds && !video_was_paused && is_video_paused) )
+				(g_is_video_player_time_in_milliseconds && !video_was_paused && is_video_paused) )
 			{
 				continue;
 			}
@@ -4880,10 +5165,10 @@ void run_funscript()
 			{
 				if (g_pause)
 				{
-					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
 					if (!is_video_paused && (video_filename.size() > 0))
 					{
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
+						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
 					}
 					if (g_update)
 					{
@@ -4920,15 +5205,15 @@ void run_funscript()
 
 			LARGE_INTEGER t1, t2, t3, dt_total;
 
-			if (!is_vlc_time_in_milliseconds)
+			if (!g_is_video_player_time_in_milliseconds)
 			{
 				// for minimize time difference sync waiting for the nearest second change
 				int prev_video_pos;
 				do
 				{
 					prev_video_pos = cur_video_pos;
-					make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
+					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
 					start_time = cur_time;
 					start_video_pos = cur_video_pos;
@@ -5012,13 +5297,12 @@ void run_funscript()
 			int new_start_video_pos;
 			LARGE_INTEGER _tmp_cur_time;
 			int _tmp_video_pos = -1;
-			__int64 _tmp_vlc_sys_time = -1;
+			__int64 _tmp_video_player_sys_time = -1;
 			double _tmp_cur_rate = 1;
 			bool _tmp_is_paused = false;
 			QString _tmp_video_filename;
-			bool _tmp_is_vlc_time_in_milliseconds;
 			int prev_cur_video_pos = cur_video_pos;
-			std::thread* p_get_vlc_status = NULL;
+			std::thread* p_get_video_player_status = NULL;
 
 			QueryPerformanceCounter(&cur_time);
 			time_stat.dt5 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
@@ -5056,15 +5340,15 @@ void run_funscript()
 				exp_abs_cur_pos = abs_cur_pos;
 				if (cur_speed > 0)
 				{
-					__int64 video_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
+					__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
 
-					if (video_time_diff > 0)
+					if (webcam_time_diff > 0)
 					{
-						int exp_abs_cur_dif = ((cur_speed * (double)(video_time_diff)) / 1000.0);
+						int exp_abs_cur_dif = ((cur_speed * (double)(webcam_time_diff)) / 1000.0);
 						exp_abs_cur_pos = abs_cur_pos + exp_abs_cur_dif;
-						hismith_speed_changed += QString("\n\t[exp_abs_cur_dif:%1 video_time_diff:%2 cur_speed:%3]")
+						hismith_speed_changed += QString("\n\t[exp_abs_cur_dif:%1 webcam_time_diff:%2 cur_speed:%3]")
 							.arg(exp_abs_cur_dif)
-							.arg(video_time_diff)
+							.arg(webcam_time_diff)
 							.arg(cur_speed);
 					}
 				}
@@ -5167,8 +5451,8 @@ void run_funscript()
 
 				if ((int)((double)(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate) - cur_video_pos) / g_video_cur_rate) >= 250)
 				{
-					p_get_vlc_status = new std::thread([&_tmp_video_pos, &_tmp_vlc_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds, &_tmp_cur_time, &_tmp_cur_rate] {
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds, _tmp_video_pos, _tmp_vlc_sys_time, _tmp_cur_rate);
+					p_get_video_player_status = new std::thread([&_tmp_video_pos, &_tmp_video_player_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_cur_time, &_tmp_cur_rate] {
+						make_video_player_status(_tmp_is_paused, _tmp_video_filename, _tmp_video_pos, _tmp_video_player_sys_time, _tmp_cur_rate);
 						QueryPerformanceCounter(&_tmp_cur_time);
 						}
 					);
@@ -5230,7 +5514,7 @@ void run_funscript()
 
 				do
 				{
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
 						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
 					{
 						break;
@@ -5244,11 +5528,11 @@ void run_funscript()
 					{
 						show_msg("", 0, MessageType::Clean);
 						show_msg(QString("Failed to get hismith position.\nPausing video if not and pausing hismith control."));
-						if (p_get_vlc_status)
+						if (p_get_video_player_status)
 						{
-							p_get_vlc_status->join();
-							delete p_get_vlc_status;
-							p_get_vlc_status = NULL;
+							p_get_video_player_status->join();
+							delete p_get_video_player_status;
+							p_get_video_player_status = NULL;
 						}
 						g_pause = true;
 						clear_msgs = false;
@@ -5266,15 +5550,15 @@ void run_funscript()
 					exp_abs_cur_pos = abs_cur_pos;
 					if (cur_speed > 0)
 					{
-						__int64 video_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
+						__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
 
-						if (video_time_diff > 0)
+						if (webcam_time_diff > 0)
 						{
-							int exp_abs_cur_dif = ((cur_speed * (double)(video_time_diff)) / 1000.0);
+							int exp_abs_cur_dif = ((cur_speed * (double)(webcam_time_diff)) / 1000.0);
 							exp_abs_cur_pos = abs_cur_pos + exp_abs_cur_dif;
-							hismith_speed_changed += QString("\n\t[exp_abs_cur_dif:%1 video_time_diff:%2 cur_speed:%3]")
+							hismith_speed_changed += QString("\n\t[exp_abs_cur_dif:%1 webcam_time_diff:%2 cur_speed:%3]")
 								.arg(exp_abs_cur_dif)
-								.arg(video_time_diff)
+								.arg(webcam_time_diff)
 								.arg(cur_speed);
 						}
 					}
@@ -5290,50 +5574,52 @@ void run_funscript()
 					{
 						if ((int)((double)(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate) - cur_video_pos) / g_video_cur_rate) >= 1000)
 						{
-							if (p_get_vlc_status)
+							if (p_get_video_player_status)
 							{
-								p_get_vlc_status->join();
-								delete p_get_vlc_status;
-								p_get_vlc_status = NULL;
+								p_get_video_player_status->join();
+								delete p_get_video_player_status;
+								p_get_video_player_status = NULL;
 								prev_cur_video_pos = cur_video_pos;
 								is_video_paused = _tmp_is_paused;
 								video_pos = _tmp_video_pos;
-								vlc_sys_time = _tmp_vlc_sys_time;
+								video_player_sys_time = _tmp_video_player_sys_time;
 								video_filename = _tmp_video_filename;
-								is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
 								g_video_cur_rate = _tmp_cur_rate;
-								get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+								get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 								g_actual_video_pos = cur_video_pos;
 
-								if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+								if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
 									(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
 								{
 									break;
 								}
 
-								if (is_vlc_time_in_milliseconds)
+								if (g_is_video_player_time_in_milliseconds)
 								{
-									if (vlc_sys_time > 0)
+									if (video_player_sys_time > 0)
 									{
 										new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate);
 										start_video_pos_dif = new_start_video_pos - start_video_pos;
 										start_video_pos = new_start_video_pos;
-										hismith_speed_changed += QString("\n\t[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+										hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
 									}
 									else
 									{
 										new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency)) * g_video_cur_rate);
 										start_video_pos_dif = new_start_video_pos - start_video_pos;
-										start_video_pos = new_start_video_pos;
-										hismith_speed_changed += QString("\n\t[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+										if (start_video_pos_dif > 0)
+										{
+											start_video_pos = new_start_video_pos;
+											hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+										}
 									}
 								}
 							}
 
 							if ((int)((double)(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate) - cur_video_pos) / g_video_cur_rate) >= 1000)
 							{
-								p_get_vlc_status = new std::thread([&_tmp_video_pos, &_tmp_vlc_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_is_vlc_time_in_milliseconds, &_tmp_cur_time, &_tmp_cur_rate] {
-									make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, _tmp_is_paused, _tmp_video_filename, _tmp_is_vlc_time_in_milliseconds, _tmp_video_pos, _tmp_vlc_sys_time, _tmp_cur_rate);
+								p_get_video_player_status = new std::thread([&_tmp_video_pos, &_tmp_video_player_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_cur_time, &_tmp_cur_rate] {
+									make_video_player_status(_tmp_is_paused, _tmp_video_filename, _tmp_video_pos, _tmp_video_player_sys_time, _tmp_cur_rate);
 									QueryPerformanceCounter(&_tmp_cur_time);
 									}
 								);
@@ -5469,41 +5755,43 @@ void run_funscript()
 
 				} while (dt > dtime);
 
-				if (p_get_vlc_status)
+				if (p_get_video_player_status)
 				{
-					p_get_vlc_status->join();
-					delete p_get_vlc_status;
-					p_get_vlc_status = NULL;
+					p_get_video_player_status->join();
+					delete p_get_video_player_status;
+					p_get_video_player_status = NULL;
 					prev_cur_video_pos = cur_video_pos;
 					is_video_paused = _tmp_is_paused;
 					video_pos = _tmp_video_pos;
-					vlc_sys_time = _tmp_vlc_sys_time;
+					video_player_sys_time = _tmp_video_player_sys_time;
 					video_filename = _tmp_video_filename;
-					is_vlc_time_in_milliseconds = _tmp_is_vlc_time_in_milliseconds;
 					g_video_cur_rate = _tmp_cur_rate;
-					get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
 
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
 						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
 					{
 						// need to stop run
 					}
-					else if (is_vlc_time_in_milliseconds)
+					else if (g_is_video_player_time_in_milliseconds)
 					{
-						if (vlc_sys_time > 0)
+						if (video_player_sys_time > 0)
 						{
 							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate);
 							start_video_pos_dif = new_start_video_pos - start_video_pos;
 							start_video_pos = new_start_video_pos;
-							hismith_speed_changed += QString("\n\t[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+							hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
 						}
 						else
 						{
 							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency)) * g_video_cur_rate);
 							start_video_pos_dif = new_start_video_pos - start_video_pos;
-							start_video_pos = new_start_video_pos;
-							hismith_speed_changed += QString("\n\t[get_vlc_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+							if (start_video_pos_dif > 0)
+							{
+								start_video_pos = new_start_video_pos;
+								hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+							}
 						}
 					}
 				}
@@ -5536,7 +5824,7 @@ void run_funscript()
 				}
 
 				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused ||
-					((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (is_vlc_time_in_milliseconds ? 300 : 1000)) ||
+					((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
 					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
 				{
 					if (last_play_video_filename != video_filename)
@@ -5544,10 +5832,10 @@ void run_funscript()
 						show_msg("Played video was changed");
 						actions_end_with = QString("last_play_video_filename (%1) != video_filename (%2)").arg(last_play_video_filename).arg(video_filename);
 					}
-					else if ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (is_vlc_time_in_milliseconds ? 300 : 1000))
+					else if ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000))
 					{
 						show_msg("Video time was jumped forward");
-						actions_end_with = QString("cur_video_pos (%1) > (start_video_pos + (int)(cur_time - start_time))(%2) + %3").arg(cur_video_pos).arg(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)).arg(is_vlc_time_in_milliseconds ? 300 : 1000);
+						actions_end_with = QString("cur_video_pos (%1) > (start_video_pos + (int)(cur_time - start_time))(%2) + %3").arg(cur_video_pos).arg(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)).arg(g_is_video_player_time_in_milliseconds ? 300 : 1000);
 					}
 					else if ((action_id > 1) && (cur_video_pos < prev_cur_video_pos - 300))
 					{
@@ -5562,10 +5850,10 @@ void run_funscript()
 					else if (g_pause)
 					{
 						actions_end_with = QString("g_pause");
-						make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
 						if (!is_video_paused && (video_filename.size() > 0))
 						{
-							make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
+							make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
 						}
 						if (g_update)
 						{
@@ -5763,14 +6051,13 @@ void run_funscript()
 	delete g_pCapture;
 	g_pCapture = NULL;
 
-	make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate);
+	make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
 	if ((video_filename.size() != 0) && (!is_video_paused))
 	{
-		make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, g_video_cur_rate, QString("?command=pl_pause"));
+		make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
 	}
 
-	g_pNetworkAccessManager->deleteLater();
-	g_pNetworkAccessManager = NULL;
+	stop_video_player_connection();
 }
 
 void disconnect_from_hismith()
@@ -6302,12 +6589,52 @@ void test_hismith(int hismith_speed)
 	cv::destroyAllWindows();
 }
 
-void add_xml_element(QDomDocument& doc, QDomElement& root, QString element_name, QString text_value)
-{
-	QDomElement elem = doc.createElement(element_name);
-	QDomText node_txt = doc.createTextNode(text_value);
-	elem.appendChild(node_txt);
-	root.appendChild(elem);
+void xmlToLinearList(const QDomElement& element, const QString& currentPath, QList<QPair<QString, QString>>& dataList) {
+	QDomNode n = element.firstChild();
+	bool hasChildElements = false;
+
+	while (!n.isNull()) {
+		QDomElement e = n.toElement();
+		if (!e.isNull()) {
+			hasChildElements = true;
+			QString newPath = currentPath.isEmpty() ? e.tagName() : currentPath + "/" + e.tagName();
+			xmlToLinearList(e, newPath, dataList);
+		}
+		n = n.nextSibling();
+	}
+
+	if (!hasChildElements && !currentPath.isEmpty()) {
+		dataList.append({ currentPath, element.text().trimmed() });
+	}
+}
+
+void linearListToXml(QDomDocument& doc, QDomElement& root, const QList<QPair<QString, QString>>& dataList) {
+	for (const auto& pair : dataList) {
+		QString key = pair.first;
+		QString value = pair.second;
+
+		QStringList parts = key.split('/');
+		QDomElement currentElem = root;
+
+		for (int i = 0; i < parts.size(); ++i) {
+			QString part = parts[i];
+
+			QDomElement child = currentElem.firstChildElement(part);
+			if (child.isNull()) {
+				child = doc.createElement(part);
+				currentElem.appendChild(child);
+			}
+
+			currentElem = child;
+
+			if (i == parts.size() - 1) {
+				while (currentElem.hasChildNodes()) {
+					currentElem.removeChild(currentElem.firstChild());
+				}
+				currentElem.appendChild(doc.createTextNode(value));
+			}
+		}
+	}
 }
 
 void SaveSettings()
@@ -6330,65 +6657,74 @@ void SaveSettings()
 	document.appendChild(root);
 
 	g_functions_move_in_out_variant = g_pW->ui->functionsMoveInOutVariants->currentIndex() + 1;
+	QString selected_webcam = g_pW->ui->Webcams->itemText(g_pW->ui->Webcams->currentIndex());
+	QString selected_device = g_pW->ui->Devices->itemText(g_pW->ui->Devices->currentIndex());
 
-	add_xml_element(document, root, "max_allowed_hismith_speed", QString::number(g_max_allowed_hismith_speed));
-	add_xml_element(document, root, "hismith_speed_for_set_initial_pos", QString::number(g_hismith_speed_for_set_initial_pos));
-	add_xml_element(document, root, "min_funscript_relative_move", QString::number(g_min_funscript_relative_move));
-	add_xml_element(document, root, "use_modify_funscript_functions", QString::number(g_modify_funscript ? 1 : 0));
-	add_xml_element(document, root, "functions_move_variants", g_modify_funscript_function_move_variants);
-	add_xml_element(document, root, "functions_move_in_out_variants", g_modify_funscript_function_move_in_out_variants);
-	add_xml_element(document, root, "functions_move_in_out_variant", QString::number(g_functions_move_in_out_variant));
-	add_xml_element(document, root, "dt_for_get_cur_speed", QString::number(g_dt_for_get_cur_speed));
-	add_xml_element(document, root, "min_dt_between_speed_changes_on_slow_moves", QString::number(g_min_dt_between_speed_changes_on_slow_moves));
-	add_xml_element(document, root, "min_dt_between_speed_changes_on_fast_moves", QString::number(g_min_dt_between_speed_changes_on_fast_moves));
-	add_xml_element(document, root, "fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes", QString::number(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes));
-	add_xml_element(document, root, "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40));
-	add_xml_element(document, root, "speed_change_delay", QString::number(g_speed_change_delay));
-	add_xml_element(document, root, "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout));
+	QList<QPair<QString, QString>> data_list;
 
-	add_xml_element(document, root, "B_range", QString("[%1-%2][%3-%4][%5-%6]")
+	data_list.append({ "max_allowed_hismith_speed", QString::number(g_max_allowed_hismith_speed) });
+	data_list.append({ "hismith_speed_for_set_initial_pos", QString::number(g_hismith_speed_for_set_initial_pos) });
+	data_list.append({ "min_funscript_relative_move", QString::number(g_min_funscript_relative_move) });
+	data_list.append({ "use_modify_funscript_functions", QString::number(g_modify_funscript ? 1 : 0) });
+	data_list.append({ "functions_move_variants", g_modify_funscript_function_move_variants });
+	data_list.append({ "functions_move_in_out_variants", g_modify_funscript_function_move_in_out_variants });
+	data_list.append({ "functions_move_in_out_variant", QString::number(g_functions_move_in_out_variant) });
+	data_list.append({ "dt_for_get_cur_speed", QString::number(g_dt_for_get_cur_speed) });
+	data_list.append({ "min_dt_between_speed_changes_on_slow_moves", QString::number(g_min_dt_between_speed_changes_on_slow_moves) });
+	data_list.append({ "min_dt_between_speed_changes_on_fast_moves", QString::number(g_min_dt_between_speed_changes_on_fast_moves) });
+	data_list.append({ "fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes", QString::number(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes) });
+	data_list.append({ "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40) });
+	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay) });
+	data_list.append({ "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout) });
+
+	data_list.append({ "B_range", QString("[%1-%2][%3-%4][%5-%6]")
 												.arg(g_B_range[0][0])
 												.arg(g_B_range[0][1])
 												.arg(g_B_range[1][0])
 												.arg(g_B_range[1][1])
 												.arg(g_B_range[2][0])
-												.arg(g_B_range[2][1]));
+												.arg(g_B_range[2][1]) });
 
-	add_xml_element(document, root, "G_range", QString("[%1-%2][%3-%4][%5-%6]")
+	data_list.append({ "G_range", QString("[%1-%2][%3-%4][%5-%6]")
 												.arg(g_G_range[0][0])
 												.arg(g_G_range[0][1])
 												.arg(g_G_range[1][0])
 												.arg(g_G_range[1][1])
 												.arg(g_G_range[2][0])
-												.arg(g_G_range[2][1]));
+												.arg(g_G_range[2][1]) });
 
-	add_xml_element(document, root, "max_telescopic_motor_rocker_arm_proportions", QString::number(g_max_telescopic_motor_rocker_arm_proportions));
-	add_xml_element(document, root, "min_telescopic_motor_rocker_arm_center_x_proportions", QString::number(g_min_telescopic_motor_rocker_arm_center_x_proportions));
-	add_xml_element(document, root, "max_telescopic_motor_rocker_arm_center_x_proportions", QString::number(g_max_telescopic_motor_rocker_arm_center_x_proportions));
+	data_list.append({ "max_telescopic_motor_rocker_arm_proportions", QString::number(g_max_telescopic_motor_rocker_arm_proportions) });
+	data_list.append({ "min_telescopic_motor_rocker_arm_center_x_proportions", QString::number(g_min_telescopic_motor_rocker_arm_center_x_proportions) });
+	data_list.append({ "max_telescopic_motor_rocker_arm_center_x_proportions", QString::number(g_max_telescopic_motor_rocker_arm_center_x_proportions) });
 
-	QString selected_webcam = g_pW->ui->Webcams->itemText(g_pW->ui->Webcams->currentIndex());
-	QString selected_device = g_pW->ui->Devices->itemText(g_pW->ui->Devices->currentIndex());
+	data_list.append({ "req_webcam_name", selected_webcam });
+	data_list.append({ "webcam_frame_width", QString::number(g_webcam_frame_width) });
+	data_list.append({ "webcam_frame_height", QString::number(g_webcam_frame_height) });
+	data_list.append({ "webcam_fps", QString::number(g_webcam_fps) });
+	data_list.append({ "webcam_focus", QString::number(g_webcam_focus) });
+	data_list.append({ "webcam_exposure", QString::number(g_webcam_exposure) });
+	data_list.append({ "webcam_end_to_end_latency", QString::number(g_webcam_end_to_end_latency) });
 
-	add_xml_element(document, root, "req_webcam_name", selected_webcam);
-	add_xml_element(document, root, "webcam_frame_width", QString::number(g_webcam_frame_width));
-	add_xml_element(document, root, "webcam_frame_height", QString::number(g_webcam_frame_height));
-	add_xml_element(document, root, "webcam_fps", QString::number(g_webcam_fps));
-	add_xml_element(document, root, "webcam_focus", QString::number(g_webcam_focus));
-	add_xml_element(document, root, "webcam_exposure", QString::number(g_webcam_exposure));
-	add_xml_element(document, root, "webcam_end_to_end_latency", QString::number(g_webcam_end_to_end_latency));
+	data_list.append({ "intiface_central_client_url", QString(g_intiface_central_client_url.c_str()) });
+	data_list.append({ "intiface_central_client_port", QString::number(g_intiface_central_client_port) });
+	data_list.append({ "hismith_device_name", selected_device });
 
-	add_xml_element(document, root, "intiface_central_client_url", g_intiface_central_client_url.c_str());
-	add_xml_element(document, root, "intiface_central_client_port", QString::number(g_intiface_central_client_port));
-	add_xml_element(document, root, "hismith_device_name", selected_device);
+	data_list.append({ "video_player_types/vlc/url", g_vlc_url });
+	data_list.append({ "video_player_types/vlc/port", QString::number(g_vlc_port) });
+	data_list.append({ "video_player_types/vlc/password", g_vlc_password });
 
-	add_xml_element(document, root, "vlc_url", g_vlc_url);
-	add_xml_element(document, root, "vlc_port", QString::number(g_vlc_port));
-	add_xml_element(document, root, "vlc_password", g_vlc_password);
+	data_list.append({ "video_player_types/rvp/url", g_rvp_url });
+	data_list.append({ "video_player_types/rvp/port", QString::number(g_rvp_port) });
 
-	add_xml_element(document, root, "hotkey_stop", g_hotkey_stop);
-	add_xml_element(document, root, "hotkey_pause", g_hotkey_pause);
-	add_xml_element(document, root, "hotkey_resume", g_hotkey_resume);
-	add_xml_element(document, root, "hotkey_use_modify_funscript_functions", g_hotkey_use_modify_funscript_functions);
+	g_video_player_type = VideoPlayerTypesUtils::from_string(g_pW->ui->videoPlayerType->currentText());
+	data_list.append({ "video_player_type", VideoPlayerTypesUtils::to_string(g_video_player_type) });
+
+	data_list.append({ "hotkey_stop", g_hotkey_stop });
+	data_list.append({ "hotkey_pause", g_hotkey_pause });
+	data_list.append({ "hotkey_resume", g_hotkey_resume });
+	data_list.append({ "hotkey_use_modify_funscript_functions", g_hotkey_use_modify_funscript_functions });
+
+	linearListToXml(document, root, data_list);
 
 	xmlContent << document.toString();
 	xmlFile.flush();
@@ -6418,20 +6754,10 @@ bool LoadSettings()
 	}
 	xmlFile.close();
 
-	std::map<QString, QString> data_map;
-
+	QList<QPair<QString, QString>> data_list;
 	QDomElement docElem = doc.documentElement();
-
-	QDomNode n = docElem.firstChild();
-	while (!n.isNull()) {
-		QDomElement e = n.toElement(); // try to convert the node to an element.
-		if (!e.isNull()) {
-			QString tag_name = e.tagName();
-			QString tag_data = e.text();
-			data_map[tag_name] = tag_data;
-		}
-		n = n.nextSibling();
-	}
+	xmlToLinearList(docElem, "", data_list);
+	QHash<QString, QString> data_map(data_list.begin(), data_list.end());
 
 	g_max_allowed_hismith_speed = data_map["max_allowed_hismith_speed"].toInt();
 	g_hismith_speed_for_set_initial_pos = data_map["hismith_speed_for_set_initial_pos"].toInt();
@@ -6503,9 +6829,14 @@ bool LoadSettings()
 
 	g_hismith_device_name = data_map["hismith_device_name"];
 
-	g_vlc_url = data_map["vlc_url"];
-	g_vlc_port = data_map["vlc_port"].toInt();
-	g_vlc_password = data_map["vlc_password"];
+	g_video_player_type = VideoPlayerTypesUtils::from_string(data_map["video_player_type"]);
+
+	g_vlc_url = data_map["video_player_types/vlc/url"];
+	g_vlc_port = data_map["video_player_types/vlc/port"].toInt();
+	g_vlc_password = data_map["video_player_types/vlc/password"];
+
+	g_rvp_url = data_map["video_player_types/rvp/url"];
+	g_rvp_port = data_map["video_player_types/rvp/port"].toInt();
 
 	g_modify_funscript = (data_map["use_modify_funscript_functions"].toInt() == 0) ? false : true;
 	g_modify_funscript_function_move_variants = data_map["functions_move_variants"];
@@ -6564,6 +6895,27 @@ bool LoadSettings()
 	}
 	//--------------------
 
+	//--------------------
+	{
+		for (QString& video_player_type : VideoPlayerTypesUtils::get_types_list())
+		{
+			g_pW->ui->videoPlayerType->addItem(video_player_type);
+		}
+
+		QString video_player_type_str = VideoPlayerTypesUtils::to_string(g_video_player_type);
+		int index = g_pW->ui->videoPlayerType->findText(video_player_type_str);
+
+		if (index != -1)
+		{
+			g_pW->ui->videoPlayerType->setCurrentIndex(index);
+		}
+		else
+		{
+			error_msg(QString("ERROR: Failed to find video player type in list: %1").arg(video_player_type_str));
+		}
+	}
+	//--------------------
+
 	res = true;
 
 	return res;
@@ -6575,12 +6927,13 @@ void test_vlc()
 	// Connecting to VLC player with already opened video
 
 	g_pNetworkAccessManager = new QNetworkAccessManager();
+	g_pNetworkRequest = new QNetworkRequest();
 
 	QString concatenated = ":" + g_vlc_password; //username:password
 	QByteArray data = concatenated.toLocal8Bit().toBase64();
 	QString headerData = "Basic " + data;
-	g_NetworkRequest.setRawHeader("Authorization", headerData.toLocal8Bit());
-	g_NetworkRequest.setTransferTimeout(1000);
+	g_pNetworkRequest->setRawHeader("Authorization", headerData.toLocal8Bit());
+	g_pNetworkRequest->setTransferTimeout(1000);
 
 	int cur_video_pos = 0, prev_video_pos = 0, video_pos = 0, dt;
 	__int64 vlc_sys_time = -1;
@@ -6594,7 +6947,7 @@ void test_vlc()
 	while (1)
 	{
 		prev_video_pos = cur_video_pos;
-		make_vlc_status_request(g_pNetworkAccessManager, g_NetworkRequest, is_video_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
+		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
 		get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_rate, cur_time, cur_video_pos);
 		if (cur_video_filename != prev_video_filename)
 		{
@@ -6610,6 +6963,11 @@ void test_vlc()
 	}
 
 	show_msg(QString("test_vlc ended"));
+
+	g_pNetworkAccessManager->deleteLater();
+	g_pNetworkAccessManager = NULL;
+	delete g_pNetworkRequest;
+	g_pNetworkRequest = NULL;
 }
 
 int main(int argc, char *argv[])
