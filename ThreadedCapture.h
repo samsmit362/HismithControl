@@ -23,6 +23,7 @@ private:
 
     cv::VideoCapture* p_cap{ NULL};
     cv::Mat latest_frame;
+    LARGE_INTEGER m_frame_read_time;
     __int64 msec_pos_latest_frame;
     bool has_new_frame{ false };
 
@@ -37,5 +38,5 @@ public:
 
     void start(cv::VideoCapture* p_capture);
     void stop();
-    bool wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& msec_pos_output_frame);
+    bool wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& msec_pos_output_frame, LARGE_INTEGER& frame_read_time);
 };

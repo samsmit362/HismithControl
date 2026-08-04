@@ -3,6 +3,7 @@
 #include "./ui_mainwindow.h"
 #include "ThreadedCapture.h"
 #include "FastLatencyWindow.h"
+#include "HereSphereSync.h"
 #include <gdiplus.h>
 #include <sys/timeb.h>
 #include <eh.h> // required for _set_se_translator
@@ -19,7 +20,7 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "10.00";
+QString g_cur_version = "11.00";
 
 //---------------------------------------------------------------
 
@@ -77,6 +78,9 @@ bool g_is_video_player_time_in_milliseconds = false;
 QString g_rvp_url;
 int g_rvp_port;
 
+QString g_HereSphere_ip_address;
+int g_HereSphere_port;
+
 QString g_hotkey_stop;
 QString g_hotkey_pause;
 QString g_hotkey_resume;
@@ -94,6 +98,7 @@ DeviceClass* g_pMyDevice = NULL;
 
 QNetworkAccessManager* g_pNetworkAccessManager = NULL;
 QNetworkRequest* g_pNetworkRequest = NULL;
+HereSphereSync* g_pHereSphereSync = NULL;
 
 bool g_stop_run = false;
 bool g_pause = false;
@@ -135,10 +140,12 @@ int g_hismith_speed_for_set_initial_pos = 5;
 const int g_min_search_pos_dif = -10;
 const int g_max_search_pos_dif = 70;
 
+LARGE_INTEGER g_frequency;
+
 //---------------------------------------------------------------
 
 HighPrecisionTimerGuard g_high_precision_timer_guard;
-__int64 g_delta_cur_vs_video_time = -1;
+__int64 g_delta_frame_read_time_vs_video_time = -1;
 
 //---------------------------------------------------------------
 
@@ -198,29 +205,76 @@ QString get_cur_time_str()
 	return time_str;
 }
 
+void get_delta_frame_read_time_vs_video_time(__int64 camera_msec, LARGE_INTEGER frame_read_time) {
+	static std::vector<__int64> ring_buffer;
+	static size_t write_index = 0;
+	static size_t current_size = 0;
+	static DWORD allocated_fps = 0;
+
+	if (allocated_fps != g_webcam_fps && g_webcam_fps > 0) {
+		ring_buffer.resize(g_webcam_fps);
+		write_index = 0;
+		current_size = 0;
+		allocated_fps = g_webcam_fps;
+	}
+
+	if (allocated_fps == 0) return;
+
+	__int64 frame_read_time_msec = (frame_read_time.QuadPart * 1000) / g_frequency.QuadPart;
+	__int64 current_diff = frame_read_time_msec - camera_msec;
+
+	ring_buffer[write_index] = current_diff;
+
+	write_index = (write_index + 1) % allocated_fps;
+
+	if (current_size < allocated_fps) {
+		current_size++;
+	}
+
+	__int64 min_val = ring_buffer[0];
+	for (size_t i = 1; i < current_size; ++i) {
+		if (ring_buffer[i] < min_val) {
+			min_val = ring_buffer[i];
+		}
+	}
+
+	g_delta_frame_read_time_vs_video_time = min_val;
+}
+
+
 void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame, __int64& msec_frame_cur_pos)
 {
 	static __int64 msec_frame_prev_pos = -1;
+	static LARGE_INTEGER frame_read_cur_time;
+	static bool res = false;
 
 	if (g_threaded_capture.is_running)
 	{
-		g_threaded_capture.wait_and_get_fresh_frame(frame, msec_frame_cur_pos);
+		res = g_threaded_capture.wait_and_get_fresh_frame(frame, msec_frame_cur_pos, frame_read_cur_time);
 	}
 	else
 	{
 		do
 		{
+			res = false;
 			if (!capture.read(frame))
 			{
 				error_msg(QString("ERROR: capture.read(frame) failed"));
 				break;
 			}
+			QueryPerformanceCounter(&frame_read_cur_time);
 			msec_frame_cur_pos = capture.get(cv::CAP_PROP_POS_MSEC);
+			res = true;
 		} while ((msec_frame_cur_pos == msec_frame_prev_pos) &&
 			!g_stop_run &&
 			!g_pause &&
 			!g_was_change_in_use_modify_funscript_functions);
 		msec_frame_prev_pos = msec_frame_cur_pos;
+	}
+
+	if (res)
+	{
+		get_delta_frame_read_time_vs_video_time(msec_frame_cur_pos, frame_read_cur_time);
 	}
 }
 
@@ -1316,11 +1370,13 @@ void ThreadedCapture::capture_loop() {
 	cv::Mat local_frame;
 	__int64 msec_frame_prev_pos = -1;
 	__int64 msec_frame_cur_pos;
+	LARGE_INTEGER frame_read_time;
 
 	while (is_running)
 	{
 		if (p_cap->read(local_frame) && !g_stop_run)
 		{
+			QueryPerformanceCounter(&frame_read_time);
 			msec_frame_cur_pos = p_cap->get(cv::CAP_PROP_POS_MSEC);
 
 			if (msec_frame_cur_pos != msec_frame_prev_pos && !local_frame.empty())
@@ -1330,6 +1386,7 @@ void ThreadedCapture::capture_loop() {
 				{
 					std::lock_guard<std::mutex> lock(cap_mutex);
 					local_frame.copyTo(latest_frame);
+					m_frame_read_time = frame_read_time;
 					msec_pos_latest_frame = msec_frame_cur_pos;
 					has_new_frame = true;
 					cvar.notify_one();
@@ -1348,7 +1405,7 @@ void ThreadedCapture::capture_loop() {
 	}
 }
 
-bool ThreadedCapture::wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& msec_pos_output_frame) {
+bool ThreadedCapture::wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& msec_pos_output_frame, LARGE_INTEGER& frame_read_time) {
 	if (!is_running) return false;
 
 	std::unique_lock<std::mutex> lock(cap_mutex);
@@ -1358,6 +1415,7 @@ bool ThreadedCapture::wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& m
 	if (!is_running) return false;
 
 	latest_frame.copyTo(output_frame);
+	frame_read_time = m_frame_read_time;
 	msec_pos_output_frame = msec_pos_latest_frame;
 	has_new_frame = false;
 
@@ -1571,33 +1629,17 @@ bool init_camera(cv::VideoCapture &capture)
 		cv::Mat frame;
 		__int64 msec_video_cur_pos;
 
-		LARGE_INTEGER cur_time, frequency;
-		__int64 pc_current_time_ms;
-		QueryPerformanceFrequency(&frequency);
+		LARGE_INTEGER cur_time;
+		QueryPerformanceFrequency(&g_frequency);
 		bool delta_cur_vs_video_time_was_init = false;
-		g_delta_cur_vs_video_time = -1;
+		g_delta_frame_read_time_vs_video_time = -1;
 
 		show_msg("Geting first ~5 secons Webcam frames for get better Webcam focus and sync...\n", 5000, MessageType::Always);
 
-		// geting first 5 * g_webcam_fps (~5 seconds) frames for get better camera focus and correct g_delta_cur_vs_video_time
-		for (int i = 0; i < 4 * g_webcam_fps; i++)
+		// geting first 5 * g_webcam_fps (~5 seconds) frames for get better camera focus and correct g_delta_frame_read_time_vs_video_time
+		for (int i = 0; i < 5 * g_webcam_fps; i++)
 		{
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
-		}
-		for (int i = 0; i < g_webcam_fps; i++)
-		{
-			get_new_camera_frame(capture, frame, msec_video_cur_pos);
-			QueryPerformanceCounter(&cur_time);
-			pc_current_time_ms = (cur_time.QuadPart * (__int64)1000) / frequency.QuadPart;
-			if (delta_cur_vs_video_time_was_init)
-			{
-				g_delta_cur_vs_video_time = min(g_delta_cur_vs_video_time, pc_current_time_ms - msec_video_cur_pos);
-			}
-			else
-			{
-				g_delta_cur_vs_video_time = pc_current_time_ms - msec_video_cur_pos;
-				delta_cur_vs_video_time_was_init = true;
-			}
 		}
 
 		show_msg("", 0, MessageType::Clean);
@@ -3691,7 +3733,7 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 
 				if (key == "filepath")
 				{
-					video_filepath = value;
+					video_filepath = QDir::toNativeSeparators(value);
 					found++;
 				}
 				else if (key == "state")
@@ -3748,7 +3790,6 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 	} while (!res && !g_stop_run);
 }
 
-
 void make_rvp_command(QNetworkAccessManager* manager, VideoPlayerCommand command)
 {
 	QString ReqUrl(g_rvp_url + ":" + QString::number(g_rvp_port) + "/command.html");
@@ -3764,6 +3805,10 @@ void make_rvp_command(QNetworkAccessManager* manager, VideoPlayerCommand command
 	{
 		postData.append("wm_command=888");
 	}
+	else
+	{
+		return;
+	}
 
 	QNetworkReply* rep = manager->post(request, postData);
 	QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
@@ -3777,6 +3822,83 @@ void make_rvp_command(QNetworkAccessManager* manager, VideoPlayerCommand command
 	{
 		error_msg("ERROR: failed to make make_rvp_command");
 	}*/
+}
+
+void make_here_sphere_status_request(bool& is_paused, QString& video_filepath, int& video_pos, __int64& sys_time, double& rate)
+{
+	bool res = false;
+	bool show_warning_here_sphere_is_not_started = true;
+	bool show_warning_no_video_selected = true;
+	int dt = 0;
+	PlayerData data;
+
+	video_pos = -1;
+	sys_time = -1;
+	is_paused = true;
+	rate = 1.0;
+	video_filepath.clear();
+
+	do
+	{
+		g_pHereSphereSync->getLatestData(data);
+
+		if (!data.gotData)
+		{
+			if (show_warning_here_sphere_is_not_started && (dt >= 2000))
+			{
+				show_msg(
+					"Unable to receive information from Here Sphere for the last 2 seconds:\n"
+					"Waiting for Here Sphere to start sending data.");
+				show_warning_here_sphere_is_not_started = false;
+				show_warning_no_video_selected = true;
+			}
+		}
+		else
+		{
+			if (data.videoFilePath.size() == 0)
+			{
+				if (show_warning_no_video_selected)
+				{
+					show_msg("Video file is not selected: waiting for video file selection");
+					show_warning_no_video_selected = false;
+					show_warning_here_sphere_is_not_started = true;
+				}
+			}
+			else
+			{
+				video_filepath = QDir::toNativeSeparators(data.videoFilePath);
+				is_paused = data.isPaused;
+				rate = data.videoRate;
+
+				if (is_paused)
+				{
+					video_pos = (data.videoPos * 1000.0);
+				}
+				else
+				{
+					LARGE_INTEGER cur_time, Frequency;
+					QueryPerformanceFrequency(&Frequency);
+					QueryPerformanceCounter(&cur_time);
+					video_pos = (data.videoPos * 1000.0) + ((double)time_diff_in_milliseconds(cur_time, data.cur_time, Frequency) * rate);
+				}
+
+				res = true;
+			}
+		}
+
+		if (!res && !g_stop_run)
+		{
+			video_pos = -1;
+			is_paused = true;
+			rate = 1;
+			video_filepath.clear();
+			if (g_pMyDevice)
+				set_hismith_speed(0.0);
+
+			QThread::msleep(500);
+			dt += 500;
+		}
+	} while (!res && !g_stop_run);
 }
 
 void get_cur_video_pos(bool is_paused, int video_pos, __int64 vlc_sys_time, double rate, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
@@ -4351,6 +4473,12 @@ void init_video_player_connection()
 		g_pNetworkAccessManager = new QNetworkAccessManager();
 		g_pNetworkRequest = new QNetworkRequest();
 	}
+	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
+	{
+		g_is_video_player_time_in_milliseconds = true;
+		g_pHereSphereSync = new HereSphereSync();
+		g_pHereSphereSync->start(g_HereSphere_ip_address, g_HereSphere_port);
+	}
 }
 
 //---------------------------------------------------------------
@@ -4363,6 +4491,12 @@ void stop_video_player_connection()
 		g_pNetworkAccessManager = NULL;
 		delete g_pNetworkRequest;
 		g_pNetworkRequest = NULL;
+	}
+	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
+	{
+		g_pHereSphereSync->stop();
+		delete g_pHereSphereSync;
+		g_pHereSphereSync = NULL;
 	}
 }
 
@@ -4383,7 +4517,7 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 			vlc_command = QString("?command=pl_pause");
 		}
 
-		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filename, g_is_video_player_time_in_milliseconds, video_pos, sys_time, g_video_cur_rate, vlc_command);
+		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filename, g_is_video_player_time_in_milliseconds, video_pos, sys_time, rate, vlc_command);
 
 		if (video_filename != _tmp_video_filename)
 		{
@@ -4427,13 +4561,22 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 			video_filepath = _tmp_video_filepath;
 		}
 	}
-	else
+	else if (g_video_player_type == VideoPlayerTypes::RVP)
 	{
-		make_rvp_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filepath, video_pos, sys_time, g_video_cur_rate);
+		make_rvp_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filepath, video_pos, sys_time, rate);
 
 		if (command != VideoPlayerCommand::None)
 		{
 			make_rvp_command(g_pNetworkAccessManager, VideoPlayerCommand::Pause);
+		}
+	}
+	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
+	{
+		make_here_sphere_status_request(is_video_paused, video_filepath, video_pos, sys_time, rate);
+
+		if (command == VideoPlayerCommand::Pause)
+		{
+			g_pHereSphereSync->setPlaying(false);
 		}
 	}
 }
@@ -4986,7 +5129,7 @@ void run_funscript()
 						exp_abs_cur_pos = abs_cur_pos;
 						if (cur_speed > 0)
 						{
-							__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
+							__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_frame_read_time_vs_video_time + msec_video_cur_pos), 0);
 
 							if (webcam_time_diff > 0)
 							{
@@ -5326,7 +5469,7 @@ void run_funscript()
 			const __int64 start_time_in_ms = (start_time.QuadPart * (__int64)1000) / Frequency.QuadPart;
 
 			{
-				__int64 frame_time_in_ms = g_delta_cur_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
+				__int64 frame_time_in_ms = g_delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
 				int frame_video_pos = start_video_pos + (int)((double)(frame_time_in_ms - start_time_in_ms) * g_video_cur_rate);
 				frames_data_history.push_back({ abs_cur_pos, frame_video_pos });
 			}
@@ -5340,7 +5483,7 @@ void run_funscript()
 				exp_abs_cur_pos = abs_cur_pos;
 				if (cur_speed > 0)
 				{
-					__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
+					__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_frame_read_time_vs_video_time + msec_video_cur_pos), 0);
 
 					if (webcam_time_diff > 0)
 					{
@@ -5542,7 +5685,7 @@ void run_funscript()
 					QueryPerformanceCounter(&cur_time);
 
 					{
-						__int64 frame_time_in_ms = g_delta_cur_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
+						__int64 frame_time_in_ms = g_delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
 						int frame_video_pos = start_video_pos + (int)((double)(frame_time_in_ms - start_time_in_ms) * g_video_cur_rate);
 						frames_data_history.push_back({ abs_cur_pos, frame_video_pos });
 					}
@@ -5550,7 +5693,7 @@ void run_funscript()
 					exp_abs_cur_pos = abs_cur_pos;
 					if (cur_speed > 0)
 					{
-						__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), 0);
+						__int64 webcam_time_diff = g_webcam_end_to_end_latency + max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_frame_read_time_vs_video_time + msec_video_cur_pos), 0);
 
 						if (webcam_time_diff > 0)
 						{
@@ -5835,7 +5978,9 @@ void run_funscript()
 					else if ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000))
 					{
 						show_msg("Video time was jumped forward");
-						actions_end_with = QString("cur_video_pos (%1) > (start_video_pos + (int)(cur_time - start_time))(%2) + %3").arg(cur_video_pos).arg(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)).arg(g_is_video_player_time_in_milliseconds ? 300 : 1000);
+						actions_end_with = QString("(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) (%1)  > %2")
+							.arg(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)))
+							.arg(g_is_video_player_time_in_milliseconds ? 300 : 1000);
 					}
 					else if ((action_id > 1) && (cur_video_pos < prev_cur_video_pos - 300))
 					{
@@ -5845,7 +5990,9 @@ void run_funscript()
 					else if (prev_rate != g_video_cur_rate)
 					{
 						show_msg(QString("Video speed rate was changed to: %1").arg(g_video_cur_rate));
-						actions_end_with = QString("prev_rate != g_video_cur_rate");
+						actions_end_with = QString("prev_rate: %1 != g_video_cur_rate: %2")
+							.arg(prev_rate)
+							.arg(g_video_cur_rate);
 					}
 					else if (g_pause)
 					{
@@ -6249,7 +6396,7 @@ void get_performance_with_hismith(int hismith_speed)
 			QueryPerformanceCounter(&cur_time);
 			num_frames++;
 
-			max_webcam_time_diff = max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_cur_vs_video_time + msec_video_cur_pos), max_webcam_time_diff);
+			max_webcam_time_diff = max((cur_time.QuadPart * (__int64)1000) / Frequency.QuadPart - (g_delta_frame_read_time_vs_video_time + msec_video_cur_pos), max_webcam_time_diff);
 
 			if (msec_video_cur_pos - last_msec_video_prev_pos > max_dt_according_webcam_to_get_new_frame_and_speed)
 			{
@@ -6286,7 +6433,7 @@ void get_performance_with_hismith(int hismith_speed)
 				"avg_dt_according_webcam_for_get_new_frame_and_speed:%6\n"
 				"avg_dt_according_QueryPerformanceCounter_for_get_new_frame_and_speed:%7\n"
 				"avg_fps_for_get_new_frame_and_speed:%8\n"
-				"max_webcam_time_diff:%9")
+				"max_webcam_time_diff_from_current_time:%9 + %10 (webcam_end_to_end_latency)")
 				.arg(last_get_frame_status)
 				.arg(max_dt_according_webcam_to_get_new_frame_and_speed)
 				.arg(num_frame_video)
@@ -6296,6 +6443,7 @@ void get_performance_with_hismith(int hismith_speed)
 				.arg((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) / num_frames)
 				.arg(((double)num_frames*1000.0)/(double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)))
 				.arg(max_webcam_time_diff)
+				.arg(g_webcam_end_to_end_latency)
 				,
 				"Performance Results");
 		}
@@ -6709,12 +6857,15 @@ void SaveSettings()
 	data_list.append({ "intiface_central_client_port", QString::number(g_intiface_central_client_port) });
 	data_list.append({ "hismith_device_name", selected_device });
 
-	data_list.append({ "video_player_types/vlc/url", g_vlc_url });
-	data_list.append({ "video_player_types/vlc/port", QString::number(g_vlc_port) });
-	data_list.append({ "video_player_types/vlc/password", g_vlc_password });
+	data_list.append({ "video_player_types/VLC/url", g_vlc_url });
+	data_list.append({ "video_player_types/VLC/port", QString::number(g_vlc_port) });
+	data_list.append({ "video_player_types/VLC/password", g_vlc_password });
 
-	data_list.append({ "video_player_types/rvp/url", g_rvp_url });
-	data_list.append({ "video_player_types/rvp/port", QString::number(g_rvp_port) });
+	data_list.append({ "video_player_types/RVP/url", g_rvp_url });
+	data_list.append({ "video_player_types/RVP/port", QString::number(g_rvp_port) });
+
+	data_list.append({ "video_player_types/HereSphere/ip_address", g_HereSphere_ip_address });
+	data_list.append({ "video_player_types/HereSphere/port", QString::number(g_HereSphere_port) });
 
 	g_video_player_type = VideoPlayerTypesUtils::from_string(g_pW->ui->videoPlayerType->currentText());
 	data_list.append({ "video_player_type", VideoPlayerTypesUtils::to_string(g_video_player_type) });
@@ -6831,12 +6982,15 @@ bool LoadSettings()
 
 	g_video_player_type = VideoPlayerTypesUtils::from_string(data_map["video_player_type"]);
 
-	g_vlc_url = data_map["video_player_types/vlc/url"];
-	g_vlc_port = data_map["video_player_types/vlc/port"].toInt();
-	g_vlc_password = data_map["video_player_types/vlc/password"];
+	g_vlc_url = data_map["video_player_types/VLC/url"];
+	g_vlc_port = data_map["video_player_types/VLC/port"].toInt();
+	g_vlc_password = data_map["video_player_types/VLC/password"];
 
-	g_rvp_url = data_map["video_player_types/rvp/url"];
-	g_rvp_port = data_map["video_player_types/rvp/port"].toInt();
+	g_rvp_url = data_map["video_player_types/RVP/url"];
+	g_rvp_port = data_map["video_player_types/RVP/port"].toInt();
+
+	g_HereSphere_ip_address = data_map["video_player_types/HereSphere/ip_address"];
+	g_HereSphere_port = data_map["video_player_types/HereSphere/port"].toInt();
 
 	g_modify_funscript = (data_map["use_modify_funscript_functions"].toInt() == 0) ? false : true;
 	g_modify_funscript_function_move_variants = data_map["functions_move_variants"];

@@ -117,6 +117,7 @@ enum VideoPlayerTypes
 {
     VLC,
     RVP,
+    HereSphere,
     UNKNOWN
 };
 
@@ -137,6 +138,7 @@ public:
         {
         case VideoPlayerTypes::VLC:   return "VLC";
         case VideoPlayerTypes::RVP:   return "Random Video Player";
+        case VideoPlayerTypes::HereSphere:   return "Here Sphere";
         default:
             error_msg(QString("UNKNOWN PLAYER TYPE"));
             return "unknown";
@@ -152,6 +154,10 @@ public:
         {
             return VideoPlayerTypes::RVP;
         }
+        else if (type == VideoPlayerTypesUtils::to_string(VideoPlayerTypes::HereSphere))
+        {
+            return VideoPlayerTypes::HereSphere;
+        }
         else
         {
             error_msg(QString("ERROR: Incorrect video player type name \"%1\" in settings.xml").arg(type));
@@ -160,7 +166,10 @@ public:
     }
     static QStringList get_types_list()
     {
-        QStringList list = { VideoPlayerTypesUtils::to_string(VideoPlayerTypes::VLC), VideoPlayerTypesUtils::to_string(VideoPlayerTypes::RVP) };
+        QStringList list = {
+            VideoPlayerTypesUtils::to_string(VideoPlayerTypes::VLC),
+            VideoPlayerTypesUtils::to_string(VideoPlayerTypes::RVP),
+            VideoPlayerTypesUtils::to_string(VideoPlayerTypes::HereSphere) };
         return list;
     }
 };

@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>979</width>
-    <height>492</height>
+    <height>509</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -110,7 +110,7 @@
        <x>10</x>
        <y>30</y>
        <width>181</width>
-       <height>192</height>
+       <height>198</height>
       </rect>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
@@ -184,7 +184,7 @@
       <x>10</x>
       <y>280</y>
       <width>201</width>
-      <height>161</height>
+      <height>171</height>
      </rect>
     </property>
     <property name="title">
@@ -243,10 +243,10 @@
    <widget class="QGroupBox" name="groupBox_4">
     <property name="geometry">
      <rect>
-      <x>220</x>
+      <x>210</x>
       <y>280</y>
-      <width>251</width>
-      <height>161</height>
+      <width>261</width>
+      <height>171</height>
      </rect>
     </property>
     <property name="title">
@@ -255,7 +255,7 @@
     <widget class="QWidget" name="verticalLayoutWidget">
      <property name="geometry">
       <rect>
-       <x>0</x>
+       <x>10</x>
        <y>30</y>
        <width>241</width>
        <height>131</height>
@@ -272,7 +272,7 @@
       <item>
        <widget class="QComboBox" name="functionsMoveVariants">
         <property name="contextMenuPolicy">
-         <enum>Qt::CustomContextMenu</enum>
+         <enum>Qt::ContextMenuPolicy::CustomContextMenu</enum>
         </property>
         <property name="editable">
          <bool>true</bool>
@@ -289,7 +289,7 @@
       <item>
        <widget class="QComboBox" name="functionsMoveInOutVariants">
         <property name="contextMenuPolicy">
-         <enum>Qt::CustomContextMenu</enum>
+         <enum>Qt::ContextMenuPolicy::CustomContextMenu</enum>
         </property>
         <property name="editable">
          <bool>true</bool>
@@ -316,18 +316,18 @@
      </rect>
     </property>
     <property name="frameShape">
-     <enum>QFrame::Box</enum>
+     <enum>QFrame::Shape::NoFrame</enum>
     </property>
     <property name="frameShadow">
-     <enum>QFrame::Raised</enum>
+     <enum>QFrame::Shadow::Raised</enum>
     </property>
    </widget>
    <widget class="QGroupBox" name="groupBox_5">
     <property name="geometry">
      <rect>
-      <x>220</x>
+      <x>210</x>
       <y>10</y>
-      <width>201</width>
+      <width>221</width>
       <height>141</height>
      </rect>
     </property>
@@ -340,9 +340,9 @@
     <widget class="QPushButton" name="getStatistics">
      <property name="geometry">
       <rect>
-       <x>0</x>
+       <x>10</x>
        <y>30</y>
-       <width>181</width>
+       <width>201</width>
        <height>41</height>
       </rect>
      </property>
@@ -353,7 +353,7 @@
     <widget class="QLabel" name="label_9">
      <property name="geometry">
       <rect>
-       <x>0</x>
+       <x>20</x>
        <y>80</y>
        <width>71</width>
        <height>21</height>
@@ -363,15 +363,15 @@
       <string>Start Speed:</string>
      </property>
      <property name="alignment">
-      <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+      <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTrailing|Qt::AlignmentFlag::AlignVCenter</set>
      </property>
     </widget>
     <widget class="QLineEdit" name="startSpeed">
      <property name="geometry">
       <rect>
-       <x>80</x>
+       <x>100</x>
        <y>80</y>
-       <width>101</width>
+       <width>111</width>
        <height>24</height>
       </rect>
      </property>
@@ -382,7 +382,7 @@
     <widget class="QLabel" name="label_10">
      <property name="geometry">
       <rect>
-       <x>0</x>
+       <x>20</x>
        <y>110</y>
        <width>71</width>
        <height>21</height>
@@ -392,15 +392,15 @@
       <string>End Speed:</string>
      </property>
      <property name="alignment">
-      <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+      <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTrailing|Qt::AlignmentFlag::AlignVCenter</set>
      </property>
     </widget>
     <widget class="QLineEdit" name="endSpeed">
      <property name="geometry">
       <rect>
-       <x>80</x>
+       <x>100</x>
        <y>110</y>
-       <width>101</width>
+       <width>111</width>
        <height>24</height>
       </rect>
      </property>
@@ -425,9 +425,9 @@
    <widget class="QGroupBox" name="groupBox_6">
     <property name="geometry">
      <rect>
-      <x>220</x>
+      <x>210</x>
       <y>150</y>
-      <width>201</width>
+      <width>221</width>
       <height>131</height>
      </rect>
     </property>
@@ -437,9 +437,9 @@
     <widget class="QPushButton" name="getWebcamLatency">
      <property name="geometry">
       <rect>
-       <x>0</x>
+       <x>10</x>
        <y>50</y>
-       <width>191</width>
+       <width>201</width>
        <height>41</height>
       </rect>
      </property>
@@ -463,9 +463,9 @@
     <widget class="QComboBox" name="videoPlayerType">
      <property name="geometry">
       <rect>
-       <x>0</x>
+       <x>10</x>
        <y>30</y>
-       <width>191</width>
+       <width>171</width>
        <height>22</height>
       </rect>
      </property>
@@ -478,7 +478,7 @@
      <x>0</x>
      <y>0</y>
      <width>979</width>
-     <height>22</height>
+     <height>33</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">

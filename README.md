@@ -83,27 +83,39 @@ Than low values than more accurate and often application will can control the de
 8) **Supported video players**
 - This project now supports:
 	- **Highly recommended: VLC special build** - which provides high sync with video do to not only providing video time in milliseconds but it also provides real system time related to it and correct video playback rate, you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)
-	- Random Video Player - is also mostly accurate due to providing video time in milliseconds, but in version 1.64 it has set of issues:
-		- incorrectly reports video playback rate (always report 1 in variables.html)
-		- doesn't always provide correct play/pause state (if set to pause and change video position it can start to play video but still report by variables.html that it is on pause)
-		- doesn't provides real system time in milliseconds related to video time for make video sync more accurate
-	- Standard VLC -  you can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.
+	- Random Video Player - is also mostly accurate due to providing video time in milliseconds, but in version 1.64 it has 2 issues and 1 nice to have feature:
+		- incorrect reported video playback rate: always report 1
+		- it doesn’t always provides correct play/pause state: if set to pause and change video position it can start to play video but still report that it is on pause
+		- it doesn’t provides real system time in milliseconds related to video time for make video sync more accurate
+	- Here Sphere - VR video player
+	- Standard VLC - you can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.
 - If you will use VLC:
 	- You will need to enable HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)
 	- Don't forget to align used settings with settings.xml fields:
 	```xml
-	<vlc>
+	<VLC>
 		<url>http://127.0.0.1</url>
 		<port>8080</port>
 		<password>1234</password>
-	</vlc>
+	</VLC>
 	```
-- If you correctly configured VLC you will can check this in Firefox (in my case Chrome doesn't open it) by using:
-	- start VLC and open some video in it (you can pause video)
-	- open http://127.0.0.1:8080/requests/status.xml in Firefox or Chrome (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
+	- If you correctly configured VLC you will can check this in Firefox (in my case Chrome doesn't open it) by using:
+		- start VLC and open some video in it (you can pause video)
+		- open http://127.0.0.1:8080/requests/status.xml in Firefox or Chrome (it will should ask user and password (in my case empty username field and password: 1234), after provide it will should show VLC statistics data)
 - If you will use Random Video Player:
 	- You will need to activate 'Start timecode server' in Settings -> Sync tab
 	- start Random Video Player and open http://127.0.0.1:13579/variables.html in Firefox or Chrome, it will should show video statistic
+- If you will use Here Sphere:
+	- You will need to enable 'Timestamp Server' in 'User Settings'->'Timestamp Server':
+		- turn on 'Server Enabled'
+		- set 'Update Interval' to something like 0.1
+		- align 'IP Address' and 'Port' with fields in settings.xml:
+		```xml
+		<HereSphere>
+			<ip_address>127.0.0.1</ip_address>
+			<port>23554</port>
+		</HereSphere>
+		```
 9) So if all is done now you can simply press button "Start".\
 In this case program will be minimized to tray, but it will notify
 users about it's status by popup messages shown topmost on the middle of screen, they will not break your current mouse focus, so you can play video in fullscreen without issues with hotkeys etc.\

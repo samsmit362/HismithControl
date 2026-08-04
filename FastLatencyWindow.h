@@ -16,7 +16,7 @@
 #include <opencv2/core.hpp>
 
 extern cv::VideoCapture* g_pCapture;
-extern __int64 g_delta_cur_vs_video_time;
+extern __int64 g_delta_frame_read_time_vs_video_time;
 
 class FastLatencyWindow : public QOpenGLWidget {
     Q_OBJECT
@@ -57,6 +57,7 @@ protected:
     void paintEvent(QPaintEvent* event) override {
         Q_UNUSED(event);
         QPainter painter(this);
+        LARGE_INTEGER frame_read_time;
 
         // Enable antialiasing for font clarity
         painter.setRenderHint(QPainter::TextAntialiasing);
@@ -70,8 +71,8 @@ protected:
             else if (m_paint_cnt == m_current_hz)
             {
                 m_paint_cnt++;
-                g_threaded_capture.wait_and_get_fresh_frame(m_bgr_frame, m_msec_pos_output_frame);
-                m_frame_current_time_ms = g_delta_cur_vs_video_time + m_msec_pos_output_frame;
+                g_threaded_capture.wait_and_get_fresh_frame(m_bgr_frame, m_msec_pos_output_frame, frame_read_time);
+                m_frame_current_time_ms = g_delta_frame_read_time_vs_video_time + m_msec_pos_output_frame;
             }
 
             if (m_paint_cnt >= m_current_hz)
@@ -163,7 +164,7 @@ protected:
 
             // 5. Display the camera in the lower left corner 1/2
             if (m_show_camera && g_threaded_capture.is_running) {
-                g_threaded_capture.wait_and_get_fresh_frame(m_bgr_frame, m_msec_pos_output_frame);
+                g_threaded_capture.wait_and_get_fresh_frame(m_bgr_frame, m_msec_pos_output_frame, frame_read_time);
 
                 if (!m_bgr_frame.empty())
                 {

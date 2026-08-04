@@ -34,6 +34,8 @@ set(PROJECT_SOURCES
         mainwindow.ui
         ThreadedCapture.h
         HighPrecisionTimerGuard.h
+        HereSphereSync.cpp
+        HereSphereSync.h
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h
 		${BUTTPLUGCPP_SRC_FILES}
@@ -97,7 +99,7 @@ set_target_properties(HismithControl PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
-	VS_DEBUGGER_ENVIRONMENT "PATH=C:\\Qt\\6.2.4\\msvc2019_64\\bin;$ENV{OPENCV_BUILD_PATH_X64}\\x64\\vc16\\bin;%PATH%"
+	VS_DEBUGGER_ENVIRONMENT "PATH=C:\\Soft\\Installed\\Qt\\6.8.3\\msvc2022_64\\bin;$ENV{OPENCV_BUILD_PATH_X64}\\x64\\vc16\\bin;%PATH%"
 )
 
 add_custom_command(

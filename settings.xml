@@ -28,16 +28,20 @@
  <intiface_central_client_url>ws://127.0.0.1</intiface_central_client_url>
  <intiface_central_client_port>12345</intiface_central_client_port>
  <hismith_device_name>Hismith Sex Machine</hismith_device_name>
- <video_player_types>
-  <vlc>
+  <video_player_types>
+  <VLC>
    <url>http://127.0.0.1</url>
    <port>8080</port>
    <password>1234</password>
-  </vlc>
-  <rvp>
+  </VLC>
+  <RVP>
    <url>http://127.0.0.1</url>
    <port>13579</port>
-  </rvp>
+  </RVP>
+  <HereSphere>
+   <ip_address>127.0.0.1</ip_address>
+   <port>23554</port>
+  </HereSphere>
  </video_player_types>
  <video_player_type>VLC</video_player_type>
  <hotkey_stop>Shift+Q</hotkey_stop>
