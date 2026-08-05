@@ -20,7 +20,7 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "11.00";
+QString g_cur_version = "11.50";
 
 //---------------------------------------------------------------
 
@@ -1367,6 +1367,8 @@ void ThreadedCapture::stop() {
 }
 
 void ThreadedCapture::capture_loop() {
+	//SetThreadAffinityMask(GetCurrentThread(), 0x04);
+
 	cv::Mat local_frame;
 	__int64 msec_frame_prev_pos = -1;
 	__int64 msec_frame_cur_pos;
@@ -1385,7 +1387,7 @@ void ThreadedCapture::capture_loop() {
 
 				{
 					std::lock_guard<std::mutex> lock(cap_mutex);
-					local_frame.copyTo(latest_frame);
+					std::swap(latest_frame, local_frame);
 					m_frame_read_time = frame_read_time;
 					msec_pos_latest_frame = msec_frame_cur_pos;
 					has_new_frame = true;
@@ -1401,7 +1403,8 @@ void ThreadedCapture::capture_loop() {
 			break;
 		}
 
-		std::this_thread::yield();
+		//std::this_thread::yield();
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
 	}
 }
 
@@ -1414,7 +1417,7 @@ bool ThreadedCapture::wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& m
 
 	if (!is_running) return false;
 
-	latest_frame.copyTo(output_frame);
+	std::swap(output_frame, latest_frame);
 	frame_read_time = m_frame_read_time;
 	msec_pos_output_frame = msec_pos_latest_frame;
 	has_new_frame = false;
@@ -5136,6 +5139,14 @@ void run_funscript()
 								int exp_abs_cur_dif = ((cur_speed * (double)(webcam_time_diff)) / 1000.0);
 								exp_abs_cur_pos = abs_cur_pos + exp_abs_cur_dif;
 							}
+						}
+						else if (time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency) >= 2000)
+						{
+							show_msg("", 0, MessageType::Clean);
+							show_msg(QString("Failed to change hismith speed.\nPausing video if not and pausing hismith control."), 5000, MessageType::Always);
+							g_pause = true;
+							clear_msgs = false;
+							break;
 						}
 
 						d_cur_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;

@@ -16,10 +16,13 @@ void HereSphereSync::start(const QString& host, quint16 port) {
     m_isRunning = true;
 
     m_netThread = QThread::create([this]() {
+        //SetThreadAffinityMask(GetCurrentThread(), 0x02);
 
         m_socket = new QTcpSocket();
         m_reconnectTimer = new QTimer();
         m_reconnectTimer->setInterval(2000);
+
+        this->moveToThread(QThread::currentThread());
 
         connect(m_socket, &QTcpSocket::connected, this, &HereSphereSync::onConnected, Qt::DirectConnection);
         connect(m_socket, &QTcpSocket::disconnected, this, &HereSphereSync::onDisconnected, Qt::DirectConnection);
@@ -33,6 +36,8 @@ void HereSphereSync::start(const QString& host, quint16 port) {
         QEventLoop loop;
         connect(m_netThread, &QThread::finished, &loop, &QEventLoop::quit);
         loop.exec();
+
+        this->moveToThread(nullptr);
 
         m_reconnectTimer->stop();
         delete m_reconnectTimer;
@@ -106,6 +111,7 @@ void HereSphereSync::onErrorOccurred(QAbstractSocket::SocketError error) {
 }
 
 void HereSphereSync::onReadyRead() {
+    static PlayerData local_currentData;
     if (!m_socket) return;
 
     LARGE_INTEGER cur_time;
@@ -142,18 +148,17 @@ void HereSphereSync::onReadyRead() {
                 "resource" : "file://%file_path%"
             }*/
 
-            if (json.contains("currentTime") &&
-                json.contains("playerState") &&
-                json.contains("path") &&
-                json.contains("playbackSpeed"))
+            if (json.contains("currentTime"))   local_currentData.videoPos = json["currentTime"].toDouble();
+            if (json.contains("playerState"))   local_currentData.isPaused = (json["playerState"].toInt() == 1);
+            if (json.contains("path"))          local_currentData.videoFilePath = json["path"].toString();
+            if (json.contains("playbackSpeed")) local_currentData.videoRate = json["playbackSpeed"].toDouble();
+
+            local_currentData.cur_time = cur_time;
+            local_currentData.gotData = true;
+
             {
                 QMutexLocker locker(&m_mutex);
-                m_currentData.videoPos = json["currentTime"].toDouble();
-                m_currentData.isPaused = (json["playerState"].toInt() == 1);
-                m_currentData.videoFilePath = json["path"].toString();
-                m_currentData.videoRate = json["playbackSpeed"].toDouble();
-                m_currentData.cur_time = cur_time;
-                m_currentData.gotData = true;
+                m_currentData = local_currentData;
             }
         }
     }
