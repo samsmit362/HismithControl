@@ -345,6 +345,7 @@ private slots:
 
 protected:
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result);
+    void closeEvent(QCloseEvent* event) override;
 
 public:
     QString funscript;

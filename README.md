@@ -82,13 +82,10 @@ In this case it will automatically run Hismith in range: "Start Speed"-"End Spee
 Than low values than more accurate and often application will can control the device.
 8) **Supported video players**
 - This project now supports:
-	- **Highly recommended: VLC special build** - which provides high sync with video do to not only providing video time in milliseconds but it also provides real system time related to it and correct video playback rate, you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)
-	- Random Video Player - is also mostly accurate due to providing video time in milliseconds, but in version 1.64 it has 2 issues and 1 nice to have feature:
-		- incorrect reported video playback rate: always report 1
-		- it doesn’t always provides correct play/pause state: if set to pause and change video position it can start to play video but still report that it is on pause
-		- it doesn’t provides real system time in milliseconds related to video time for make video sync more accurate
-	- Here Sphere - VR video player
-	- Standard VLC - you can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.
+	- VLC special build - provides highest accurate sync with video in ms, you can find it in the latest artifacts in [3rdParty VLC fork project](https://code.videolan.org/skosnits/vlc-extended-playlist-support/-/releases)
+	- Random Video Player - also provides good accurate sync with video in ms
+	- Here Sphere - VR video player, provides sync with video in ms but without sync by system time in ms
+	- [not recommended] Standard VLC - you can also try to use standard VLC but be aware that re-synchronization of Hismith moves and video timeline can be ~500-1000 milliseconds and there isn't any guaranty that it will work correctly.
 - If you will use VLC:
 	- You will need to enable HTTP request supports in VLC according instruction from: [Play funscripts using VLC and MultiFunPlayer](https://osr.wiki/books/funscript-playback/page/play-funscripts-using-vlc-and-multifunplayer)
 	- Don't forget to align used settings with settings.xml fields:
@@ -155,7 +152,7 @@ Sometimes it start too quick during video navigation, especially if you moved to
 \
 **Look to important notes in "Known issues" topic before start to use.**\
 \
-**For get max good expirience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
+**For get max good experience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
 
 ## Min Funscript Relative Move
@@ -224,7 +221,7 @@ additional detail points will be added from move variant with id == 1 (according
 additional detail points will be added from move variant with id == 2 (according pair: 1/2).
 
 ## Video Speed Rate Changes
-From v5.0 this program also supports video speed rate changes, so you can assign hotkeys for slow down or increase video speed in VLC, and this application will automatically detect it in real time.
+This program also supports video speed rate changes, so you can assign hotkeys for slow down or increase video speed in video player, and this application will automatically detect it in real time.
 
 ## Known issues
 **Sometimes "Intiface Central" lost Hismith device, in such case device continue to run on last set speed, in such case be ready to stop it moves by using its original wired controller.**\

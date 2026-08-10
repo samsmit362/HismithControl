@@ -682,3 +682,8 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 
     return(false);
 }
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    cv::destroyAllWindows();
+    event->accept();
+}

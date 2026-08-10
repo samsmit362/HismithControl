@@ -20,7 +20,7 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 
 //---------------------------------------------------------------
 
-QString g_cur_version = "11.50";
+QString g_cur_version = "12.00";
 
 //---------------------------------------------------------------
 
@@ -1228,7 +1228,7 @@ void test_err_frame(QString fpath)
 		int key = cv::waitKey(0);
 
 		if ((key == 27 /* Esc key */) ||
-			((key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0)))
+			(cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0))
 		{
 			break;
 		}
@@ -1868,7 +1868,7 @@ void test_camera()
 			int key = cv::waitKey(1);
 
 			if ((key == 27 /* Esc key */) ||
-				((key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0)))
+				(cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0))
 			{
 				break;
 			}
@@ -3699,7 +3699,10 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 			{
 				if (show_warning_rvp_is_not_started)
 				{
-					show_msg("Can't get info from RVP: waiting for RVP is started or respond");
+					show_msg("", 0, MessageType::Clean);
+					show_msg(
+						"Can't get info from RVP:\n"
+						"Waiting for RVP is started or 'Start timecode server' is activated in Settings", 10000);
 					show_warning_rvp_is_not_started = false;
 					show_warning_no_video_selected = true;
 				}
@@ -3723,6 +3726,7 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 		   <p id="duration">%number%</p>
 		   <p id="volumelevel">5</p>
 		   <p id="playbackrate">1</p>
+		   <p id="sys_time_in_ms">1786268575722</p>
 		   */
 
 			QRegularExpression regex(R"(<p\s+id=\"([^\">]+)\">([\s\S]*?)<\/p>)", QRegularExpression::DotMatchesEverythingOption);
@@ -3757,6 +3761,10 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 				{
 					rate = value.toDouble();
 					found++;
+				}
+				else if (key == "sys_time_in_ms")
+				{
+					sys_time = value.toLongLong();
 				}
 			}
 
@@ -3904,17 +3912,23 @@ void make_here_sphere_status_request(bool& is_paused, QString& video_filepath, i
 	} while (!res && !g_stop_run);
 }
 
-void get_cur_video_pos(bool is_paused, int video_pos, __int64 vlc_sys_time, double rate, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
+void get_cur_video_pos(bool is_paused, int video_pos, __int64 video_player_sys_time, double rate, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
 {
-	if ((vlc_sys_time > 0) && !is_paused)
+	if ((video_player_sys_time > 0) && !is_paused)
 	{
 		struct _timeb timebuffer;
 		_ftime(&timebuffer);
 		QueryPerformanceCounter(&cur_time);
 		__int64 cur_sys_time = (((__int64)timebuffer.time) * 1000) + timebuffer.millitm;
-		__int64 d_time = cur_sys_time - vlc_sys_time;
+		__int64 d_time = cur_sys_time - video_player_sys_time;
 
-		if ((d_time < 0) || (d_time > 2000))
+		if (d_time < 0)
+		{
+			error_msg(QString("ERROR: video_player_sys_time (%1) > cur_sys_time (%2)")
+				.arg(video_player_sys_time)
+				.arg(cur_sys_time));
+		}
+		else if (d_time > 2000)
 		{
 			g_video_freezed = true;
 			if (show_waring)
@@ -4453,6 +4467,24 @@ void trans_func(unsigned int u, _EXCEPTION_POINTERS* pExp)
 
 //---------------------------------------------------------------
 
+class ExceptionTraceManager {
+public:
+	// Thread-safe storage for the last C++ Exception trace
+	static inline thread_local std::string last_cpp_trace = "No trace captured";
+
+	// VEH handler
+	static LONG NTAPI VehHandler(PEXCEPTION_POINTERS exceptionInfo) {
+		// Code 0xE06D7363 is the magic code for all C++ Exceptions in MSVC
+		if (exceptionInfo->ExceptionRecord->ExceptionCode == 0xE06D7363) {
+			// Save the stack immediately upon throw
+			last_cpp_trace = std::to_string(std::stacktrace::current());
+		}
+		return EXCEPTION_CONTINUE_SEARCH; // Pass the exception further into the try-catch
+	}
+};
+
+//---------------------------------------------------------------
+
 void init_video_player_connection()
 {
 	g_video_player_type = VideoPlayerTypesUtils::from_string(g_pW->ui->videoPlayerType->currentText());
@@ -4582,6 +4614,14 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 			g_pHereSphereSync->setPlaying(false);
 		}
 	}
+
+	if (video_filepath.size() > 0 && rate <= 0)
+	{
+		error_msg(QString("ERROR: playbackrate (%1) <= 0 according %2")
+			.arg(rate)
+			.arg(VideoPlayerTypesUtils::to_string(g_video_player_type)));
+	}
+
 }
 
 //---------------------------------------------------------------
@@ -4736,6 +4776,7 @@ void run_funscript()
 	bool clear_msgs = true;
 
 	_set_se_translator(trans_func);
+	PVOID vehHandle = AddVectoredExceptionHandler(1, ExceptionTraceManager::VehHandler);
 
 	try
 	{
@@ -5052,9 +5093,9 @@ void run_funscript()
 				int video_pos;
 			};
 
-			uint64_t pool_size_bytes = static_cast<uint64_t>(g_webcam_fps *
+			uint64_t pool_size_bytes = min(static_cast<uint64_t>(g_webcam_fps *
 				((double)(funscript_data_maped[actions_size - 1].first - cur_video_pos) / (g_video_cur_rate * 1000.0)) *
-				(double)sizeof(FrameData) * 1.2);
+				(double)sizeof(FrameData) * 1.2), 1ULL << 30); // no more than 1 Gbyte
 			auto* mem_pool = new std::pmr::monotonic_buffer_resource(pool_size_bytes);
 			std::pmr::deque<FrameData> frames_data_history(mem_pool);
 
@@ -6176,11 +6217,18 @@ void run_funscript()
 		error_msg(QString("Caught %1").arg(e.toQString()));
 	}
 	catch (const std::exception& e) {
-		error_msg(QString("Caught C++ Exception: %1").arg(e.what()));
+		// Get the stack trace saved from VEH for the current thread
+		QString trace = QString::fromStdString(ExceptionTraceManager::last_cpp_trace);
+
+		error_msg(QString("Caught C++ Exception: %1\nStack Trace:\n%2")
+			.arg(e.what())
+			.arg(trace));
 	}
 	catch (...) {
 		error_msg(QString("Caught Unknown Exception"));
 	}
+
+	RemoveVectoredExceptionHandler(vehHandle);
 
 	if (p_save_results)
 	{
@@ -6731,7 +6779,7 @@ void test_hismith(int hismith_speed)
 			int key = cv::waitKey(1);
 
 			if ( (key == 27 /* Esc key */) ||
-				( (key == -1) && (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0) ) )
+				(cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0) )
 			{
 				save_BGR_image(frame, g_root_dir + "\\res_data\\orig.bmp");
 				save_BGR_image(res_frame, g_root_dir + "\\res_data\\res.bmp");
