@@ -2,6 +2,7 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
 #include "ThreadedCapture.h"
+#include "ThreadedPlayerStatus.h"
 #include "FastLatencyWindow.h"
 #include "HereSphereSync.h"
 #include <gdiplus.h>
@@ -37,7 +38,6 @@ int g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes;
 int g_min_dt_start_for_speed_40;
 int g_cpu_freezes_timeout;
 
-double g_video_cur_rate = 1.0;
 int g_actual_video_pos = 0;
 int g_video_cur_actions_end_time = 0;
 int g_video_cur_actions_start_pos = 0;
@@ -102,8 +102,8 @@ HereSphereSync* g_pHereSphereSync = NULL;
 
 bool g_stop_run = false;
 bool g_pause = false;
-bool g_update = false;
-bool g_msg_created = false;
+std::atomic<bool> g_update{ false };
+std::atomic<bool> g_msg_created{ false };
 bool g_was_change_in_use_modify_funscript_functions = false;
 bool g_video_freezed = false;
 
@@ -150,6 +150,8 @@ __int64 g_delta_frame_read_time_vs_video_time = -1;
 //---------------------------------------------------------------
 
 ThreadedCapture g_threaded_capture;
+ThreadedPlayerStatus g_threaded_player_status;
+VideoPlayerStatus g_video_player_status;
 
 //---------------------------------------------------------------
 
@@ -3912,20 +3914,20 @@ void make_here_sphere_status_request(bool& is_paused, QString& video_filepath, i
 	} while (!res && !g_stop_run);
 }
 
-void get_cur_video_pos(bool is_paused, int video_pos, __int64 video_player_sys_time, double rate, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
+void get_cur_video_pos(const VideoPlayerStatus& st, LARGE_INTEGER &cur_time, int &cur_video_pos, bool show_waring = true)
 {
-	if ((video_player_sys_time > 0) && !is_paused)
+	if ((st.sys_time > 0) && !st.is_paused)
 	{
 		struct _timeb timebuffer;
 		_ftime(&timebuffer);
 		QueryPerformanceCounter(&cur_time);
 		__int64 cur_sys_time = (((__int64)timebuffer.time) * 1000) + timebuffer.millitm;
-		__int64 d_time = cur_sys_time - video_player_sys_time;
+		__int64 d_time = cur_sys_time - st.sys_time;
 
 		if (d_time < 0)
 		{
 			error_msg(QString("ERROR: video_player_sys_time (%1) > cur_sys_time (%2)")
-				.arg(video_player_sys_time)
+				.arg(st.sys_time)
 				.arg(cur_sys_time));
 		}
 		else if (d_time > 2000)
@@ -3941,11 +3943,11 @@ void get_cur_video_pos(bool is_paused, int video_pos, __int64 video_player_sys_t
 			g_video_freezed = false;
 		}
 
-		cur_video_pos = video_pos + (int)((double)d_time * rate);
+		cur_video_pos = st.video_pos + (int)((double)d_time * st.rate);
 	}
 	else
 	{
-		cur_video_pos = video_pos;
+		cur_video_pos = st.video_pos;
 		QueryPerformanceCounter(&cur_time);
 	}
 }
@@ -4317,7 +4319,7 @@ void show_msg(QString msg, int timeout, MessageType msg_type, bool drow_modify_f
 			}
 			});
 
-		_tmp_create_msg_cvar.wait(lk, [] { return g_msg_created; });
+		_tmp_create_msg_cvar.wait(lk, [] { return g_msg_created.load(); });
 		int j = 5;
 	}
 }
@@ -4340,7 +4342,7 @@ void save_results_file_data(QString results_file_path, QString results_file_data
 
 QString get_time_to_cur_actions_end()
 {
-	int dt = (double)(g_video_cur_actions_end_time - g_actual_video_pos) / g_video_cur_rate;
+	int dt = (double)(g_video_cur_actions_end_time - g_actual_video_pos) / g_video_player_status.rate;
 	int min, sec;
 	sec = (int)(dt / 1000);
 	min = sec / 60;
@@ -4377,7 +4379,7 @@ QString get_add_msg_data()
         )
         .arg(time_str)
         .arg(get_time_to_cur_actions_end())
-        .arg(g_video_cur_rate)
+        .arg(g_video_player_status.rate)
 		.arg(g_runing_funscript ? QString("") : QString("\nDiff start hismith pos: %1").arg(g_d_from_search_start_pos))
 		;
     if (g_modify_funscript)
@@ -4537,8 +4539,10 @@ void stop_video_player_connection()
 
 //---------------------------------------------------------------
 
-void make_video_player_status(bool& is_video_paused, QString& video_filepath, int& video_pos, __int64& sys_time, double& rate, VideoPlayerCommand command = VideoPlayerCommand::None)
+VideoPlayerStatus make_video_player_status(VideoPlayerCommand command = VideoPlayerCommand::None)
 {
+	VideoPlayerStatus result;
+
 	if (g_video_player_type == VideoPlayerTypes::VLC)
 	{
 		static QString _tmp_video_filename;
@@ -4552,7 +4556,8 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 			vlc_command = QString("?command=pl_pause");
 		}
 
-		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filename, g_is_video_player_time_in_milliseconds, video_pos, sys_time, rate, vlc_command);
+		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, result.is_paused, video_filename, g_is_video_player_time_in_milliseconds, result.video_pos, result.sys_time, result.rate, vlc_command);
+		result.video_filepath = video_filename;
 
 		if (video_filename != _tmp_video_filename)
 		{
@@ -4589,16 +4594,16 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 				error_msg(QString("ERROR: Failed to get full video file path for video with name: %1").arg(video_filename));
 			}
 
-			video_filepath = _tmp_video_filepath;
+			result.video_filepath = _tmp_video_filepath;
 		}
 		else
 		{
-			video_filepath = _tmp_video_filepath;
+			result.video_filepath = _tmp_video_filepath;
 		}
 	}
 	else if (g_video_player_type == VideoPlayerTypes::RVP)
 	{
-		make_rvp_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, video_filepath, video_pos, sys_time, rate);
+		make_rvp_status_request(g_pNetworkAccessManager, g_pNetworkRequest, result.is_paused, result.video_filepath, result.video_pos, result.sys_time, result.rate);
 
 		if (command != VideoPlayerCommand::None)
 		{
@@ -4607,7 +4612,7 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 	}
 	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
 	{
-		make_here_sphere_status_request(is_video_paused, video_filepath, video_pos, sys_time, rate);
+		make_here_sphere_status_request(result.is_paused, result.video_filepath, result.video_pos, result.sys_time, result.rate);
 
 		if (command == VideoPlayerCommand::Pause)
 		{
@@ -4615,13 +4620,130 @@ void make_video_player_status(bool& is_video_paused, QString& video_filepath, in
 		}
 	}
 
-	if (video_filepath.size() > 0 && rate <= 0)
+	if (result.video_filepath.size() > 0 && result.rate <= 0)
 	{
 		error_msg(QString("ERROR: playbackrate (%1) <= 0 according %2")
-			.arg(rate)
+			.arg(result.rate)
 			.arg(VideoPlayerTypesUtils::to_string(g_video_player_type)));
 	}
 
+	result.is_valid = true;
+	return result;
+}
+
+//---------------------------------------------------------------
+
+void ThreadedPlayerStatus::start(VideoPlayerStatus& initial_state, unsigned int poll_interval_ms)
+{
+	stop();
+
+	if (poll_interval_ms > 0)
+	{
+		m_poll_interval_ms = poll_interval_ms;
+	}
+
+	if (initial_state.is_valid)
+	{
+		m_cached_state = initial_state;
+	}
+	else
+	{
+		try
+		{
+			m_cached_state = make_video_player_status();
+			QueryPerformanceCounter(&m_cached_state.poll_time);
+			initial_state = m_cached_state;
+		}
+		catch (...)
+		{
+			m_cached_state = VideoPlayerStatus();
+			QueryPerformanceCounter(&m_cached_state.poll_time);
+			initial_state = m_cached_state;
+		}
+	}
+
+	m_stop_requested = false;
+	m_is_running = true;
+	m_worker_thread = std::thread(&ThreadedPlayerStatus::status_loop, this);
+}
+
+void ThreadedPlayerStatus::stop()
+{
+	if (m_is_running)
+	{
+		{
+			std::lock_guard<std::mutex> lk(m_stop_mutex);
+			m_stop_requested = true;
+		}
+		m_stop_cv.notify_all();
+		m_is_running = false;
+
+		if (m_worker_thread.joinable())
+		{
+			m_worker_thread.join();
+		}
+	}
+}
+
+VideoPlayerStatus ThreadedPlayerStatus::make_video_player_status(VideoPlayerCommand command)
+{
+	VideoPlayerStatus state;
+
+	try
+	{
+		std::lock_guard<std::mutex> lk(m_make_mutex);
+		state = make_video_player_status(command);
+		QueryPerformanceCounter(&state.poll_time);
+	}
+	catch (...)
+	{
+		state = VideoPlayerStatus();
+		QueryPerformanceCounter(&state.poll_time);
+	}
+
+	{
+		std::lock_guard<std::mutex> lk(m_state_mutex);
+		m_cached_state = state;
+		return m_cached_state;
+	}
+}
+
+VideoPlayerStatus ThreadedPlayerStatus::getLatestState() const
+{
+	std::lock_guard<std::mutex> lk(m_state_mutex);
+	return m_cached_state;
+}
+
+void ThreadedPlayerStatus::status_loop()
+{
+	while (!m_stop_requested)
+	{
+		VideoPlayerStatus state;
+
+		try
+		{
+			std::lock_guard<std::mutex> lk(m_make_mutex);
+			state = make_video_player_status();
+			QueryPerformanceCounter(&state.poll_time);
+		}
+		catch (...)
+		{
+			state = VideoPlayerStatus();
+			QueryPerformanceCounter(&state.poll_time);
+		}
+
+		{
+			std::lock_guard<std::mutex> lk(m_state_mutex);
+			m_cached_state = state;
+		}
+
+		{
+			std::unique_lock<std::mutex> lock(m_stop_mutex);
+			m_stop_cv.wait_for(lock, std::chrono::milliseconds(m_poll_interval_ms), [this] {
+				return m_stop_requested.load();
+			});
+		}
+	}
 }
 
 //---------------------------------------------------------------
@@ -4630,7 +4752,7 @@ void run_funscript()
 {
 	g_results_file_path = g_root_dir + "\\res_data\\!results_" + get_cur_time_str() + ".txt";
 	g_results_file_data.clear();
-	QString funscript_fname, last_load_funscript_fname, last_load_funscript_video_filename;
+	QString funscript_fname, last_load_funscript_fname, last_load_funscript_video_filepath;
 	int d_cur_from_search_start_pos, d_exp_from_search_start_pos, cur_pos, search_start_pos;
 	__int64 msec_video_cur_pos, msec_video_prev_pos;
 	double dt = 0, dmove = 0;
@@ -4638,12 +4760,10 @@ void run_funscript()
 	int exp_abs_cur_pos = 0;
 	int dpos;
 	double cur_speed, prev_cur_speed = 0, action_start_speed;
-	int start_video_pos, video_pos, cur_video_pos = 0;
+	int start_video_pos, cur_video_pos = 0;
 
-	__int64 video_player_sys_time = -1;
 	double prev_rate = 1;
-	bool is_video_paused = false;
-	QString video_filename, last_play_video_filename;
+	QString last_play_video_filepath;
 	std::vector<QPair<int, int>> funscript_data_maped_full;
 	bool get_res = true;
 	double cur_set_hismith_speed = 0;
@@ -4652,6 +4772,7 @@ void run_funscript()
 	std::thread* p_save_results = NULL;
 
 	LARGE_INTEGER start_time, cur_time, prev_time, set_hismith_speed_time, prev_set_hismith_speed_time, Frequency;
+	LARGE_INTEGER prev_vp_st_poll_time;
 	QueryPerformanceFrequency(&Frequency);
 
 	//-----------------------------------------------------
@@ -4721,10 +4842,10 @@ void run_funscript()
 	// Connecting to video player with already opened video
 
 	init_video_player_connection();
-	make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-	get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+	g_video_player_status = g_threaded_player_status.make_video_player_status();
+	get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos, false);
 	g_actual_video_pos = cur_video_pos;
-	prev_rate = g_video_cur_rate;
+	prev_rate = g_video_player_status.rate;
 
 	g_results_file_data += QString(
 		"video_player_type:%1\n"
@@ -4732,7 +4853,7 @@ void run_funscript()
 		"video_player_sys_time:%3\n")
 		.arg(VideoPlayerTypesUtils::to_string(g_video_player_type))
 		.arg(g_is_video_player_time_in_milliseconds)
-		.arg(video_player_sys_time);
+		.arg(g_video_player_status.sys_time);
 
 	//-----------------------------------------------------
 
@@ -4817,13 +4938,13 @@ void run_funscript()
 			{
 				do
 				{
-					std::this_thread::sleep_for(std::chrono::milliseconds(300));
-					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos, false);
 					g_actual_video_pos = cur_video_pos;
-					if (prev_rate != g_video_cur_rate)
+					if (prev_rate != g_video_player_status.rate)
 					{
-						prev_rate = g_video_cur_rate;
+						prev_rate = g_video_player_status.rate;
 						g_update = true;
 					}
 				} while (!g_stop_run && g_pause && !g_update);
@@ -4837,16 +4958,15 @@ void run_funscript()
 				do
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos, false);
 					g_actual_video_pos = cur_video_pos;
 				} while (g_video_freezed && !g_stop_run && !g_pause);
 			}
 			else
 			{
-				g_video_freezed = false;
-				make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-				get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+				g_video_player_status = g_threaded_player_status.make_video_player_status();
+				get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 				g_actual_video_pos = cur_video_pos;
 
 				if (g_video_freezed)
@@ -4854,22 +4974,22 @@ void run_funscript()
 					do
 					{
 						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-						get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos, false);
+						g_video_player_status = g_threaded_player_status.make_video_player_status();
+						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos, false);
 						g_actual_video_pos = cur_video_pos;
 					} while (g_video_freezed && !g_stop_run && !g_pause);
 				}
 			}
-			last_play_video_filename = video_filename;
+			last_play_video_filepath = g_video_player_status.video_filepath;
 
 			if (g_stop_run || (g_pause && !g_update))
 			{
 				continue;
 			}
 
-			if (last_load_funscript_video_filename != last_play_video_filename)
+			if (last_load_funscript_video_filepath != last_play_video_filepath)
 			{
-				QFileInfo info(last_play_video_filename);
+				QFileInfo info(last_play_video_filepath);
 				funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
 
 				if (!((funscript_fname.size() > 0) && QFile::exists(funscript_fname)))
@@ -4882,10 +5002,10 @@ void run_funscript()
 					do
 					{
 						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-						get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+						g_video_player_status = g_threaded_player_status.make_video_player_status();
+						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 						g_actual_video_pos = cur_video_pos;
-					} while (last_play_video_filename == video_filename && !g_stop_run);
+					} while (last_play_video_filepath == g_video_player_status.video_filepath && !g_stop_run);
 					continue;
 				}
 			}
@@ -4901,7 +5021,7 @@ void run_funscript()
 			if ( (last_load_funscript_fname != funscript_fname) || g_was_change_in_use_modify_funscript_functions )
 			{
 				last_load_funscript_fname = funscript_fname;
-				last_load_funscript_video_filename = last_play_video_filename;
+				last_load_funscript_video_filepath = last_play_video_filepath;
 				funscript_data_maped_full.clear();
 
 				g_change_in_use_modify_funscript_functions_mutex.lock();
@@ -4914,10 +5034,10 @@ void run_funscript()
 					do
 					{
 						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-						get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+						g_video_player_status = g_threaded_player_status.make_video_player_status();
+						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 						g_actual_video_pos = cur_video_pos;
-					} while (last_play_video_filename == video_filename && !g_stop_run);
+					} while (last_play_video_filepath == g_video_player_status.video_filepath && !g_stop_run);
 					continue;
 				}
 			}
@@ -4931,11 +5051,11 @@ void run_funscript()
 			int search_video_pos;
 			QString start_info;
 
-			make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-			get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+			g_video_player_status = g_threaded_player_status.make_video_player_status();
+			get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 			g_actual_video_pos = cur_video_pos;
 			search_video_pos = cur_video_pos;
-			prev_rate = g_video_cur_rate;
+			prev_rate = g_video_player_status.rate;
 
 			for (int i = 0; i < funscript_data_maped_full.size(); i++)
 			{
@@ -4989,17 +5109,17 @@ void run_funscript()
 				do
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
-				} while ((last_play_video_filename == video_filename) && (cur_video_pos >= search_video_pos) && (cur_video_pos <= search_video_pos + 1000) && !g_stop_run);
+				} while ((last_play_video_filepath == g_video_player_status.video_filepath) && (cur_video_pos >= search_video_pos) && (cur_video_pos <= search_video_pos + 1000) && !g_stop_run);
 				continue;
 			}
 			else
 			{
-				if ((int)((double)(funscript_data_maped[0].first - search_video_pos) / g_video_cur_rate) > 10000)
+				if ((int)((double)(funscript_data_maped[0].first - search_video_pos) / g_video_player_status.rate) > 10000)
 				{
-					show_msg(QString("The first funscript video action will be afte %1 seconds at pos: %2").arg((int)((double)(funscript_data_maped[0].first - search_video_pos)/(g_video_cur_rate*1000.0))).arg(VideoTimeToStr(funscript_data_maped[0].first).c_str()), 5000, MessageType::Always);
+					show_msg(QString("The first funscript video action will be afte %1 seconds at pos: %2").arg((int)((double)(funscript_data_maped[0].first - search_video_pos)/(g_video_player_status.rate*1000.0))).arg(VideoTimeToStr(funscript_data_maped[0].first).c_str()), 5000, MessageType::Always);
 				}
 			}
 
@@ -5094,7 +5214,7 @@ void run_funscript()
 			};
 
 			uint64_t pool_size_bytes = min(static_cast<uint64_t>(g_webcam_fps *
-				((double)(funscript_data_maped[actions_size - 1].first - cur_video_pos) / (g_video_cur_rate * 1000.0)) *
+				((double)(funscript_data_maped[actions_size - 1].first - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
 				(double)sizeof(FrameData) * 1.2), 1ULL << 30); // no more than 1 Gbyte
 			auto* mem_pool = new std::pmr::monotonic_buffer_resource(pool_size_bytes);
 			std::pmr::deque<FrameData> frames_data_history(mem_pool);
@@ -5102,13 +5222,13 @@ void run_funscript()
 			int dtime = 0;
 
 			start_video_pos = cur_video_pos;
-			QString start_video_name = video_filename;
+			QString start_video_name = g_video_player_status.video_filepath;
 			//waiting for video unpaused
 
 			bool position_was_aligned = false;
-			bool video_was_paused = is_video_paused;
+			bool video_was_paused = g_video_player_status.is_paused;
 
-			if (g_is_video_player_time_in_milliseconds && is_video_paused)
+			if (g_is_video_player_time_in_milliseconds && g_video_player_status.is_paused)
 			{
 				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 				get_res = get_hismith_pos_by_image(frame, cur_pos);
@@ -5125,7 +5245,7 @@ void run_funscript()
 				{
 					dpos = funscript_data_maped[0].second - abs_cur_pos;
 					if (dpos < 0) dpos += 360;
-					dt = (int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_cur_rate) - g_speed_change_delay;
+					dt = (int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_player_status.rate) - g_speed_change_delay;
 
 					int hspeed = g_hismith_speed_for_set_initial_pos;
 
@@ -5140,22 +5260,17 @@ void run_funscript()
 					int exp_abs_pos_before_speed_change_to_target_pos = 0;
 					int abs_cur_pos_to_target_pos = 0;
 
+					g_threaded_player_status.start(g_video_player_status, 100);
+
 					do
 					{
 						// run in parallel
 						{
-							std::thread t1( [&is_video_paused, &video_filename, &video_pos, &video_player_sys_time] {
-								make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-								} );
-							std::thread t2([&get_res, &frame, &abs_cur_pos,
-								&cur_pos, &msec_video_cur_pos, &cur_speed, &msec_video_prev_pos, &abs_prev_pos] {
-								get_res = get_next_frame_and_cur_speed(*g_pCapture, frame,
-									abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-									msec_video_prev_pos, abs_prev_pos);
-								} );
-							t1.join();
-							t2.join();
-							get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+							get_res = get_next_frame_and_cur_speed(*g_pCapture, frame,
+								abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
+								msec_video_prev_pos, abs_prev_pos);
+							g_video_player_status = g_threaded_player_status.getLatestState();
+							get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 							g_actual_video_pos = cur_video_pos;
 						}
 
@@ -5193,7 +5308,7 @@ void run_funscript()
 						d_cur_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 						d_exp_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0), funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-						if (g_stop_run || g_pause || g_video_freezed || !is_video_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate))
+						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 						{
 							break;
 						}
@@ -5202,6 +5317,8 @@ void run_funscript()
 							(d_cur_from_search_start_pos > g_max_search_pos_dif) ||
 							(d_exp_from_search_start_pos < g_min_search_pos_dif) ||
 							(d_exp_from_search_start_pos > g_max_search_pos_dif) );
+
+					g_threaded_player_status.stop();
 
 					cur_set_hismith_speed = set_hismith_speed(0.0);
 					prev_set_hismith_speed_time = set_hismith_speed_time;
@@ -5216,14 +5333,14 @@ void run_funscript()
 
 					g_d_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 					{
 						if (g_pause)
 						{
-							make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-							if (!is_video_paused && (video_filename.size() > 0))
+							g_video_player_status = g_threaded_player_status.make_video_player_status();
+							if (!g_video_player_status.is_paused && (g_video_player_status.video_filepath.size() > 0))
 							{
-								make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
+								g_video_player_status = g_threaded_player_status.make_video_player_status(VideoPlayerCommand::Pause);
 							}
 							if (g_update)
 							{
@@ -5245,21 +5362,21 @@ void run_funscript()
 				}
 			}
 
-			make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-			get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+			g_video_player_status = g_threaded_player_status.make_video_player_status();
+			get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 			g_actual_video_pos = cur_video_pos;
 			start_time = cur_time;
 			start_video_pos = cur_video_pos;
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate) ||
-				(g_is_video_player_time_in_milliseconds && !video_was_paused && is_video_paused))
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+				(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
 			{
 				if (g_pause)
 				{
-					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-					if (!is_video_paused && (video_filename.size() > 0))
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					if (!g_video_player_status.is_paused && (g_video_player_status.video_filepath.size() > 0))
 					{
-						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
+						g_video_player_status = g_threaded_player_status.make_video_player_status(VideoPlayerCommand::Pause);
 					}
 					if (g_update)
 					{
@@ -5269,7 +5386,7 @@ void run_funscript()
 				continue;
 			}
 
-			if (is_video_paused)
+			if (g_video_player_status.is_paused)
 			{
 				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 				get_res = get_hismith_pos_by_image(frame, cur_pos);
@@ -5303,21 +5420,21 @@ void run_funscript()
 			}
 
 			while (
-				is_video_paused ||
-				( ((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_cur_rate) > g_speed_change_delay + g_min_dt_between_speed_changes_on_fast_moves) && position_was_aligned ) ||
-				((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_cur_rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
+				g_video_player_status.is_paused ||
+				( ((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_player_status.rate) > g_speed_change_delay + g_min_dt_between_speed_changes_on_fast_moves) && position_was_aligned ) ||
+				((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_player_status.rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
 				)
-			{
-				make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-				get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
-				g_actual_video_pos = cur_video_pos;
-				start_time = cur_time;
-				start_video_pos = cur_video_pos;
+				{
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
+					g_actual_video_pos = cur_video_pos;
+					start_time = cur_time;
+					start_video_pos = cur_video_pos;
 
-				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_cur_rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate) ||
-					(is_video_paused && g_update) ||
-					(is_video_paused && (cur_video_pos - search_video_pos >= 1000)) ||
-					(g_is_video_player_time_in_milliseconds && !video_was_paused && is_video_paused))
+				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+					(g_video_player_status.is_paused && g_update) ||
+					(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)) ||
+					(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
 				{
 					break;
 				}
@@ -5328,8 +5445,8 @@ void run_funscript()
 				}
 			}
 
-			if ( (is_video_paused && g_update) ||
-				(g_is_video_player_time_in_milliseconds && !video_was_paused && is_video_paused) )
+			if ( (g_video_player_status.is_paused && g_update) ||
+				(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused) )
 			{
 				continue;
 			}
@@ -5355,15 +5472,15 @@ void run_funscript()
 				.arg(cur_pos)
 				.arg(action_id - 1);
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filename != video_filename) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_cur_rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_cur_rate) ||
-				(is_video_paused && (cur_video_pos - search_video_pos >= 1000)))
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+				(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)))
 			{
 				if (g_pause)
 				{
-					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-					if (!is_video_paused && (video_filename.size() > 0))
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					if (!g_video_player_status.is_paused && (g_video_player_status.video_filepath.size() > 0))
 					{
-						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
+						g_video_player_status = g_threaded_player_status.make_video_player_status(VideoPlayerCommand::Pause);
 					}
 					if (g_update)
 					{
@@ -5377,7 +5494,7 @@ void run_funscript()
 					.arg(start_video_pos)
 					.arg(abs_cur_pos)
 					.arg(funscript_data_maped[action_id - 1].second)
-					.arg(g_video_cur_rate)
+					.arg(g_video_player_status.rate)
 					.arg(start_info);
 
 				continue;
@@ -5398,8 +5515,6 @@ void run_funscript()
 			dpos = 0;
 			cur_speed = 0;
 
-			LARGE_INTEGER t1, t2, t3, dt_total;
-
 			if (!g_is_video_player_time_in_milliseconds)
 			{
 				// for minimize time difference sync waiting for the nearest second change
@@ -5407,8 +5522,8 @@ void run_funscript()
 				do
 				{
 					prev_video_pos = cur_video_pos;
-					make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+					g_video_player_status = g_threaded_player_status.make_video_player_status();
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
 					start_time = cur_time;
 					start_video_pos = cur_video_pos;
@@ -5441,7 +5556,7 @@ void run_funscript()
 					.arg(action_id - 1);
 			}
 
-			while ((action_id < actions_size) && ((int)((double)(funscript_data_maped[action_id - 1].first - cur_video_pos) / g_video_cur_rate) < g_speed_change_delay))
+			while ((action_id < actions_size) && ((int)((double)(funscript_data_maped[action_id - 1].first - cur_video_pos) / g_video_player_status.rate) < g_speed_change_delay))
 			{
 				start_info += QString("\ncur_video_time:%1 > (actio_start_time:%2 - speed_change_delay:%3) with action_id:%4 => action_id++")
 					.arg(VideoTimeToStr(cur_video_pos).c_str())
@@ -5467,7 +5582,7 @@ void run_funscript()
 			int avg_req_speed, avg_req_hismith_speed, req_dt;
 
 			avg_req_speed = (((double)(funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) /
-				((double)(funscript_data_maped[action_id].first - cur_video_pos) / g_video_cur_rate));
+				((double)(funscript_data_maped[action_id].first - cur_video_pos) / g_video_player_status.rate));
 			avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 			req_dt = (g_min_dt_start_for_speed_40 * avg_req_hismith_speed) / 40;
 
@@ -5480,7 +5595,7 @@ void run_funscript()
 
 				action_id++;
 				avg_req_speed = (((double)(funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) /
-					((double)(funscript_data_maped[action_id].first - cur_video_pos) / g_video_cur_rate));
+					((double)(funscript_data_maped[action_id].first - cur_video_pos) / g_video_player_status.rate));
 				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 				req_dt = (g_min_dt_start_for_speed_40 * avg_req_hismith_speed) / 40;
 			}
@@ -5490,14 +5605,7 @@ void run_funscript()
 
 			int start_video_pos_dif;
 			int new_start_video_pos;
-			LARGE_INTEGER _tmp_cur_time;
-			int _tmp_video_pos = -1;
-			__int64 _tmp_video_player_sys_time = -1;
-			double _tmp_cur_rate = 1;
-			bool _tmp_is_paused = false;
-			QString _tmp_video_filename;
 			int prev_cur_video_pos = cur_video_pos;
-			std::thread* p_get_video_player_status = NULL;
 
 			QueryPerformanceCounter(&cur_time);
 			time_stat.dt5 = time_diff_in_milliseconds(cur_time, prev_time, Frequency);
@@ -5512,9 +5620,9 @@ void run_funscript()
 				.arg(action_id)
 				.arg(action_id_start)
 				.arg(abs_cur_pos - funscript_data_maped[0].second)
-				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[0].first)
+				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[0].first)
 				.arg(abs_cur_pos - funscript_data_maped[action_id_start].second)
-				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[action_id_start].first)
+				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id_start].first)
 				.arg(( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - cur_video_pos) ) /
 						( (((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first)) ));
 
@@ -5522,9 +5630,11 @@ void run_funscript()
 
 			{
 				__int64 frame_time_in_ms = g_delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
-				int frame_video_pos = start_video_pos + (int)((double)(frame_time_in_ms - start_time_in_ms) * g_video_cur_rate);
+				int frame_video_pos = start_video_pos + (int)((double)(frame_time_in_ms - start_time_in_ms) * g_video_player_status.rate);
 				frames_data_history.push_back({ abs_cur_pos, frame_video_pos });
 			}
+
+			g_threaded_player_status.start(g_video_player_status, 250);
 
 			while (action_id < actions_size)
 			{
@@ -5556,7 +5666,7 @@ void run_funscript()
 				}
 
 				int actual_action_id = action_id;
-				g_actual_video_pos = start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate);
+				g_actual_video_pos = start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
 				while (actual_action_id > 1 && (funscript_data_maped[actual_action_id - 1].first > g_actual_video_pos))
 				{
 					actual_action_id--;
@@ -5605,7 +5715,7 @@ void run_funscript()
 				}
 
 				avg_req_speed = ( ((double)(funscript_data_maped[fut_action_id].second - funscript_data_maped[actual_action_id - 1].second) * 1000.0) /
-										((double)(funscript_data_maped[fut_action_id].first - funscript_data_maped[actual_action_id - 1].first) / g_video_cur_rate) );
+										((double)(funscript_data_maped[fut_action_id].first - funscript_data_maped[actual_action_id - 1].first) / g_video_player_status.rate) );
 
 				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 
@@ -5620,9 +5730,9 @@ void run_funscript()
 				action_start_speed = cur_speed;
 				speed_change_time.QuadPart = -1;
 
-				dif_cur_vs_req_action_start_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(action_start_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[action_id - 1].first;
+				dif_cur_vs_req_action_start_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(action_start_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id - 1].first;
 
-				dt = ((double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate);
+				dt = ((double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate);
 				if (dt < g_speed_change_delay + min_dt_between_speed_changes)
 				{
 					hismith_speed_changed += QString("\n\t[action_id++: dt:(%1) < req:(%2)]").arg(dt).arg(g_speed_change_delay + min_dt_between_speed_changes);
@@ -5632,7 +5742,7 @@ void run_funscript()
 					results[action_id - 1].actual_action_id_dif = actual_action_id - action_id;
 					results[action_id - 1].move_dif = move_dif;
 					results[action_id - 1].action_start_video_time = VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str();
-					results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[action_id].first;
+					results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id].first;
 					results[action_id - 1].dif_cur_vs_req_action_start_time = dif_cur_vs_req_action_start_time;
 					results[action_id - 1].action_length_time = funscript_data_maped[action_id].first - funscript_data_maped[action_id - 1].first;
 					results[action_id - 1].req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[action_id - 1].second;
@@ -5642,15 +5752,6 @@ void run_funscript()
 					results[action_id - 1].hismith_speed_changed = hismith_speed_changed;
 					action_id++;
 					continue;
-				}
-
-				if ((int)((double)(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate) - cur_video_pos) / g_video_cur_rate) >= 250)
-				{
-					p_get_video_player_status = new std::thread([&_tmp_video_pos, &_tmp_video_player_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_cur_time, &_tmp_cur_rate] {
-						make_video_player_status(_tmp_is_paused, _tmp_video_filename, _tmp_video_pos, _tmp_video_player_sys_time, _tmp_cur_rate);
-						QueryPerformanceCounter(&_tmp_cur_time);
-						}
-					);
 				}
 
 				hismith_speed_prev = cur_set_hismith_speed;
@@ -5701,7 +5802,7 @@ void run_funscript()
 						.arg((int)(cur_set_hismith_speed * 100.0))
 						.arg((int)(optimal_hismith_speed * 100.0))
 						.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-						.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)))
+						.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 						.arg(cur_speed)
 						.arg(req_speed)
 						.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -5709,8 +5810,8 @@ void run_funscript()
 
 				do
 				{
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 					{
 						break;
 					}
@@ -5723,12 +5824,6 @@ void run_funscript()
 					{
 						show_msg("", 0, MessageType::Clean);
 						show_msg(QString("Failed to get hismith position.\nPausing video if not and pausing hismith control."));
-						if (p_get_video_player_status)
-						{
-							p_get_video_player_status->join();
-							delete p_get_video_player_status;
-							p_get_video_player_status = NULL;
-						}
 						g_pause = true;
 						clear_msgs = false;
 						break;
@@ -5738,7 +5833,7 @@ void run_funscript()
 
 					{
 						__int64 frame_time_in_ms = g_delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
-						int frame_video_pos = start_video_pos + (int)((double)(frame_time_in_ms - start_time_in_ms) * g_video_cur_rate);
+						int frame_video_pos = start_video_pos + (int)((double)(frame_time_in_ms - start_time_in_ms) * g_video_player_status.rate);
 						frames_data_history.push_back({ abs_cur_pos, frame_video_pos });
 					}
 
@@ -5763,61 +5858,43 @@ void run_funscript()
 						break;
 					}
 
-					g_actual_video_pos = start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate);
+					prev_vp_st_poll_time = g_video_player_status.poll_time;
+					g_video_player_status = g_threaded_player_status.getLatestState();
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
+					g_actual_video_pos = cur_video_pos;
 
-					if ((int)((double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > 1000)
+					if (g_video_player_status.poll_time.QuadPart != prev_vp_st_poll_time.QuadPart)
 					{
-						if ((int)((double)(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate) - cur_video_pos) / g_video_cur_rate) >= 1000)
+						prev_cur_video_pos = cur_video_pos;
+						LARGE_INTEGER vp_st_poll_time = g_video_player_status.poll_time;
+
+						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
+						g_actual_video_pos = cur_video_pos;
+
+						if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+							(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 						{
-							if (p_get_video_player_status)
+							break;
+						}
+
+						if (g_is_video_player_time_in_milliseconds)
+						{
+							if (g_video_player_status.sys_time > 0)
 							{
-								p_get_video_player_status->join();
-								delete p_get_video_player_status;
-								p_get_video_player_status = NULL;
-								prev_cur_video_pos = cur_video_pos;
-								is_video_paused = _tmp_is_paused;
-								video_pos = _tmp_video_pos;
-								video_player_sys_time = _tmp_video_player_sys_time;
-								video_filename = _tmp_video_filename;
-								g_video_cur_rate = _tmp_cur_rate;
-								get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
-								g_actual_video_pos = cur_video_pos;
-
-								if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-									(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
-								{
-									break;
-								}
-
-								if (g_is_video_player_time_in_milliseconds)
-								{
-									if (video_player_sys_time > 0)
-									{
-										new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate);
-										start_video_pos_dif = new_start_video_pos - start_video_pos;
-										start_video_pos = new_start_video_pos;
-										hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
-									}
-									else
-									{
-										new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency)) * g_video_cur_rate);
-										start_video_pos_dif = new_start_video_pos - start_video_pos;
-										if (start_video_pos_dif > 0)
-										{
-											start_video_pos = new_start_video_pos;
-											hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
-										}
-									}
-								}
+								new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
+								start_video_pos_dif = new_start_video_pos - start_video_pos;
+								start_video_pos = new_start_video_pos;
+								hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
 							}
-
-							if ((int)((double)(start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate) - cur_video_pos) / g_video_cur_rate) >= 1000)
+							else
 							{
-								p_get_video_player_status = new std::thread([&_tmp_video_pos, &_tmp_video_player_sys_time, &_tmp_is_paused, &_tmp_video_filename, &_tmp_cur_time, &_tmp_cur_rate] {
-									make_video_player_status(_tmp_is_paused, _tmp_video_filename, _tmp_video_pos, _tmp_video_player_sys_time, _tmp_cur_rate);
-									QueryPerformanceCounter(&_tmp_cur_time);
-									}
-								);
+								new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(vp_st_poll_time, start_time, Frequency)) * g_video_player_status.rate);
+								start_video_pos_dif = new_start_video_pos - start_video_pos;
+								if (start_video_pos_dif > 0)
+								{
+									start_video_pos = new_start_video_pos;
+									hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+								}
 							}
 						}
 					}
@@ -5832,7 +5909,7 @@ void run_funscript()
 						prev_cur_speed = cur_speed;
 					}
 
-					dt = (double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate;
+					dt = (double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
 					dpos = funscript_data_maped[action_id].second - exp_abs_cur_pos;
 					exp_abs_pos_before_speed_change = exp_abs_cur_pos + ((cur_speed * min((double)g_speed_change_delay, dt)) / 1000.0);
 
@@ -5863,7 +5940,7 @@ void run_funscript()
 										.arg((int)(cur_set_hismith_speed * 100.0))
 										.arg((int)(optimal_hismith_speed * 100.0))
 										.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-										.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)))
+										.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 										.arg(cur_speed)
 										.arg(req_cur_speed)
 										.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -5913,7 +5990,7 @@ void run_funscript()
 												.arg((int)(cur_set_hismith_speed * 100.0))
 												.arg((int)(optimal_hismith_speed * 100.0))
 												.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)))
+												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 												.arg(cur_speed)
 												.arg(req_cur_speed)
 												.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -5924,7 +6001,7 @@ void run_funscript()
 												.arg((int)(cur_set_hismith_speed * 100.0))
 												.arg((int)(optimal_hismith_speed * 100.0))
 												.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)))
+												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 												.arg(cur_speed)
 												.arg(req_cur_speed)
 												.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -5935,13 +6012,13 @@ void run_funscript()
 						}
 					}
 
-					dt = (double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate;
+					dt = (double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
 					dtime = (action_id < actions_size - 1) ? g_speed_change_delay : 0;
 
 					if ( (action_id + 1 < actions_size - 1) &&
 						((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)) >= min_dt_between_speed_changes) )
 					{
-						double dt2 = (double)(funscript_data_maped[action_id + 1].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate;
+						double dt2 = (double)(funscript_data_maped[action_id + 1].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
 						if (dt2 < 50 + g_speed_change_delay + min_dt_between_speed_changes)
 						{
 							break;
@@ -5950,37 +6027,34 @@ void run_funscript()
 
 				} while (dt > dtime);
 
-				if (p_get_video_player_status)
+				prev_vp_st_poll_time = g_video_player_status.poll_time;
+				g_video_player_status = g_threaded_player_status.getLatestState();
+
+				if (g_video_player_status.poll_time.QuadPart != prev_vp_st_poll_time.QuadPart)
 				{
-					p_get_video_player_status->join();
-					delete p_get_video_player_status;
-					p_get_video_player_status = NULL;
 					prev_cur_video_pos = cur_video_pos;
-					is_video_paused = _tmp_is_paused;
-					video_pos = _tmp_video_pos;
-					video_player_sys_time = _tmp_video_player_sys_time;
-					video_filename = _tmp_video_filename;
-					g_video_cur_rate = _tmp_cur_rate;
-					get_cur_video_pos(is_video_paused, video_pos, video_player_sys_time, g_video_cur_rate, cur_time, cur_video_pos);
+					LARGE_INTEGER vp_st_poll_time = g_video_player_status.poll_time;
+
+					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
 
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 					{
 						// need to stop run
 					}
 					else if (g_is_video_player_time_in_milliseconds)
 					{
-						if (video_player_sys_time > 0)
+						if (g_video_player_status.sys_time > 0)
 						{
-							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate);
+							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
 							start_video_pos_dif = new_start_video_pos - start_video_pos;
 							start_video_pos = new_start_video_pos;
 							hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
 						}
 						else
 						{
-							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(_tmp_cur_time, start_time, Frequency)) * g_video_cur_rate);
+							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(vp_st_poll_time, start_time, Frequency)) * g_video_player_status.rate);
 							start_video_pos_dif = new_start_video_pos - start_video_pos;
 							if (start_video_pos_dif > 0)
 							{
@@ -5996,7 +6070,7 @@ void run_funscript()
 				results[action_id - 1].actual_action_id_dif = actual_action_id - action_id;
 				results[action_id - 1].move_dif = move_dif;
 				results[action_id - 1].action_start_video_time = VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str();
-				results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)) - funscript_data_maped[action_id].first;
+				results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id].first;
 				results[action_id - 1].dif_cur_vs_req_action_start_time = dif_cur_vs_req_action_start_time;
 				results[action_id - 1].action_length_time = funscript_data_maped[action_id].first - funscript_data_maped[action_id - 1].first;
 				results[action_id - 1].req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[action_id - 1].second;
@@ -6018,20 +6092,20 @@ void run_funscript()
 					break;
 				}
 
-				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || is_video_paused ||
-					((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filename != video_filename) || (prev_rate != g_video_cur_rate))
+				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused ||
+					((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 				{
-					if (last_play_video_filename != video_filename)
+					if (last_play_video_filepath != g_video_player_status.video_filepath)
 					{
 						show_msg("Played video was changed");
-						actions_end_with = QString("last_play_video_filename (%1) != video_filename (%2)").arg(last_play_video_filename).arg(video_filename);
+						actions_end_with = QString("last_play_video_filepath (%1) != video_filepath (%2)").arg(last_play_video_filepath).arg(g_video_player_status.video_filepath);
 					}
-					else if ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) / g_video_cur_rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000))
+					else if ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000))
 					{
 						show_msg("Video time was jumped forward");
-						actions_end_with = QString("(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate))) (%1)  > %2")
-							.arg(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_cur_rate)))
+						actions_end_with = QString("(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) (%1)  > %2")
+							.arg(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 							.arg(g_is_video_player_time_in_milliseconds ? 300 : 1000);
 					}
 					else if ((action_id > 1) && (cur_video_pos < prev_cur_video_pos - 300))
@@ -6039,20 +6113,22 @@ void run_funscript()
 						show_msg("Video time was jumped backward");
 						actions_end_with = QString("cur_video_pos (%1) < prev_cur_video_pos (%2) - 300").arg(cur_video_pos).arg(prev_cur_video_pos);
 					}
-					else if (prev_rate != g_video_cur_rate)
+					else if (prev_rate != g_video_player_status.rate)
 					{
-						show_msg(QString("Video speed rate was changed to: %1").arg(g_video_cur_rate));
-						actions_end_with = QString("prev_rate: %1 != g_video_cur_rate: %2")
+						show_msg(QString("Video speed rate was changed to: %1").arg(g_video_player_status.rate));
+						actions_end_with = QString("prev_rate: %1 != g_video_player_status.rate: %2")
 							.arg(prev_rate)
-							.arg(g_video_cur_rate);
+							.arg(g_video_player_status.rate);
 					}
 					else if (g_pause)
 					{
+
 						actions_end_with = QString("g_pause");
-						make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-						if (!is_video_paused && (video_filename.size() > 0))
+						g_threaded_player_status.stop();
+						g_video_player_status = g_threaded_player_status.make_video_player_status();
+						if (!g_video_player_status.is_paused && (g_video_player_status.video_filepath.size() > 0))
 						{
-							make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
+							g_video_player_status = g_threaded_player_status.make_video_player_status(VideoPlayerCommand::Pause);
 						}
 						if (g_update)
 						{
@@ -6071,9 +6147,9 @@ void run_funscript()
 					{
 						actions_end_with = QString("g_was_change_in_use_modify_funscript_functions");
 					}
-					else if (is_video_paused)
+					else if (g_video_player_status.is_paused)
 					{
-						actions_end_with = QString("is_video_paused");
+						actions_end_with = QString("video_is_paused");
 					}
 					else
 					{
@@ -6086,6 +6162,8 @@ void run_funscript()
 
 				action_id++;
 			}
+
+			g_threaded_player_status.stop();
 
 			QueryPerformanceCounter(&cur_time);
 			prev_time = cur_time;
@@ -6192,7 +6270,7 @@ void run_funscript()
 				.arg(start_video_pos)
 				.arg(start_abs_pos)
 				.arg(funscript_data_maped[0].second)
-				.arg(g_video_cur_rate)
+				.arg(g_video_player_status.rate)
 				.arg(result_str);
 
 			cur_set_hismith_speed = set_hismith_speed(0.0);
@@ -6257,10 +6335,11 @@ void run_funscript()
 	delete g_pCapture;
 	g_pCapture = NULL;
 
-	make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate);
-	if ((video_filename.size() != 0) && (!is_video_paused))
+	g_threaded_player_status.stop();
+	g_video_player_status = g_threaded_player_status.make_video_player_status();
+	if ((g_video_player_status.video_filepath.size() != 0) && (!g_video_player_status.is_paused))
 	{
-		make_video_player_status(is_video_paused, video_filename, video_pos, video_player_sys_time, g_video_cur_rate, VideoPlayerCommand::Pause);
+		g_video_player_status = g_threaded_player_status.make_video_player_status(VideoPlayerCommand::Pause);
 	}
 
 	stop_video_player_connection();
@@ -7151,7 +7230,7 @@ void test_vlc()
 	int cur_video_pos = 0, prev_video_pos = 0, video_pos = 0, dt;
 	__int64 vlc_sys_time = -1;
 	double cur_rate = 1;
-	bool is_video_paused, is_vlc_time_in_milliseconds;
+	bool is_paused, is_vlc_time_in_milliseconds;
 	QString cur_video_filename, prev_video_filename;
 	LARGE_INTEGER cur_time;
 
@@ -7160,8 +7239,17 @@ void test_vlc()
 	while (1)
 	{
 		prev_video_pos = cur_video_pos;
-		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_video_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
-		get_cur_video_pos(is_video_paused, video_pos, vlc_sys_time, cur_rate, cur_time, cur_video_pos);
+		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
+		{
+			VideoPlayerStatus tmp;
+			tmp.is_valid = true;
+			tmp.is_paused = is_paused;
+			tmp.video_pos = video_pos;
+			tmp.sys_time = vlc_sys_time;
+			tmp.rate = cur_rate;
+			tmp.video_filepath = cur_video_filename;
+			get_cur_video_pos(tmp, cur_time, cur_video_pos);
+		}
 		if (cur_video_filename != prev_video_filename)
 		{
 			prev_video_filename = cur_video_filename;

@@ -33,6 +33,7 @@ set(PROJECT_SOURCES
         FastLatencyWindow.h
         mainwindow.ui
         ThreadedCapture.h
+        ThreadedPlayerStatus.h
         HighPrecisionTimerGuard.h
         HereSphereSync.cpp
         HereSphereSync.h

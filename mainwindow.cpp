@@ -592,7 +592,7 @@ void MainWindow::handlePauseStart()
         show_msg(QString("Pause pressed"), 5000, MessageType::Clean);
         g_pause = true;
         g_update = true;
-        g_update_cvar.wait(lk, [] { return !g_update; });
+        g_update_cvar.wait(lk, [] { return !g_update.load(); });
     }
 }
 
@@ -604,7 +604,7 @@ void MainWindow::handleResumeStart()
         show_msg(QString("Resume pressed"), g_runing_funscript ? 2000 : 5000, MessageType::Clean);
         g_pause = false;
         g_update = true;
-        g_update_cvar.wait(lk, [] { return !g_update; });
+        g_update_cvar.wait(lk, [] { return !g_update.load(); });
     }
 }
 
@@ -639,7 +639,7 @@ void MainWindow::handleUseModifyFunscriptFunctions()
             if (g_pause)
             {
                 g_update = true;
-                g_update_cvar.wait(lk, [] { return !g_update; });
+                g_update_cvar.wait(lk, [] { return !g_update.load(); });
             }
         }
     }

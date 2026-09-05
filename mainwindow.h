@@ -59,7 +59,7 @@ extern QString g_cur_version;
 
 extern bool g_pause;
 extern bool g_stop_run;
-extern bool g_update;
+extern std::atomic<bool> g_update;
 extern bool g_was_change_in_use_modify_funscript_functions;
 
 extern std::mutex g_update_mutex;
@@ -85,8 +85,6 @@ extern QString g_hotkey_stop;
 extern QString g_hotkey_pause;
 extern QString g_hotkey_resume;
 extern QString g_hotkey_use_modify_funscript_functions;
-
-extern double g_video_cur_rate;
 
 extern bool g_initial_start;
 
