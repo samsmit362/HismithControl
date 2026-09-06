@@ -39,6 +39,7 @@ set(PROJECT_SOURCES
         HereSphereSync.h
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h
+        .editorconfig
 		${BUTTPLUGCPP_SRC_FILES}
 )
 

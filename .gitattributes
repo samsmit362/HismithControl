@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+*.cpp working-tree-encoding=UTF-8
+*.h working-tree-encoding=UTF-8
+*.hpp working-tree-encoding=UTF-8

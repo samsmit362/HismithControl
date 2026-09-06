@@ -5,10 +5,12 @@
 #include <condition_variable>
 #include <mutex>
 
-#define HOTKEY_PAUSE_ID     1
-#define HOTKEY_RESUME_ID    2
-#define HOTKEY_STOP_ID      3
+#define HOTKEY_PAUSE_ID                               1
+#define HOTKEY_RESUME_ID                              2
+#define HOTKEY_STOP_ID                                3
 #define HOTKEY_USE_MODIFY_FUNSCRIPT_FUNCTIONS_ID      4
+#define FUNSCRIPT_TIME_SHIFT_UP_ID                    5
+#define FUNSCRIPT_TIME_SHIFT_DOWN_ID                  6
 
 //---------------------------------------------------------------
 
@@ -103,9 +105,24 @@ void MainWindow::RegisterHotKeys()
         get_key_mod(g_hotkey_use_modify_funscript_functions) | MOD_NOREPEAT,
         get_key(g_hotkey_use_modify_funscript_functions));
 
+    RegisterHotKey(
+        (HWND)this->window()->winId(),
+        FUNSCRIPT_TIME_SHIFT_UP_ID,
+        get_key_mod(g_hotkey_funscript_time_shift_up) | MOD_NOREPEAT,
+        get_key(g_hotkey_funscript_time_shift_up));
+
+    RegisterHotKey(
+        (HWND)this->window()->winId(),
+        FUNSCRIPT_TIME_SHIFT_DOWN_ID,
+        get_key_mod(g_hotkey_funscript_time_shift_down) | MOD_NOREPEAT,
+        get_key(g_hotkey_funscript_time_shift_down));
+
     stopStartAction->setText(tr("Stop Run\t") + g_hotkey_stop);
     pauseStartAction->setText(tr("Pause Run\t") + g_hotkey_pause);
     resumeStartAction->setText(tr("Resume Run\t") + g_hotkey_resume);
+    funscriptTimeShiftUpStartAction->setText(tr("Funscript Time Shift Up\t") + g_hotkey_funscript_time_shift_up);
+    funscriptTimeShiftDownStartAction->setText(tr("Funscript Time Shift Down\t") + g_hotkey_funscript_time_shift_down);
+
     useModifyFunscriptFunctionsAction->setText(tr("Change Use Modify Funscript Functions\t") + g_hotkey_use_modify_funscript_functions);
 }
 
@@ -166,6 +183,14 @@ MainWindow::MainWindow(QWidget *parent)
     resumeStartAction = new QAction(tr("Resume Run"), this);
     connect(resumeStartAction, &QAction::triggered, this, &MainWindow::handleResumeStart);
     trayIconMenu->addAction(resumeStartAction);
+
+    funscriptTimeShiftUpStartAction = new QAction(tr("Funscript Time Shift Up"), this);
+    connect(funscriptTimeShiftUpStartAction, &QAction::triggered, this, &MainWindow::handleFunscriptTimeShiftUpStart);
+    trayIconMenu->addAction(funscriptTimeShiftUpStartAction);
+
+    funscriptTimeShiftDownStartAction = new QAction(tr("Funscript Time Shift Down"), this);
+    connect(funscriptTimeShiftDownStartAction, &QAction::triggered, this, &MainWindow::handleFunscriptTimeShiftDownStart);
+    trayIconMenu->addAction(funscriptTimeShiftDownStartAction);
 
     useModifyFunscriptFunctionsAction = new QAction(tr("Change Use Modify Funscript Functions"), this);
     connect(useModifyFunscriptFunctionsAction, &QAction::triggered, this, &MainWindow::handleUseModifyFunscriptFunctions);
@@ -608,6 +633,28 @@ void MainWindow::handleResumeStart()
     }
 }
 
+void MainWindow::handleFunscriptTimeShiftUpStart()
+{
+    if (g_work_in_progress && !g_initial_start)
+    {
+        std::unique_lock lk(g_update_mutex);
+        g_funscript_time_shift_ms += g_funscript_time_shift_delta_ms;
+        show_msg(QString("Funscript Time Shift In MS (Up): %1")
+            .arg(g_funscript_time_shift_ms), g_runing_funscript ? 2000 : 5000, MessageType::Clean);
+    }
+}
+
+void MainWindow::handleFunscriptTimeShiftDownStart()
+{
+    if (g_work_in_progress && !g_initial_start)
+    {
+        std::unique_lock lk(g_update_mutex);
+        g_funscript_time_shift_ms -= g_funscript_time_shift_delta_ms;
+        show_msg(QString("Funscript Time Shift In MS (Down): %1")
+            .arg(g_funscript_time_shift_ms), g_runing_funscript ? 2000 : 5000, MessageType::Clean);
+    }
+}
+
 void MainWindow::handleUseModifyFunscriptFunctions()
 {
     if (g_work_in_progress && !g_initial_start)
@@ -673,6 +720,14 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
             else if (wp == HOTKEY_USE_MODIFY_FUNSCRIPT_FUNCTIONS_ID)
             {
                 handleUseModifyFunscriptFunctions();
+            }
+            else if (wp == FUNSCRIPT_TIME_SHIFT_UP_ID)
+            {
+                handleFunscriptTimeShiftUpStart();
+            }
+            else if (wp == FUNSCRIPT_TIME_SHIFT_DOWN_ID)
+            {
+                handleFunscriptTimeShiftDownStart();
             }
         }
 

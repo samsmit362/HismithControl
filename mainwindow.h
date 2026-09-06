@@ -85,8 +85,13 @@ extern QString g_hotkey_stop;
 extern QString g_hotkey_pause;
 extern QString g_hotkey_resume;
 extern QString g_hotkey_use_modify_funscript_functions;
+extern QString g_hotkey_funscript_time_shift_up;
+extern QString g_hotkey_funscript_time_shift_down;
 
 extern bool g_initial_start;
+
+extern int g_funscript_time_shift_delta_ms;
+extern std::atomic<int> g_funscript_time_shift_ms;
 
 //---------------------------------------------------------------
 
@@ -324,6 +329,8 @@ private slots:
     void handleStopStart();
     void handlePauseStart();
     void handleResumeStart();
+    void handleFunscriptTimeShiftUpStart();
+    void handleFunscriptTimeShiftDownStart();
     void handleUseModifyFunscriptFunctions();
     void handleTrayExit();
     void handleRefreshDevicesButton();
@@ -351,6 +358,8 @@ public:
     QAction* stopStartAction;
     QAction* pauseStartAction;
     QAction* resumeStartAction;
+    QAction* funscriptTimeShiftUpStartAction;
+    QAction* funscriptTimeShiftDownStartAction;
     QAction* useModifyFunscriptFunctionsAction;
     QAction* exitAction;
     QMenu* trayIconMenu;

@@ -13,6 +13,7 @@
 #include <deque>
 #include <memory_resource>
 #include <algorithm>
+#include <atomic>
 
 using namespace Gdiplus; // Required for Graphics in WndProc
 #pragma comment (lib,"Gdiplus.lib")
@@ -85,6 +86,8 @@ QString g_hotkey_stop;
 QString g_hotkey_pause;
 QString g_hotkey_resume;
 QString g_hotkey_use_modify_funscript_functions;
+QString g_hotkey_funscript_time_shift_up;
+QString g_hotkey_funscript_time_shift_down;
 
 //---------------------------------------------------------------
 
@@ -155,7 +158,23 @@ VideoPlayerStatus g_video_player_status;
 
 //---------------------------------------------------------------
 
+int g_funscript_time_shift_delta_ms = 10;
+
+// Runtime-adjustable time shift for funscript actions (in milliseconds).
+// Read by the tracking loop and written from the UI thread.
+// Applied dynamically on every read of funscript_data_maped[*].first.
+std::atomic<int> g_funscript_time_shift_ms = 0;
+
+//---------------------------------------------------------------
+
 #define time_diff_in_milliseconds(a, b, c) (((a.QuadPart - b.QuadPart)*(__int64)1000)/c.QuadPart)
+
+//---------------------------------------------------------------
+
+// Dynamic accessor for funscript_data_maped[i].first that reflects the
+// current value of g_funscript_time_shift_ms on every invocation.
+// funscript_data_maped[i].first itself is NEVER modified (kept pristine).
+#define FS_FIRST(i) (funscript_data_maped[i].first + (int)g_funscript_time_shift_ms.load(std::memory_order_relaxed))
 
 //---------------------------------------------------------------
 
@@ -4375,11 +4394,13 @@ QString get_add_msg_data()
     QString add_msg_data = QString(
         "Current time: %1 (hour:min:sec)\n"
 		"Current video actions will end in: %2 (min:sec)\n"
-        "Video speed rate: %3%4"
+        "Video speed rate: %3\n"
+		"Funscript time shift ms:%4%5"
         )
         .arg(time_str)
         .arg(get_time_to_cur_actions_end())
         .arg(g_video_player_status.rate)
+		.arg(g_funscript_time_shift_ms)
 		.arg(g_runing_funscript ? QString("") : QString("\nDiff start hismith pos: %1").arg(g_d_from_search_start_pos))
 		;
     if (g_modify_funscript)
@@ -4650,7 +4671,7 @@ void ThreadedPlayerStatus::start(VideoPlayerStatus& initial_state, unsigned int 
 	{
 		try
 		{
-			m_cached_state = make_video_player_status();
+			m_cached_state = ::make_video_player_status();
 			QueryPerformanceCounter(&m_cached_state.poll_time);
 			initial_state = m_cached_state;
 		}
@@ -4692,7 +4713,7 @@ VideoPlayerStatus ThreadedPlayerStatus::make_video_player_status(VideoPlayerComm
 	try
 	{
 		std::lock_guard<std::mutex> lk(m_make_mutex);
-		state = make_video_player_status(command);
+		state = ::make_video_player_status(command);
 		QueryPerformanceCounter(&state.poll_time);
 	}
 	catch (...)
@@ -4723,7 +4744,7 @@ void ThreadedPlayerStatus::status_loop()
 		try
 		{
 			std::lock_guard<std::mutex> lk(m_make_mutex);
-			state = make_video_player_status();
+			state = ::make_video_player_status();
 			QueryPerformanceCounter(&state.poll_time);
 		}
 		catch (...)
@@ -4989,6 +5010,7 @@ void run_funscript()
 
 			if (last_load_funscript_video_filepath != last_play_video_filepath)
 			{
+				g_funscript_time_shift_ms = 0;
 				QFileInfo info(last_play_video_filepath);
 				funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
 
@@ -5117,9 +5139,9 @@ void run_funscript()
 			}
 			else
 			{
-				if ((int)((double)(funscript_data_maped[0].first - search_video_pos) / g_video_player_status.rate) > 10000)
+				if ((int)((double)(FS_FIRST(0) - search_video_pos) / g_video_player_status.rate) > 10000)
 				{
-					show_msg(QString("The first funscript video action will be afte %1 seconds at pos: %2").arg((int)((double)(funscript_data_maped[0].first - search_video_pos)/(g_video_player_status.rate*1000.0))).arg(VideoTimeToStr(funscript_data_maped[0].first).c_str()), 5000, MessageType::Always);
+					show_msg(QString("The first funscript video action will be afte %1 seconds at pos: %2").arg((int)((double)(FS_FIRST(0) - search_video_pos)/(g_video_player_status.rate*1000.0))).arg(VideoTimeToStr(FS_FIRST(0)).c_str()), 5000, MessageType::Always);
 				}
 			}
 
@@ -5127,7 +5149,7 @@ void run_funscript()
 				int last_i = 0;
 				for (int i = 1; i < funscript_data_maped.size(); i++)
 				{
-					if ((funscript_data_maped[i].first - funscript_data_maped[i - 1].first) < 10000)
+					if ((FS_FIRST(i) - FS_FIRST(i - 1)) < 10000)
 					{
 						last_i = i;
 					}
@@ -5136,7 +5158,7 @@ void run_funscript()
 						break;
 					}
 				}
-				g_video_cur_actions_end_time = funscript_data_maped[last_i].first;
+				g_video_cur_actions_end_time = FS_FIRST(last_i);
 				g_video_cur_actions_start_pos = funscript_data_maped[0].second;
 
 				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
@@ -5214,7 +5236,7 @@ void run_funscript()
 			};
 
 			uint64_t pool_size_bytes = min(static_cast<uint64_t>(g_webcam_fps *
-				((double)(funscript_data_maped[actions_size - 1].first - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
+				((double)(FS_FIRST(actions_size - 1) - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
 				(double)sizeof(FrameData) * 1.2), 1ULL << 30); // no more than 1 Gbyte
 			auto* mem_pool = new std::pmr::monotonic_buffer_resource(pool_size_bytes);
 			std::pmr::deque<FrameData> frames_data_history(mem_pool);
@@ -5245,7 +5267,7 @@ void run_funscript()
 				{
 					dpos = funscript_data_maped[0].second - abs_cur_pos;
 					if (dpos < 0) dpos += 360;
-					dt = (int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_player_status.rate) - g_speed_change_delay;
+					dt = (int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) - g_speed_change_delay;
 
 					int hspeed = g_hismith_speed_for_set_initial_pos;
 
@@ -5308,7 +5330,7 @@ void run_funscript()
 						d_cur_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 						d_exp_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0), funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
+						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > FS_FIRST(1)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 						{
 							break;
 						}
@@ -5333,7 +5355,7 @@ void run_funscript()
 
 					g_d_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > FS_FIRST(1)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 					{
 						if (g_pause)
 						{
@@ -5368,7 +5390,7 @@ void run_funscript()
 			start_time = cur_time;
 			start_video_pos = cur_video_pos;
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > FS_FIRST(1)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 				(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
 			{
 				if (g_pause)
@@ -5421,8 +5443,8 @@ void run_funscript()
 
 			while (
 				g_video_player_status.is_paused ||
-				( ((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_player_status.rate) > g_speed_change_delay + g_min_dt_between_speed_changes_on_fast_moves) && position_was_aligned ) ||
-				((int)((double)(funscript_data_maped[0].first - cur_video_pos) / g_video_player_status.rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
+				( ((int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) > g_speed_change_delay + g_min_dt_between_speed_changes_on_fast_moves) && position_was_aligned ) ||
+				((int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
 				)
 				{
 					g_video_player_status = g_threaded_player_status.make_video_player_status();
@@ -5431,7 +5453,7 @@ void run_funscript()
 					start_time = cur_time;
 					start_video_pos = cur_video_pos;
 
-				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - FS_FIRST(1)) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 					(g_video_player_status.is_paused && g_update) ||
 					(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)) ||
 					(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
@@ -5472,7 +5494,7 @@ void run_funscript()
 				.arg(cur_pos)
 				.arg(action_id - 1);
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - FS_FIRST(1)) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 				(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)))
 			{
 				if (g_pause)
@@ -5556,25 +5578,25 @@ void run_funscript()
 					.arg(action_id - 1);
 			}
 
-			while ((action_id < actions_size) && ((int)((double)(funscript_data_maped[action_id - 1].first - cur_video_pos) / g_video_player_status.rate) < g_speed_change_delay))
+			while ((action_id < actions_size) && ((int)((double)(FS_FIRST(action_id - 1) - cur_video_pos) / g_video_player_status.rate) < g_speed_change_delay))
 			{
 				start_info += QString("\ncur_video_time:%1 > (actio_start_time:%2 - speed_change_delay:%3) with action_id:%4 => action_id++")
 					.arg(VideoTimeToStr(cur_video_pos).c_str())
-					.arg(VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str())
+					.arg(VideoTimeToStr(FS_FIRST(action_id - 1)).c_str())
 					.arg(g_speed_change_delay)
 					.arg(action_id);
 				action_id++;
 			}
 
 			while ( (action_id < actions_size) &&
-					( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - cur_video_pos)
+					( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(FS_FIRST(action_id) - cur_video_pos)
 					> 1.2 * ( ((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) /
-				  			(double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first) ) )
+				  			(double)(FS_FIRST(action_id) - FS_FIRST(action_id_start)) ) )
 					)
 			{
 				start_info += QString("\nreq_speed/actions_speed:%1 > 1.2 with action_id:%4 => action_id++")
-					.arg(((double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - cur_video_pos)) /
-						((((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first))))
+					.arg(((double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(FS_FIRST(action_id) - cur_video_pos)) /
+						((((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(FS_FIRST(action_id) - FS_FIRST(action_id_start)))))
 					.arg(action_id);
 				action_id++;
 			}
@@ -5582,20 +5604,20 @@ void run_funscript()
 			int avg_req_speed, avg_req_hismith_speed, req_dt;
 
 			avg_req_speed = (((double)(funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) /
-				((double)(funscript_data_maped[action_id].first - cur_video_pos) / g_video_player_status.rate));
+				((double)(FS_FIRST(action_id) - cur_video_pos) / g_video_player_status.rate));
 			avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 			req_dt = (g_min_dt_start_for_speed_40 * avg_req_hismith_speed) / 40;
 
-			while (funscript_data_maped[action_id].first - cur_video_pos < req_dt)
+			while (FS_FIRST(action_id) - cur_video_pos < req_dt)
 			{
 				start_info += QString("\n(action_id_end_time - cur_video_pos):%1 < req_dt:%2 (for avg_req_speed: %3) => action_id++")
-					.arg(funscript_data_maped[action_id].first - cur_video_pos)
+					.arg(FS_FIRST(action_id) - cur_video_pos)
 					.arg(req_dt)
 					.arg(avg_req_hismith_speed);
 
 				action_id++;
 				avg_req_speed = (((double)(funscript_data_maped[action_id].second - abs_cur_pos) * 1000.0) /
-					((double)(funscript_data_maped[action_id].first - cur_video_pos) / g_video_player_status.rate));
+					((double)(FS_FIRST(action_id) - cur_video_pos) / g_video_player_status.rate));
 				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 				req_dt = (g_min_dt_start_for_speed_40 * avg_req_hismith_speed) / 40;
 			}
@@ -5620,11 +5642,11 @@ void run_funscript()
 				.arg(action_id)
 				.arg(action_id_start)
 				.arg(abs_cur_pos - funscript_data_maped[0].second)
-				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[0].first)
+				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - FS_FIRST(0))
 				.arg(abs_cur_pos - funscript_data_maped[action_id_start].second)
-				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id_start].first)
-				.arg(( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(funscript_data_maped[action_id].first - cur_video_pos) ) /
-						( (((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(funscript_data_maped[action_id].first - funscript_data_maped[action_id_start].first)) ));
+				.arg((start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - FS_FIRST(action_id_start))
+				.arg(( (double)(funscript_data_maped[action_id].second - abs_cur_pos) / (double)(FS_FIRST(action_id) - cur_video_pos) ) /
+						( (((double)(funscript_data_maped[action_id].second - funscript_data_maped[action_id_start].second)) / (double)(FS_FIRST(action_id) - FS_FIRST(action_id_start))) ));
 
 			const __int64 start_time_in_ms = (start_time.QuadPart * (__int64)1000) / Frequency.QuadPart;
 
@@ -5667,18 +5689,18 @@ void run_funscript()
 
 				int actual_action_id = action_id;
 				g_actual_video_pos = start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
-				while (actual_action_id > 1 && (funscript_data_maped[actual_action_id - 1].first > g_actual_video_pos))
+				while (actual_action_id > 1 && (FS_FIRST(actual_action_id - 1) > g_actual_video_pos))
 				{
 					actual_action_id--;
 				}
 
 				int dpos_exp = 0;
-				if ( (g_actual_video_pos > funscript_data_maped[actual_action_id - 1].first) &&
-						(g_actual_video_pos <= funscript_data_maped[actual_action_id].first) )
+				if ( (g_actual_video_pos > FS_FIRST(actual_action_id - 1)) &&
+						(g_actual_video_pos <= FS_FIRST(actual_action_id)) )
 				{
 					dpos_exp = ((funscript_data_maped[actual_action_id].second - funscript_data_maped[actual_action_id - 1].second) *
-						(g_actual_video_pos - funscript_data_maped[actual_action_id - 1].first)) /
-						(funscript_data_maped[actual_action_id].first - funscript_data_maped[actual_action_id - 1].first);
+						(g_actual_video_pos - FS_FIRST(actual_action_id - 1))) /
+						(FS_FIRST(actual_action_id) - FS_FIRST(actual_action_id - 1));
 				}
 				int req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[actual_action_id - 1].second - dpos_exp;
 				int cur_dpos = funscript_data_maped[action_id].second - exp_abs_cur_pos;
@@ -5709,13 +5731,13 @@ void run_funscript()
 				int fut_action_id = action_id;
 
 				while ( fut_action_id < actions_size - 1 &&
-						(funscript_data_maped[fut_action_id].first - funscript_data_maped[actual_action_id - 1].first <= 333) )
+						(FS_FIRST(fut_action_id) - FS_FIRST(actual_action_id - 1) <= 333) )
 				{
 					fut_action_id++;
 				}
 
 				avg_req_speed = ( ((double)(funscript_data_maped[fut_action_id].second - funscript_data_maped[actual_action_id - 1].second) * 1000.0) /
-										((double)(funscript_data_maped[fut_action_id].first - funscript_data_maped[actual_action_id - 1].first) / g_video_player_status.rate) );
+										((double)(FS_FIRST(fut_action_id) - FS_FIRST(actual_action_id - 1)) / g_video_player_status.rate) );
 
 				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 
@@ -5730,9 +5752,9 @@ void run_funscript()
 				action_start_speed = cur_speed;
 				speed_change_time.QuadPart = -1;
 
-				dif_cur_vs_req_action_start_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(action_start_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id - 1].first;
+				dif_cur_vs_req_action_start_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(action_start_time, start_time, Frequency)) * g_video_player_status.rate)) - FS_FIRST(action_id - 1);
 
-				dt = ((double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate);
+				dt = ((double)(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate);
 				if (dt < g_speed_change_delay + min_dt_between_speed_changes)
 				{
 					hismith_speed_changed += QString("\n\t[action_id++: dt:(%1) < req:(%2)]").arg(dt).arg(g_speed_change_delay + min_dt_between_speed_changes);
@@ -5741,10 +5763,10 @@ void run_funscript()
 					results[action_id - 1].min_dt_between_speed_changes = min_dt_between_speed_changes;
 					results[action_id - 1].actual_action_id_dif = actual_action_id - action_id;
 					results[action_id - 1].move_dif = move_dif;
-					results[action_id - 1].action_start_video_time = VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str();
-					results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id].first;
+					results[action_id - 1].action_start_video_time = VideoTimeToStr(FS_FIRST(action_id - 1)).c_str();
+					results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - FS_FIRST(action_id);
 					results[action_id - 1].dif_cur_vs_req_action_start_time = dif_cur_vs_req_action_start_time;
-					results[action_id - 1].action_length_time = funscript_data_maped[action_id].first - funscript_data_maped[action_id - 1].first;
+					results[action_id - 1].action_length_time = FS_FIRST(action_id) - FS_FIRST(action_id - 1);
 					results[action_id - 1].req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[action_id - 1].second;
 					results[action_id - 1].req_dpos_add = funscript_data_maped[action_id - 1].second - action_start_abs_pos;
 					results[action_id - 1].start_speed = (int)action_start_speed;
@@ -5802,7 +5824,7 @@ void run_funscript()
 						.arg((int)(cur_set_hismith_speed * 100.0))
 						.arg((int)(optimal_hismith_speed * 100.0))
 						.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-						.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
+						.arg(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 						.arg(cur_speed)
 						.arg(req_speed)
 						.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -5909,7 +5931,7 @@ void run_funscript()
 						prev_cur_speed = cur_speed;
 					}
 
-					dt = (double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
+					dt = (double)(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
 					dpos = funscript_data_maped[action_id].second - exp_abs_cur_pos;
 					exp_abs_pos_before_speed_change = exp_abs_cur_pos + ((cur_speed * min((double)g_speed_change_delay, dt)) / 1000.0);
 
@@ -5940,7 +5962,7 @@ void run_funscript()
 										.arg((int)(cur_set_hismith_speed * 100.0))
 										.arg((int)(optimal_hismith_speed * 100.0))
 										.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-										.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
+										.arg(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 										.arg(cur_speed)
 										.arg(req_cur_speed)
 										.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -5990,7 +6012,7 @@ void run_funscript()
 												.arg((int)(cur_set_hismith_speed * 100.0))
 												.arg((int)(optimal_hismith_speed * 100.0))
 												.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
+												.arg(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 												.arg(cur_speed)
 												.arg(req_cur_speed)
 												.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -6001,7 +6023,7 @@ void run_funscript()
 												.arg((int)(cur_set_hismith_speed * 100.0))
 												.arg((int)(optimal_hismith_speed * 100.0))
 												.arg((int)(time_diff_in_milliseconds(set_hismith_speed_time, prev_set_hismith_speed_time, Frequency)))
-												.arg(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
+												.arg(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
 												.arg(cur_speed)
 												.arg(req_cur_speed)
 												.arg(funscript_data_maped[action_id].second - exp_abs_cur_pos);
@@ -6012,13 +6034,13 @@ void run_funscript()
 						}
 					}
 
-					dt = (double)(funscript_data_maped[action_id].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
+					dt = (double)(FS_FIRST(action_id) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
 					dtime = (action_id < actions_size - 1) ? g_speed_change_delay : 0;
 
 					if ( (action_id + 1 < actions_size - 1) &&
 						((int)(time_diff_in_milliseconds(cur_time, set_hismith_speed_time, Frequency)) >= min_dt_between_speed_changes) )
 					{
-						double dt2 = (double)(funscript_data_maped[action_id + 1].first - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
+						double dt2 = (double)(FS_FIRST(action_id + 1) - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate;
 						if (dt2 < 50 + g_speed_change_delay + min_dt_between_speed_changes)
 						{
 							break;
@@ -6069,10 +6091,10 @@ void run_funscript()
 				results[action_id - 1].min_dt_between_speed_changes = min_dt_between_speed_changes;
 				results[action_id - 1].actual_action_id_dif = actual_action_id - action_id;
 				results[action_id - 1].move_dif = move_dif;
-				results[action_id - 1].action_start_video_time = VideoTimeToStr(funscript_data_maped[action_id - 1].first).c_str();
-				results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - funscript_data_maped[action_id].first;
+				results[action_id - 1].action_start_video_time = VideoTimeToStr(FS_FIRST(action_id - 1)).c_str();
+				results[action_id - 1].dif_cur_vs_req_action_end_time = (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)) - FS_FIRST(action_id);
 				results[action_id - 1].dif_cur_vs_req_action_start_time = dif_cur_vs_req_action_start_time;
-				results[action_id - 1].action_length_time = funscript_data_maped[action_id].first - funscript_data_maped[action_id - 1].first;
+				results[action_id - 1].action_length_time = FS_FIRST(action_id) - FS_FIRST(action_id - 1);
 				results[action_id - 1].req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[action_id - 1].second;
 				results[action_id - 1].req_dpos_add = funscript_data_maped[action_id - 1].second - action_start_abs_pos;
 				results[action_id - 1].req_speed = req_speed;
@@ -6186,13 +6208,13 @@ void run_funscript()
 						frame_data_prev = frame_data;
 					}
 
-					if (frame_data.video_pos >= funscript_data_maped[_id].first)
+					if (frame_data.video_pos >= FS_FIRST(_id))
 					{
-						if (frame_data_prev.video_pos <= funscript_data_maped[_id].first)
+						if (frame_data_prev.video_pos <= FS_FIRST(_id))
 						{
 							double exp_abs_cur_pos_to_req_time =
 								(double)frame_data_prev.abs_pos +
-								(((double)(funscript_data_maped[_id].first - frame_data_prev.video_pos) /
+								(((double)(FS_FIRST(_id) - frame_data_prev.video_pos) /
 								(double)(frame_data.video_pos - frame_data_prev.video_pos)) *
 								(double)(frame_data.abs_pos - frame_data_prev.abs_pos));
 							results[_id - 1].dif_cur_vs_req_exp_pos = exp_abs_cur_pos_to_req_time - funscript_data_maped[_id].second;
@@ -6962,6 +6984,7 @@ void SaveSettings()
 	data_list.append({ "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40) });
 	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay) });
 	data_list.append({ "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout) });
+	data_list.append({ "funscript_time_shift_delta_ms", QString::number(g_funscript_time_shift_delta_ms) });
 
 	data_list.append({ "B_range", QString("[%1-%2][%3-%4][%5-%6]")
 												.arg(g_B_range[0][0])
@@ -7012,6 +7035,8 @@ void SaveSettings()
 	data_list.append({ "hotkey_pause", g_hotkey_pause });
 	data_list.append({ "hotkey_resume", g_hotkey_resume });
 	data_list.append({ "hotkey_use_modify_funscript_functions", g_hotkey_use_modify_funscript_functions });
+	data_list.append({ "hotkey_funscript_time_shift_up", g_hotkey_funscript_time_shift_up });
+	data_list.append({ "hotkey_funscript_time_shift_down", g_hotkey_funscript_time_shift_down });
 
 	linearListToXml(document, root, data_list);
 
@@ -7058,11 +7083,14 @@ bool LoadSettings()
 	g_min_dt_start_for_speed_40 = data_map["min_dt_start_for_speed_40"].toInt();
 	g_speed_change_delay = data_map["speed_change_delay"].toInt();
 	g_cpu_freezes_timeout = data_map["cpu_freezes_timeout"].toInt();
+	g_funscript_time_shift_delta_ms = data_map["funscript_time_shift_delta_ms"].toInt();
 
 	g_hotkey_stop = data_map["hotkey_stop"];
 	g_hotkey_pause = data_map["hotkey_pause"];
 	g_hotkey_resume = data_map["hotkey_resume"];
 	g_hotkey_use_modify_funscript_functions = data_map["hotkey_use_modify_funscript_functions"];
+	g_hotkey_funscript_time_shift_up = data_map["hotkey_funscript_time_shift_up"];
+	g_hotkey_funscript_time_shift_down = data_map["hotkey_funscript_time_shift_down"];
 	g_pW->RegisterHotKeys();
 
 	{
