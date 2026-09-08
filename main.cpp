@@ -4769,6 +4769,53 @@ void ThreadedPlayerStatus::status_loop()
 
 //---------------------------------------------------------------
 
+void update_start_video_pos(int &start_video_pos, int &cur_video_pos, int &prev_cur_video_pos, LARGE_INTEGER &cur_time, const LARGE_INTEGER &start_time, const LARGE_INTEGER & Frequency, QString &log_data)
+{
+	prev_cur_video_pos = cur_video_pos;
+
+	get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
+	g_actual_video_pos = cur_video_pos;
+
+	if (g_is_video_player_time_in_milliseconds)
+	{
+		if (g_video_player_status.sys_time > 0)
+		{
+			int new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
+			int start_video_pos_dif = new_start_video_pos - start_video_pos;
+
+			if (g_video_player_type == VideoPlayerTypes::RVP)
+			{
+				if ((start_video_pos_dif > 0) || (start_video_pos_dif <= -50))
+				{
+					start_video_pos = new_start_video_pos;
+					log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+				}
+				else
+				{
+					log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 is not > 0 or <= -50, keep start_video_pos the same]").arg(start_video_pos_dif).arg(new_start_video_pos);
+				}
+			}
+			else
+			{
+				start_video_pos = new_start_video_pos;
+				log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+			}
+		}
+		else
+		{
+			int new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(g_video_player_status.poll_time, start_time, Frequency)) * g_video_player_status.rate);
+			int start_video_pos_dif = new_start_video_pos - start_video_pos;
+			if (start_video_pos_dif > 0)
+			{
+				start_video_pos = new_start_video_pos;
+				log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
+			}
+		}
+	}
+};
+
+//---------------------------------------------------------------
+
 void run_funscript()
 {
 	g_results_file_path = g_root_dir + "\\res_data\\!results_" + get_cur_time_str() + ".txt";
@@ -5149,7 +5196,7 @@ void run_funscript()
 				int last_i = 0;
 				for (int i = 1; i < funscript_data_maped.size(); i++)
 				{
-					if ((FS_FIRST(i) - FS_FIRST(i - 1)) < 10000)
+					if ((funscript_data_maped[i].first - funscript_data_maped[i-1].first) < 10000)
 					{
 						last_i = i;
 					}
@@ -5158,7 +5205,7 @@ void run_funscript()
 						break;
 					}
 				}
-				g_video_cur_actions_end_time = FS_FIRST(last_i);
+				g_video_cur_actions_end_time = funscript_data_maped[last_i].first;
 				g_video_cur_actions_start_pos = funscript_data_maped[0].second;
 
 				get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
@@ -5236,7 +5283,7 @@ void run_funscript()
 			};
 
 			uint64_t pool_size_bytes = min(static_cast<uint64_t>(g_webcam_fps *
-				((double)(FS_FIRST(actions_size - 1) - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
+				((double)(funscript_data_maped[actions_size - 1].first - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
 				(double)sizeof(FrameData) * 1.2), 1ULL << 30); // no more than 1 Gbyte
 			auto* mem_pool = new std::pmr::monotonic_buffer_resource(pool_size_bytes);
 			std::pmr::deque<FrameData> frames_data_history(mem_pool);
@@ -5330,7 +5377,7 @@ void run_funscript()
 						d_cur_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 						d_exp_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0), funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > FS_FIRST(1)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
+						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 						{
 							break;
 						}
@@ -5355,7 +5402,7 @@ void run_funscript()
 
 					g_d_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > FS_FIRST(1)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 					{
 						if (g_pause)
 						{
@@ -5390,7 +5437,7 @@ void run_funscript()
 			start_time = cur_time;
 			start_video_pos = cur_video_pos;
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > FS_FIRST(1)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 				(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
 			{
 				if (g_pause)
@@ -5453,7 +5500,7 @@ void run_funscript()
 					start_time = cur_time;
 					start_video_pos = cur_video_pos;
 
-				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - FS_FIRST(1)) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 					(g_video_player_status.is_paused && g_update) ||
 					(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)) ||
 					(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
@@ -5494,7 +5541,7 @@ void run_funscript()
 				.arg(cur_pos)
 				.arg(action_id - 1);
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - FS_FIRST(1)) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 				(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)))
 			{
 				if (g_pause)
@@ -5625,8 +5672,6 @@ void run_funscript()
 			start_abs_pos = abs_cur_pos;
 			last_set_action_id_for_dif_cur_vs_req_exp_pos = action_id - 1;
 
-			int start_video_pos_dif;
-			int new_start_video_pos;
 			int prev_cur_video_pos = cur_video_pos;
 
 			QueryPerformanceCounter(&cur_time);
@@ -5887,37 +5932,12 @@ void run_funscript()
 
 					if (g_video_player_status.poll_time.QuadPart != prev_vp_st_poll_time.QuadPart)
 					{
-						prev_cur_video_pos = cur_video_pos;
-						LARGE_INTEGER vp_st_poll_time = g_video_player_status.poll_time;
-
-						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
-						g_actual_video_pos = cur_video_pos;
+						update_start_video_pos(start_video_pos, cur_video_pos, prev_cur_video_pos, cur_time, start_time, Frequency, hismith_speed_changed);
 
 						if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
 							(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 						{
 							break;
-						}
-
-						if (g_is_video_player_time_in_milliseconds)
-						{
-							if (g_video_player_status.sys_time > 0)
-							{
-								new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
-								start_video_pos_dif = new_start_video_pos - start_video_pos;
-								start_video_pos = new_start_video_pos;
-								hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
-							}
-							else
-							{
-								new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(vp_st_poll_time, start_time, Frequency)) * g_video_player_status.rate);
-								start_video_pos_dif = new_start_video_pos - start_video_pos;
-								if (start_video_pos_dif > 0)
-								{
-									start_video_pos = new_start_video_pos;
-									hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
-								}
-							}
 						}
 					}
 
@@ -6054,37 +6074,7 @@ void run_funscript()
 
 				if (g_video_player_status.poll_time.QuadPart != prev_vp_st_poll_time.QuadPart)
 				{
-					prev_cur_video_pos = cur_video_pos;
-					LARGE_INTEGER vp_st_poll_time = g_video_player_status.poll_time;
-
-					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
-					g_actual_video_pos = cur_video_pos;
-
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
-					{
-						// need to stop run
-					}
-					else if (g_is_video_player_time_in_milliseconds)
-					{
-						if (g_video_player_status.sys_time > 0)
-						{
-							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate);
-							start_video_pos_dif = new_start_video_pos - start_video_pos;
-							start_video_pos = new_start_video_pos;
-							hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
-						}
-						else
-						{
-							new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(vp_st_poll_time, start_time, Frequency)) * g_video_player_status.rate);
-							start_video_pos_dif = new_start_video_pos - start_video_pos;
-							if (start_video_pos_dif > 0)
-							{
-								start_video_pos = new_start_video_pos;
-								hismith_speed_changed += QString("\n\t[get_video_player_status: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
-							}
-						}
-					}
+					update_start_video_pos(start_video_pos, cur_video_pos, prev_cur_video_pos, cur_time, start_time, Frequency, hismith_speed_changed);
 				}
 
 				results[action_id - 1].avg_req_hismith_speed = avg_req_hismith_speed;
