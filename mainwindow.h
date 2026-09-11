@@ -37,6 +37,8 @@
 #include "3rdParty/buttplugCpp/include/buttplugclient.h"
 #include "3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h"
 
+#include "WinRtBleManager.h"
+
 //---------------------------------------------------------------
 
 #ifndef max
@@ -93,10 +95,14 @@ extern bool g_initial_start;
 extern int g_funscript_time_shift_delta_ms;
 extern std::atomic<int> g_funscript_time_shift_ms;
 
+extern const QString g_winrt_ble;
+extern const QString g_intiface;
+
 //---------------------------------------------------------------
 
 enum MessageType {Add, Always, Clean};
 
+void warning_msg(QString msg, QString title = "");
 void show_msg(QString msg, int timeout = 5000, MessageType msg_type = MessageType::Add, bool drow_modify_funscript_functions = false, double msg_wnd_y_offset_from_top = 0.5);
 void run_funscript();
 void test_hismith(int hismith_speed);
@@ -111,7 +117,7 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest* req, Q
 bool get_devices_list(bool show_msgs = true);
 void SaveSettings();
 void get_statistics_with_hismith(int start_speed, int end_speed);
-bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
+bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, double>>& funscript_data_maped, speeds_data& all_speeds_data, QString* p_res_details = NULL);
 bool get_speed_statistics_data(speeds_data& all_speeds_data);
 
 //---------------------------------------------------------------
@@ -181,8 +187,7 @@ public:
 
 struct statistics_data
 {
-    int dpos;
-    int dt_video;
+    double dpos;
     int dt_gtc;
     int avg_cur_speed;
 };
@@ -198,8 +203,6 @@ struct speed_data
 struct speeds_data
 {
     std::vector<speed_data> speed_data_vector;
-    double min_average_rate_of_change_of_speed;
-    double max_average_rate_of_change_of_speed;
 
     speeds_data() : speed_data_vector(100) {}
 };
@@ -306,8 +309,12 @@ public:
 
     QSystemTrayIcon* trayIcon;
 
+    WinRtBleManager* m_bleManager = nullptr;
+
     bool eventFilter(QObject* obj, QEvent* event);
     void RegisterHotKeys();
+
+    void refreshDevices(bool show_msgs = true);
 
 signals:
     void errorOccurred(const QString& msg);

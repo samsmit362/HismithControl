@@ -37,6 +37,8 @@ set(PROJECT_SOURCES
         HighPrecisionTimerGuard.h
         HereSphereSync.cpp
         HereSphereSync.h
+        WinRtBleManager.cpp
+        WinRtBleManager.h
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h
         .editorconfig
@@ -83,7 +85,7 @@ set_target_properties(OpenCVLib PROPERTIES
              IMPORTED_LOCATION_RELEASE "$ENV{OPENCV_BUILD_PATH_X64}/x64/vc16/lib/opencv_world$ENV{OPENCV_LIBS_VER}.lib")
 
 target_link_libraries(HismithControl
-					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt::Charts Qt::Core Qt::Gui
+					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt::Charts Qt::Core Qt::Gui windowsapp
 					PUBLIC ixwebsocket::ixwebsocket nlohmann_json::nlohmann_json Threads::Threads bcrypt OpenCVLib)
 
 # Clearing the global CMake flags from the default /EHsc so that it does not conflict with /EHa

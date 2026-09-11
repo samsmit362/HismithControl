@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>979</width>
+    <width>1079</width>
     <height>509</height>
    </rect>
   </property>
@@ -95,10 +95,10 @@
    <widget class="QGroupBox" name="groupBox_2">
     <property name="geometry">
      <rect>
-      <x>430</x>
+      <x>470</x>
       <y>10</y>
-      <width>201</width>
-      <height>271</height>
+      <width>261</width>
+      <height>331</height>
      </rect>
     </property>
     <property name="title">
@@ -109,8 +109,8 @@
       <rect>
        <x>10</x>
        <y>30</y>
-       <width>181</width>
-       <height>198</height>
+       <width>241</width>
+       <height>250</height>
       </rect>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
@@ -162,14 +162,24 @@
       <item>
        <widget class="QComboBox" name="Devices"/>
       </item>
+      <item>
+       <widget class="QLabel" name="label_11">
+        <property name="text">
+         <string>Device Connection Type</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="DeviceConnectionTypes"/>
+      </item>
      </layout>
     </widget>
     <widget class="QPushButton" name="refreshDevices">
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>230</y>
-       <width>181</width>
+       <y>290</y>
+       <width>241</width>
        <height>31</height>
       </rect>
      </property>
@@ -309,7 +319,7 @@
    <widget class="QFrame" name="chartFrame">
     <property name="geometry">
      <rect>
-      <x>640</x>
+      <x>740</x>
       <y>0</y>
       <width>331</width>
       <height>330</height>
@@ -326,8 +336,8 @@
     <property name="geometry">
      <rect>
       <x>210</x>
-      <y>10</y>
-      <width>221</width>
+      <y>140</y>
+      <width>261</width>
       <height>141</height>
      </rect>
     </property>
@@ -342,7 +352,7 @@
       <rect>
        <x>10</x>
        <y>30</y>
-       <width>201</width>
+       <width>241</width>
        <height>41</height>
       </rect>
      </property>
@@ -371,7 +381,7 @@
       <rect>
        <x>100</x>
        <y>80</y>
-       <width>111</width>
+       <width>151</width>
        <height>24</height>
       </rect>
      </property>
@@ -400,7 +410,7 @@
       <rect>
        <x>100</x>
        <y>110</y>
-       <width>111</width>
+       <width>151</width>
        <height>24</height>
       </rect>
      </property>
@@ -412,7 +422,7 @@
    <widget class="QPushButton" name="startButton">
     <property name="geometry">
      <rect>
-      <x>840</x>
+      <x>940</x>
       <y>370</y>
       <width>131</width>
       <height>51</height>
@@ -426,8 +436,8 @@
     <property name="geometry">
      <rect>
       <x>210</x>
-      <y>150</y>
-      <width>221</width>
+      <y>10</y>
+      <width>261</width>
       <height>131</height>
      </rect>
     </property>
@@ -439,7 +449,7 @@
       <rect>
        <x>10</x>
        <y>50</y>
-       <width>201</width>
+       <width>241</width>
        <height>41</height>
       </rect>
      </property>
@@ -451,7 +461,7 @@
    <widget class="QGroupBox" name="groupBox_7">
     <property name="geometry">
      <rect>
-      <x>640</x>
+      <x>740</x>
       <y>360</y>
       <width>191</width>
       <height>61</height>
@@ -477,7 +487,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>979</width>
+     <width>1079</width>
      <height>33</height>
     </rect>
    </property>

@@ -14,6 +14,13 @@
 #include <memory_resource>
 #include <algorithm>
 #include <atomic>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+#include <QDir>
+#include <limits>
+
+#include <winrt/base.h> // WinRT apartment init (must happen before QApplication)
 
 using namespace Gdiplus; // Required for Graphics in WndProc
 #pragma comment (lib,"Gdiplus.lib")
@@ -21,6 +28,59 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 #pragma comment(lib, "winmm.lib") // Required for timeBeginPeriod
 
 //---------------------------------------------------------------
+// Global Qt message handler - writes all qDebug/qWarning/qCritical
+// output to <exe directory>\execution.log plus stderr.
+// Installed at the very top of main(), BEFORE QApplication, so
+// WinRtBleManager / Buttplug / OpenCV diagnostics are all captured.
+//---------------------------------------------------------------
+static QFile        g_logFile;
+static QTextStream* g_logStream = nullptr;
+static std::mutex    g_logMutex; // Protects g_logStream from concurrent access (WinRT worker thread vs Qt UI thread)
+
+static void log_handler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+{
+    Q_UNUSED(context);
+    const char* level = "info";
+    switch (type)
+    {
+    case QtDebugMsg:    level = "DEBUG   "; break;
+    case QtInfoMsg:     level = "INFO    "; break;
+    case QtWarningMsg:  level = "WARNING "; break;
+    case QtCriticalMsg: level = "CRITICAL"; break;
+    case QtFatalMsg:    level = "FATAL   "; break;
+    }
+    const QString line =
+        QString("[%1] (%2) %3\n")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+            .arg(level)
+            .arg(msg);
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (g_logStream)
+    {
+        *g_logStream << line;
+        g_logStream->flush();
+    }
+    // Also mirror to stderr (useful when running from a console).
+    fprintf(stderr, "%s", line.toLocal8Bit().constData());
+}
+
+static bool g_logFileOpen(const QString& path)
+{
+    Q_UNUSED(path);
+    if (!g_logFile.open(QIODevice::Append | QIODevice::Text))
+        return false;
+    if (!g_logStream)
+    {
+        g_logStream = new QTextStream(&g_logFile);
+        *g_logStream << "\n[SESSION START "
+                     << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+                     << "]\n";
+        g_logStream->flush();
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------
 
 QString g_cur_version = "12.00";
 
@@ -32,6 +92,7 @@ int g_min_funscript_relative_move;
 int g_dt_for_get_cur_speed;
 const int g_min_dt_for_set_hismith_speed = 20;
 
+int g_speed_change_delay_from_settings_file;
 int g_speed_change_delay;
 int g_min_dt_between_speed_changes_on_slow_moves;
 int g_min_dt_between_speed_changes_on_fast_moves;
@@ -41,9 +102,9 @@ int g_cpu_freezes_timeout;
 
 int g_actual_video_pos = 0;
 int g_video_cur_actions_end_time = 0;
-int g_video_cur_actions_start_pos = 0;
+double g_video_cur_actions_start_pos = 0.0;
 bool g_initial_start = true;
-int g_d_from_search_start_pos = -360;
+double g_d_from_search_start_pos = -360.0;
 
 //YUV:
 int g_B_range[3][2];
@@ -147,8 +208,13 @@ LARGE_INTEGER g_frequency;
 
 //---------------------------------------------------------------
 
+const QString g_winrt_ble = "Direct Bluetooth LE (WinRT)";
+const QString g_intiface = "Intiface® Central (Buttplug.io)";
+
+//---------------------------------------------------------------
+
 HighPrecisionTimerGuard g_high_precision_timer_guard;
-__int64 g_delta_frame_read_time_vs_video_time = -1;
+__int64 g_delta_frame_read_time_vs_video_time = (std::numeric_limits<__int64>::max)();
 
 //---------------------------------------------------------------
 
@@ -227,39 +293,9 @@ QString get_cur_time_str()
 }
 
 void get_delta_frame_read_time_vs_video_time(__int64 camera_msec, LARGE_INTEGER frame_read_time) {
-	static std::vector<__int64> ring_buffer;
-	static size_t write_index = 0;
-	static size_t current_size = 0;
-	static DWORD allocated_fps = 0;
-
-	if (allocated_fps != g_webcam_fps && g_webcam_fps > 0) {
-		ring_buffer.resize(g_webcam_fps);
-		write_index = 0;
-		current_size = 0;
-		allocated_fps = g_webcam_fps;
-	}
-
-	if (allocated_fps == 0) return;
-
 	__int64 frame_read_time_msec = (frame_read_time.QuadPart * 1000) / g_frequency.QuadPart;
 	__int64 current_diff = frame_read_time_msec - camera_msec;
-
-	ring_buffer[write_index] = current_diff;
-
-	write_index = (write_index + 1) % allocated_fps;
-
-	if (current_size < allocated_fps) {
-		current_size++;
-	}
-
-	__int64 min_val = ring_buffer[0];
-	for (size_t i = 1; i < current_size; ++i) {
-		if (ring_buffer[i] < min_val) {
-			min_val = ring_buffer[i];
-		}
-	}
-
-	g_delta_frame_read_time_vs_video_time = min_val;
+	g_delta_frame_read_time_vs_video_time = (std::min)(g_delta_frame_read_time_vs_video_time, current_diff);
 }
 
 
@@ -300,9 +336,49 @@ void get_new_camera_frame(cv::VideoCapture &capture, cv::Mat& frame, __int64& ms
 }
 
 int _tmp_cur_hismith_speed_int = 0;
+
+// ---------------------------------------------------------------------------
+// Hismith transport dispatcher
+//   - "Direct Bluetooth LE (WinRT)"  ->  WinRtBleManager::sendSpeedCommand
+//   - "Intiface (Buttplug.io)"       ->  ButtplugClient::sendScalar
+//
+// set_hismith_speed() is the ONLY entry point that puts a speed command on
+// the wire. It reads the currently-selected transport from the UI dropdown
+// (ui->DeviceConnectionTypes) every call, so test_hismith/run_funscript/
+// get_statistics can freely switch transports at any time.
+// ---------------------------------------------------------------------------
+inline bool   hismith_uses_ble()
+{
+	if (!g_pW || !g_pW->ui) return false;
+	if (g_pW->ui->DeviceConnectionTypes->currentText() != g_winrt_ble) return false;
+	return (g_pW->m_bleManager && g_pW->m_bleManager->isConnected());
+}
+
+inline bool hismith_is_connected()
+{
+	if (!g_pW) return false;
+	if (g_pW->ui && g_pW->ui->DeviceConnectionTypes->currentText() == g_winrt_ble)
+	{
+		return (g_pW->m_bleManager && g_pW->m_bleManager->isConnected());
+	}
+	return (g_pClient && g_pMyDevice);
+}
+
 double set_hismith_speed(double speed)
 {
 	double res_speed = -1.0;
+
+	if (hismith_uses_ble())
+	{
+		int speed_int = speed > 0 ? speed * 100.0 : 0;
+		if (speed_int > g_max_allowed_hismith_speed) speed_int = g_max_allowed_hismith_speed;
+		if (speed_int < 0)                           speed_int = 0;
+		_tmp_cur_hismith_speed_int = speed_int;
+		res_speed = (double)speed_int / 100.0;
+		g_pW->m_bleManager->sendSpeedCommand((uint8_t)speed_int);
+		return res_speed;
+	}
+
 	if (g_pClient && g_pMyDevice)
 	{
 		int speed_int = speed > 0 ? speed * 100.0 : 0;
@@ -354,7 +430,7 @@ void draw_text(QString text, cv::Mat &frame, int x1 = -1, int y1 = -1, int x2 = 
 void show_frame_in_cv_window(cv::String wname, cv::Mat &frame)
 {
 	cv::namedWindow(wname, cv::WINDOW_NORMAL);
-	cv::setWindowProperty(wname, cv::WND_PROP_TOPMOST, 1);
+	//cv::setWindowProperty(wname, cv::WND_PROP_TOPMOST, 1);
 	cv::imshow(wname, frame);
 	cv::Size s = frame.size();
 	cv::resizeWindow(wname, s);
@@ -408,7 +484,7 @@ void error_msg(QString msg, cv::Mat* p_frame, cv::Mat* p_frame_upd, cv::Mat *p_p
 	cv::destroyAllWindows();
 }
 
-void warning_msg(QString msg, QString title = "")
+void warning_msg(QString msg, QString title)
 {
 	g_results_file_data += QString("\nwarning_msg:\n") + msg + QString("\n");
 	emit g_pW->warningOccurred(msg, title);
@@ -522,7 +598,7 @@ void find_objects(const cv::Mat& mask, std::vector<ObjectData>& result, cv::Mat&
 }
 
 // return pos in range: [0;360]
-bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = false, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "Get Hismith Pos By Image", QString add_data = QString())
+bool get_hismith_pos_by_image(cv::Mat& frame, double& pos, bool ignore_error = false, bool show_results = false, cv::Mat *p_res_frame = NULL, double *p_cur_speed = NULL, cv::String title = "Get Hismith Pos By Image", QString add_data = QString())
 {
 	static cv::Mat prev_frame;
 
@@ -1096,7 +1172,7 @@ bool get_hismith_pos_by_image(cv::Mat& frame, int& pos, bool ignore_error = fals
 								double g_to_r_distance = (int)sqrt((double)(pow2(g_cx - r_cx) + pow2(g_cy - r_cy)));
 								double telescopic_motor_rocker_arm_proportions = g_to_r_distance > 0 ? g_to_c_distance / g_to_r_distance : 0;
 
-								QString text = QString::asprintf("%s" "pos: %d cur_speed: %d\ntelescopic_motor_rocker_arm_proportions: %.03f\ntelescopic_motor_rocker_arm_center_x_proportions: %.03f max_prev_to_cur_dif: %.02f\%\nperformance data: dt_get_pos_total: %03d dt_get_pos_conversion: %03d", add_data.toStdString().c_str(), pos, cur_speed, telescopic_motor_rocker_arm_proportions, g_ccxlcx_lh_ratio, g_max_ccxlcx_lh_ratio_prev_to_cur_dif, dt, dt1);
+								QString text = QString::asprintf("%s" "pos: %.03f cur_speed: %d device_speed_change_delay: %d\ntelescopic_motor_rocker_arm_proportions: %.03f\ntelescopic_motor_rocker_arm_center_x_proportions: %.03f max_prev_to_cur_dif: %.02f\%\nperformance data: dt_get_pos_total: %03d dt_get_pos_conversion: %03d", add_data.toStdString().c_str(), pos, cur_speed, g_speed_change_delay, telescopic_motor_rocker_arm_proportions, g_ccxlcx_lh_ratio, g_max_ccxlcx_lh_ratio_prev_to_cur_dif, dt, dt1);
 
 								draw_text(text, img_res);
 
@@ -1135,24 +1211,24 @@ cv::String VideoTimeToStr(__int64 pos)
 	return str;
 }
 
-int get_loc(int pos)
+int get_loc(double pos)
 {
 	int loc = 0;
 
-	if (pos < 0)
+	if (pos < 0.0)
 	{
-		pos += 360;
+		pos += 360.0;
 	}
 
-	if ((pos >= 45) && (pos < (90 + 45)))
+	if ((pos >= 45.0) && (pos < (90.0 + 45.0)))
 	{
 		loc = 1;
 	}
-	else if ((pos >= (90 + 45)) && (pos < (180 + 45)))
+	else if ((pos >= (90.0 + 45.0)) && (pos < (180.0 + 45.0)))
 	{
 		loc = 2;
 	}
-	else if ((pos >= (180 + 45)) && (pos < (270 + 45)))
+	else if ((pos >= (180.0 + 45.0)) && (pos < (270.0 + 45.0)))
 	{
 		loc = 3;
 	}
@@ -1173,12 +1249,12 @@ void test_err_frame(QString fpath)
 
 	g_save_images = false;
 
-	int pos;
+	double pos;
 	get_hismith_pos_by_image(frame, pos, false, true);
 
 	cv::String title("Test Error Frame");
 	cv::namedWindow(title, 1);
-	cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+	//cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
 	int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 	int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 	cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
@@ -1655,8 +1731,8 @@ bool init_camera(cv::VideoCapture &capture)
 
 		LARGE_INTEGER cur_time;
 		QueryPerformanceFrequency(&g_frequency);
-		bool delta_cur_vs_video_time_was_init = false;
-		g_delta_frame_read_time_vs_video_time = -1;
+
+		g_delta_frame_read_time_vs_video_time = (std::numeric_limits<__int64>::max)();
 
 		show_msg("Geting first ~5 secons Webcam frames for get better Webcam focus and sync...\n", 5000, MessageType::Always);
 
@@ -1780,7 +1856,7 @@ void test_camera()
 		std::copy(&g_G_range[0][0], &g_G_range[0][0] + 3 * 2, &G_range[0][0]);
 
 		cv::namedWindow(title, 1);
-		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		//cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
 		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
@@ -2100,7 +2176,7 @@ void test_camera()
 	cv::destroyAllWindows();
 }
 
-int rel_move_to_dpos(double rel_move)
+double rel_move_to_dpos(double rel_move)
 {
 	if ((rel_move < 0) || (rel_move > 100))
 	{
@@ -2109,11 +2185,11 @@ int rel_move_to_dpos(double rel_move)
 
 	double a = abs(rel_move - 50.0);
 	double b = 50.0;
-	int dpos = (double)(std::acos(a / b) * 180.0) / M_PI;
+	double dpos = (double)(std::acos(a / b) * 180.0) / M_PI;
 
 	if (rel_move > b)
 	{
-		dpos = 180 - dpos;
+		dpos = 180.0 - dpos;
 	}
 
 	return dpos;
@@ -2271,7 +2347,7 @@ bool get_modify_funscript_move_in_out_functions(std::vector<std::vector<QPair<do
 	return true;
 }
 
-bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, int>>& funscript_data_maped, speeds_data &all_speeds_data, QString *p_res_details)
+bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, double>>& funscript_data_maped, speeds_data &all_speeds_data, QString *p_res_details)
 {
 	bool res = false;
 
@@ -2303,7 +2379,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 	QStringList actions = match.captured(1).split("},{");
 	int at, pos;
 	int size = actions.size();
-	std::vector<QPair<int, int>> funscript_data(size);
+	std::vector<QPair<int, double>> funscript_data(size);
 
 	int id = 0, last_set_id_data = -1;
 	for (QString& action : actions)
@@ -2374,7 +2450,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 				if (cur_move_dirrection != prev_move_dirrection)
 				{
-					int min_pos, max_pos, min_id, max_id;
+					double min_pos, max_pos; int min_id, max_id;
 
 					if (funscript_data[prev_top_end_id].second > funscript_data[id - 1].second)
 					{
@@ -2446,14 +2522,14 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 						{
 							result_details += QString("Averaged %1 positions\n").arg(id2 - id1);
 
-							int total_move = 0;
-							std::vector<int> i_move(id2 - id1);
+							double total_move = 0.0;
+							std::vector<double> i_move(id2 - id1);
 							for (int i = id1 + 1; i <= id2; i++)
 							{
 								total_move += abs(funscript_data[i].second - funscript_data[i - 1].second);
 								i_move[i - (id1 + 1)] = total_move;
 							}
-							int rel_move = funscript_data[id2].second - funscript_data[id1].second;
+							double rel_move = funscript_data[id2].second - funscript_data[id1].second;
 
 							if (total_move == 0)
 							{
@@ -2473,7 +2549,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 							result_details += QString("\n%1 | ").arg(100 - funscript_data[id1].second);
 							for (int i = id1 + 1; i <= id2; i++)
 							{
-								int res_inv_pos = funscript_data[id1].second + ((i_move[i - (id1 + 1)] * rel_move) / total_move);
+								double res_inv_pos = funscript_data[id1].second + ((i_move[i - (id1 + 1)] * rel_move) / total_move);
 								result_details += QString("%1").arg(100 - res_inv_pos);
 								if (i < id2)
 								{
@@ -2539,7 +2615,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 			return res;
 		}
 
-		std::list<QPair<int, int>> funscript_data_list;
+		std::list<QPair<int, double>> funscript_data_list;
 		int prev_move_in_out_id = -1;
 		int prev_variants_pair_id = -1;
 
@@ -2579,7 +2655,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 					if (cur_move_dirrection != prev_move_dirrection)
 					{
-						int min_pos, max_pos, min_id, max_id;
+						double min_pos, max_pos; int min_id, max_id;
 						int move_in_out_id = -1;
 						int variants_pair_id = -1;
 
@@ -2600,7 +2676,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 						if (prev_top_end_id == id - 2)
 						{
-							int dpos = 180;
+							double dpos = 180.0;
 							int dt = funscript_data[id - 1].first - funscript_data[prev_top_end_id].first;
 
 							if (dt == 0)
@@ -2640,7 +2716,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 									int variats_by_cur_move_type_size = variats_by_cur_move_type.size();
 									int variant_id = (variats_by_cur_move_type_size == 1) ? variats_by_cur_move_type[0] : variats_by_cur_move_type[std::rand() % variats_by_cur_move_type_size];
 
-									int total_move = funscript_data[id - 1].second - funscript_data[prev_top_end_id].second;
+									double total_move = funscript_data[id - 1].second - funscript_data[prev_top_end_id].second;
 									std::vector<QPair<double, double>>& modify_funscript_move_function = modify_funscript_move_functions[variant_id];
 
 									int ddt, ddmove, ddt_prev = 0;
@@ -2748,7 +2824,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 
 				if (cur_move_dirrection != prev_move_dirrection)
 				{
-					int min_pos, max_pos, min_id, max_id;
+					double min_pos, max_pos; int min_id, max_id;
 
 					if (funscript_data[prev_top_end_id].second > funscript_data[id - 1].second)
 					{
@@ -2776,7 +2852,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 						for (int i = prev_top_end_id + 1; i <= id - 1; i++)
 						{
 							double rel_move = ((double)(max_pos - funscript_data[i].second) * 100.0) / (double)(max_pos - min_pos);
-							int dpos = rel_move_to_dpos(rel_move);
+							double dpos = rel_move_to_dpos(rel_move);
 							funscript_data_maped[i].first = funscript_data[i].first;
 							funscript_data_maped[i].second = funscript_data_maped[prev_top_end_id].second + dpos;
 						}
@@ -2790,7 +2866,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 						for (int i = prev_top_end_id + 1; i <= id - 1; i++)
 						{
 							double rel_move = ((double)(funscript_data[i].second - min_pos) * 100.0) / (double)(max_pos - min_pos);
-							int dpos = rel_move_to_dpos(rel_move);
+							double dpos = rel_move_to_dpos(rel_move);
 							funscript_data_maped[i].first = funscript_data[i].first;
 							funscript_data_maped[i].second = funscript_data_maped[prev_top_end_id].second + dpos;
 						}
@@ -2811,8 +2887,8 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 		id = size - 1;
 		if (cur_move_dirrection == -1)
 		{
-			int max_pos = funscript_data[prev_top_end_id].second;
-			int min_pos = funscript_data[id].second;
+			double max_pos = funscript_data[prev_top_end_id].second;
+			double min_pos = funscript_data[id].second;
 
 			if (max_pos - min_pos == 0)
 			{
@@ -2823,15 +2899,15 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 			for (int i = prev_top_end_id + 1; i <= id; i++)
 			{
 				double rel_move = ((double)(max_pos - funscript_data[i].second) * 100.0) / (double)(max_pos - min_pos);
-				int dpos = rel_move_to_dpos(rel_move);
+				double dpos = rel_move_to_dpos(rel_move);
 				funscript_data_maped[i].first = funscript_data[i].first;
 				funscript_data_maped[i].second = funscript_data_maped[prev_top_end_id].second + dpos;
 			}
 		}
 		else
 		{
-			int max_pos = funscript_data[id].second;
-			int min_pos = funscript_data[prev_top_end_id].second;
+			double max_pos = funscript_data[id].second;
+			double min_pos = funscript_data[prev_top_end_id].second;
 
 			if (max_pos - min_pos == 0)
 			{
@@ -2842,7 +2918,7 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 			for (int i = prev_top_end_id + 1; i <= id; i++)
 			{
 				double rel_move = ((double)(funscript_data[i].second - min_pos) * 100.0) / (double)(max_pos - min_pos);
-				int dpos = rel_move_to_dpos(rel_move);
+				double dpos = rel_move_to_dpos(rel_move);
 				funscript_data_maped[i].first = funscript_data[i].first;
 				funscript_data_maped[i].second = funscript_data_maped[prev_top_end_id].second + dpos;
 			}
@@ -2899,8 +2975,9 @@ bool get_parsed_funscript_data(QString funscript_fname, std::vector<QPair<int, i
 bool get_speed_statistics_data(speeds_data &all_speeds_data)
 {
 	bool res = false;
-	statistics_data sub_data{0, 0, 0, -1};
+	statistics_data sub_data{0, 0, -1};
 
+	int avg_time_delay_N = 0;
 	g_avg_time_delay = 0;
 	for (int speed = 1; speed <= 100; speed++)
 	{
@@ -2932,8 +3009,7 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 				if (tag_name.contains("sub_data_"))
 				{
 					// <sub_data_0 dt_video="66" dt_gtc="31" dpos="0"/>
-					sub_data.dpos = e.attribute("dpos").toInt();
-					sub_data.dt_video = e.attribute("dt_video").toInt();
+					sub_data.dpos = e.attribute("dpos").toDouble();
 					sub_data.dt_gtc = e.attribute("dt_gtc").toInt();
 					speed_data.speed_statistics_data.push_back(sub_data);
 				}
@@ -2941,7 +3017,7 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 			n = n.nextSibling();
 		}
 
-		int dpos;
+		double dpos;
 		int dt_gtc;
 		int end_i = -1;
 
@@ -2981,42 +3057,55 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 			return res;
 		}
 
-		speed_data.total_average_speed = (dpos * 1000) / dt_gtc;
+		speed_data.total_average_speed = (dpos * 1000.0) / (double)dt_gtc;
 
-		dt_gtc = 0;
-		for (int i = 0; i < speed_data.speed_statistics_data.size()-3; i++)
+		if (speed >= 40)
 		{
-			if ((speed_data.speed_statistics_data[i].dpos == 0) || ((speed_data.speed_statistics_data[i + 1].dpos == 0) && (speed_data.speed_statistics_data[i + 2].dpos == 0)))
-			{
-				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
-			}
-			else
-			{
-				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
-				break;
-			}
-		}
-
-		speed_data.time_delay = dt_gtc;
-		g_avg_time_delay += speed_data.time_delay;
-
-		for (int i = 0; i < speed_data.speed_statistics_data.size(); i++)
-		{
-			dpos = 0;
 			dt_gtc = 0;
-			for (int j = i; j >= 0; j--)
+			for (int i = 1; i < speed_data.speed_statistics_data.size(); i++)
 			{
-				dt_gtc += speed_data.speed_statistics_data[j].dt_gtc;
-				dpos += speed_data.speed_statistics_data[j].dpos;
-				if (dt_gtc >= g_dt_for_get_cur_speed)
+				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
+			}
+			int avg_dt_gtc = dt_gtc / (speed_data.speed_statistics_data.size() - 1);
+			double min_dpos = 1.0 * ((double)avg_dt_gtc / 16.0);
+
+			dt_gtc = 0;
+
+			const int inst_speed_N = 4;
+			double inst_speed_dpos, inst_speed;
+			int inst_speed_dt_gtc, min_i = 0;
+
+			for (int i = 0; i < speed_data.speed_statistics_data.size() - inst_speed_N; i++)
+			{
+				if (speed_data.speed_statistics_data[i].dpos >= min_dpos)
 				{
+					min_i = i;
 					break;
+				}
+				else
+				{
+					dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
 				}
 			}
 
-			if (dt_gtc < g_dt_for_get_cur_speed)
+			for (int i = min_i; i < speed_data.speed_statistics_data.size() - inst_speed_N; i++)
 			{
-				dt_gtc = g_dt_for_get_cur_speed;
+				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
+
+				inst_speed_dpos = 0.0;
+				inst_speed_dt_gtc = 0;
+				for (int j = 0; j < inst_speed_N; j++)
+				{
+					inst_speed_dpos += speed_data.speed_statistics_data[i + j].dpos;
+					inst_speed_dt_gtc += speed_data.speed_statistics_data[i + j].dt_gtc;
+				}
+
+				inst_speed = (inst_speed_dpos * 1000.0) / (double)inst_speed_dt_gtc;
+
+				if (inst_speed >= speed_data.total_average_speed * 0.7)
+				{
+					break;
+				}
 			}
 
 			if (dt_gtc == 0)
@@ -3025,101 +3114,32 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 				return res;
 			}
 
-			speed_data.speed_statistics_data[i].avg_cur_speed = (dpos * 1000) / dt_gtc;
+			speed_data.time_delay = dt_gtc;
+			avg_time_delay_N++;
+			g_avg_time_delay += speed_data.time_delay;
 		}
-
+		else
 		{
-			int n = 0;
-			int avg_speed = 0;
-			int s = 0;
-
-			int dt_gtc = 0;
-			for (int i = speed_data.speed_statistics_data.size() - 1; i > end_i; i--)
-			{
-				avg_speed += speed_data.speed_statistics_data[i].avg_cur_speed;
-				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
-				n++;
-				if (dt_gtc > 5000)
-				{
-					break;
-				}
-			}
-
-			if (n == 0)
-			{
-				error_msg(QString("ERROR: got n == 0 in file: %1").arg(fpath));
-				return res;
-			}
-
-			avg_speed = avg_speed / n;
-
-			int cnt = 0;
-			for (int i = speed_data.speed_statistics_data.size() - 1; i > speed_data.speed_statistics_data.size() - 1 - n; i--)
-			{
-				cnt++;
-				s += pow2(speed_data.speed_statistics_data[i].avg_cur_speed - avg_speed);
-			}
-			s = sqrt(s / n);
-
-			int min_avg_speed = avg_speed - s;
-
-			dt_gtc = 0;
-			int i = 0;
-			while (i < speed_data.speed_statistics_data.size() - 1)
-			{
-				if ((speed_data.speed_statistics_data[i].dpos != 0) && (speed_data.speed_statistics_data[i + 1].dpos != 0))
-				{
-					break;
-				}
-				i++;
-			}
-
-			if (speed_data.speed_statistics_data[i].dpos < speed_data.speed_statistics_data[i + 1].dpos)
-			{
-				if (speed_data.speed_statistics_data[i + 1].dpos == 0)
-				{
-					error_msg(QString("ERROR: got speed_data.speed_statistics_data[i + 1].dpos == 0 in file: %1").arg(fpath));
-					return res;
-				}
-
-				int dt = ((speed_data.speed_statistics_data[i + 1].dt_gtc * speed_data.speed_statistics_data[i].dpos) / speed_data.speed_statistics_data[i + 1].dpos);
-				if (dt < speed_data.speed_statistics_data[i].dt_gtc)
-				{
-					dt_gtc += dt;
-				}
-				else
-				{
-					dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
-				}
-			}
-			else
-			{
-				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
-			}
-			i++;
-
-			while (i < speed_data.speed_statistics_data.size())
-			{
-				dt_gtc += speed_data.speed_statistics_data[i].dt_gtc;
-
-				if (speed_data.speed_statistics_data[i].avg_cur_speed >= min_avg_speed)
-				{
-					break;
-				}
-				i++;
-			}
-
-			if (dt_gtc == 0)
-			{
-				error_msg(QString("ERROR: got dt_gtc == 0 (3) in file: %1").arg(fpath));
-				return res;
-			}
-
-			speed_data.average_rate_of_change_of_speed = (double)(speed_data.speed_statistics_data[i].avg_cur_speed) / (double)dt_gtc;
+			speed_data.time_delay = -1;
 		}
 	}
 
-	g_avg_time_delay = g_avg_time_delay / 100;
+	g_avg_time_delay = g_avg_time_delay / avg_time_delay_N;
+
+	int s = 0;
+	avg_time_delay_N = 0;
+	for (int speed = 1; speed <= 100; speed++)
+	{
+		speed_data& speed_data = all_speeds_data.speed_data_vector[speed - 1];
+
+		if (speed_data.time_delay != -1)
+		{
+			s += pow2(speed_data.time_delay - g_avg_time_delay);
+			avg_time_delay_N++;
+		}
+	}
+	s = sqrt(s / avg_time_delay_N);
+	g_avg_time_delay += s;
 
 	int speed = 1;
 	while (speed <= 100 - 1)
@@ -3132,29 +3152,6 @@ bool get_speed_statistics_data(speeds_data &all_speeds_data)
 			speed = 0;
 		}
 		speed++;
-	}
-
-	all_speeds_data.min_average_rate_of_change_of_speed = all_speeds_data.speed_data_vector[0].average_rate_of_change_of_speed;
-	all_speeds_data.max_average_rate_of_change_of_speed = all_speeds_data.speed_data_vector[0].average_rate_of_change_of_speed;
-	for (int speed = 2; speed <= 100; speed++)
-	{
-		speed_data& speed_data = all_speeds_data.speed_data_vector[speed - 1];
-
-		if (speed_data.average_rate_of_change_of_speed < all_speeds_data.min_average_rate_of_change_of_speed)
-		{
-			all_speeds_data.min_average_rate_of_change_of_speed = speed_data.average_rate_of_change_of_speed;
-		}
-
-		if (speed_data.average_rate_of_change_of_speed > all_speeds_data.max_average_rate_of_change_of_speed)
-		{
-			all_speeds_data.max_average_rate_of_change_of_speed = speed_data.average_rate_of_change_of_speed;
-		}
-	}
-
-	for (int speed = 1; speed <= 100; speed++)
-	{
-		speed_data& speed_data = all_speeds_data.speed_data_vector[speed - 1];
-		speed_data.average_rate_of_change_of_speed = all_speeds_data.min_average_rate_of_change_of_speed + (((double)(speed - 1)*(all_speeds_data.max_average_rate_of_change_of_speed - all_speeds_data.min_average_rate_of_change_of_speed)) / 99.0);
 	}
 
 	res = true;
@@ -3181,7 +3178,7 @@ int get_avg_hismith_speed(speeds_data& all_speeds_data, int speed)
 	return h_speed;
 }
 
-int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int cur_speed, int dpos, int dt)
+int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int cur_speed, double dpos, int dt)
 {
 	if (dt < g_min_dt_for_set_hismith_speed)
 	{
@@ -3190,7 +3187,7 @@ int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int
 	}
 
 	int h_speed = 0;
-	int avg_req_speed = (dpos * 1000) / dt;
+	double avg_req_speed = (dpos * 1000.0) / (double)dt;
 
 	if (avg_req_speed > 0)
 	{
@@ -3214,68 +3211,48 @@ int get_optimal_hismith_speed(speeds_data& all_speeds_data, int cur_h_speed, int
 }
 
 // return value in range: target_pos + [-90;270)
-int get_abs_to_target_pos(int cur_pos, int target_pos)
+double get_abs_to_target_pos(double cur_pos, double target_pos)
 {
-	int dif = (cur_pos % 360) - (target_pos % 360);
-	if (dif >= 270)
+	double dif = (fmod(cur_pos, 360.0)) - (fmod(target_pos, 360.0));
+	if (dif >= 270.0)
 	{
-		dif -= 360;
+		dif -= 360.0;
 	}
-	else if (dif < -90)
+	else if (dif < -90.0)
 	{
-		dif += 360;
+		dif += 360.0;
 	}
 	return target_pos + dif;
 }
 
-// return value in range: (-360 + max_search_dif; max_search_dif]
-int get_d_in_front_from_poses(int abs_pos1, int pos2, int max_search_dif)
+double update_abs_pos(const double &cur_pos, const double &prev_pos, double &abs_cur_pos, cv::Mat& frame, double prev_speed)
 {
-	abs_pos1 %= 360;
-	pos2 %= 360;
-	int dif = abs_pos1 - pos2;
-	if (dif > max_search_dif)
-	{
-		dif -= 360;
-	}
-	else if (dif < 0)
-	{
-		if (dif + 360 <= max_search_dif)
-		{
-			dif += 360;
-		}
-	}
-	return dif;
-}
-
-int update_abs_pos(const int &cur_pos, const int &prev_pos, int &abs_cur_pos, cv::Mat& frame, double prev_speed)
-{
-	int dpos = 0;
+	double dpos = 0.0;
 
 	if (cur_pos < prev_pos)
 	{
-		if (cur_pos + 360 - prev_pos < 180)
+		if (cur_pos + 360.0 - prev_pos < 180.0)
 		{
-			dpos = cur_pos + 360 - prev_pos;
+			dpos = cur_pos + 360.0 - prev_pos;
 		}
-		else if (prev_pos - cur_pos < 45)
+		else if (prev_pos - cur_pos < 45.0)
 		{
 			dpos = -(prev_pos - cur_pos);
 		}
 		else
 		{
-			dpos = cur_pos + 360 - prev_pos;
+			dpos = cur_pos + 360.0 - prev_pos;
 		}
 	}
 	if (cur_pos > prev_pos)
 	{
-		if (cur_pos - prev_pos < 180)
+		if (cur_pos - prev_pos < 180.0)
 		{
 			dpos = cur_pos - prev_pos;
 		}
-		else if (prev_pos + 360 - cur_pos < 45)
+		else if (prev_pos + 360.0 - cur_pos < 45.0)
 		{
-			dpos = -(prev_pos + 360 - cur_pos);
+			dpos = -(prev_pos + 360.0 - cur_pos);
 		}
 		else
 		{
@@ -3292,14 +3269,14 @@ int update_abs_pos(const int &cur_pos, const int &prev_pos, int &abs_cur_pos, cv
 
 const int _tmp_prev_poss_max_N = 100;
 __int64 _tmp_msec_video_prev_poss[_tmp_prev_poss_max_N];
-int _tmp_abs_prev_poss[_tmp_prev_poss_max_N];
+double _tmp_abs_prev_poss[_tmp_prev_poss_max_N];
 int _num_prev_poss = 0;
 
 bool _tmp_start_check_abs_cur_pos = false;
-int _tmp_prev_start_abs_cur_pos = 0;
+double _tmp_prev_start_abs_cur_pos = 0.0;
 LARGE_INTEGER _tmp_prev_start_time;
 
-void shift_get_next_frame_and_cur_speed_data(int dpos)
+void shift_get_next_frame_and_cur_speed_data(double dpos)
 {
 	for (int i = 0; i < _num_prev_poss; i++)
 	{
@@ -3309,10 +3286,10 @@ void shift_get_next_frame_and_cur_speed_data(int dpos)
 }
 
 bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
-	int& abs_cur_pos, int& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
-	__int64& msec_video_prev_pos, int& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString())
+	double& abs_cur_pos, double& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
+	__int64& msec_video_prev_pos, double& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString())
 {
-	int prev_pos, dpos;
+	double prev_pos, dpos;
 	bool res = false;
 
 	prev_pos = cur_pos;
@@ -3681,7 +3658,7 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest* re
 			is_paused = true;
 			is_vlc_time_in_milliseconds = false;
 			video_filename.clear();
-			if (g_pMyDevice)
+			if (hismith_is_connected())
 				set_hismith_speed(0.0);
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		}
@@ -3815,7 +3792,7 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 			sys_time = -1;
 			is_paused = true;
 			video_filepath.clear();
-			if (g_pMyDevice)
+			if (hismith_is_connected())
 				set_hismith_speed(0.0);
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		}
@@ -3924,7 +3901,7 @@ void make_here_sphere_status_request(bool& is_paused, QString& video_filepath, i
 			is_paused = true;
 			rate = 1;
 			video_filepath.clear();
-			if (g_pMyDevice)
+			if (hismith_is_connected())
 				set_hismith_speed(0.0);
 
 			QThread::msleep(500);
@@ -4381,7 +4358,7 @@ QString get_add_msg_data()
     std::ostringstream oss;
     oss << std::put_time(&tm, "%H:%M:%S");
     QString time_str = oss.str().c_str();
-	int abs_cur_pos, cur_pos;
+	double abs_cur_pos, cur_pos;
 	__int64 msec_video_cur_pos;
 	cv::Mat frame;
 	bool get_res;
@@ -4401,7 +4378,7 @@ QString get_add_msg_data()
         .arg(get_time_to_cur_actions_end())
         .arg(g_video_player_status.rate)
 		.arg(g_funscript_time_shift_ms)
-		.arg(g_runing_funscript ? QString("") : QString("\nDiff start hismith pos: %1").arg(g_d_from_search_start_pos))
+		.arg(g_runing_funscript ? QString("") : QString("\nDiff start hismith pos: %1°").arg((int)g_d_from_search_start_pos))
 		;
     if (g_modify_funscript)
     {
@@ -4821,18 +4798,18 @@ void run_funscript()
 	g_results_file_path = g_root_dir + "\\res_data\\!results_" + get_cur_time_str() + ".txt";
 	g_results_file_data.clear();
 	QString funscript_fname, last_load_funscript_fname, last_load_funscript_video_filepath;
-	int d_cur_from_search_start_pos, d_exp_from_search_start_pos, cur_pos, search_start_pos;
+	double d_cur_from_search_start_pos, d_exp_from_search_start_pos, cur_pos, search_start_pos;
 	__int64 msec_video_cur_pos, msec_video_prev_pos;
 	double dt = 0, dmove = 0;
-	int abs_cur_pos = 0, abs_prev_pos = 0;
-	int exp_abs_cur_pos = 0;
-	int dpos;
+	double abs_cur_pos = 0.0, abs_prev_pos = 0.0;
+	double exp_abs_cur_pos = 0.0;
+	double dpos;
 	double cur_speed, prev_cur_speed = 0, action_start_speed;
 	int start_video_pos, cur_video_pos = 0;
 
 	double prev_rate = 1;
 	QString last_play_video_filepath;
-	std::vector<QPair<int, int>> funscript_data_maped_full;
+	std::vector<QPair<int, double>> funscript_data_maped_full;
 	bool get_res = true;
 	double cur_set_hismith_speed = 0;
 	int res;
@@ -4875,6 +4852,7 @@ void run_funscript()
 		get_new_camera_frame(*g_pCapture, frame, msec_video_cur_pos);
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
+			disconnect_from_hismith();
 			g_threaded_capture.stop();
 			g_high_precision_timer_guard.Stop();
 			g_pCapture->release();
@@ -4926,9 +4904,18 @@ void run_funscript()
 	//-----------------------------------------------------
 
 	speeds_data all_speeds_data;
-	get_speed_statistics_data(all_speeds_data);
+	if (!get_speed_statistics_data(all_speeds_data))
+	{
+		disconnect_from_hismith();
+		g_threaded_capture.stop();
+		g_high_precision_timer_guard.Stop();
+		g_pCapture->release();
+		delete g_pCapture;
+		g_pCapture = NULL;
+		return;
+	}
 
-	if (g_speed_change_delay == -1)
+	if (g_speed_change_delay_from_settings_file == -1)
 	{
 		g_speed_change_delay = g_avg_time_delay;
 	}
@@ -4936,7 +4923,7 @@ void run_funscript()
 	g_results_file_data += QString("min_dt_between_speed_changes_on_slow_moves:%1\n"
 		"min_dt_between_speed_changes_on_fast_moves:%2\n"
 		"fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes:%3\n"
-		"speed_change_delay:%4\n")
+		"device_speed_change_delay:%4\n")
 		.arg(g_min_dt_between_speed_changes_on_slow_moves)
 		.arg(g_min_dt_between_speed_changes_on_fast_moves)
 		.arg(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes)
@@ -5085,7 +5072,7 @@ void run_funscript()
 
 			//-----------------------------------------------------
 			// Load Funscript and Hismith statistical data
-			std::vector<QPair<int, int>> funscript_data_maped;
+			std::vector<QPair<int, double>> funscript_data_maped;
 
 			if ( (last_load_funscript_fname != funscript_fname) || g_was_change_in_use_modify_funscript_functions )
 			{
@@ -5116,7 +5103,7 @@ void run_funscript()
 			prev_time = cur_time;
 
 			bool found_start = false;
-			int pos_offset;
+			double pos_offset;
 			int search_video_pos;
 			QString start_info;
 
@@ -5137,11 +5124,11 @@ void run_funscript()
 						if ((i > 0) && (funscript_data_maped_full[i].second != funscript_data_maped_full[i - 1].second))
 						{
 							search_start_pos = funscript_data_maped_full[i - 1].second + ((funscript_data_maped_full[i].second - funscript_data_maped_full[i - 1].second) * (search_video_pos - funscript_data_maped_full[i - 1].first)) / (funscript_data_maped_full[i].first - funscript_data_maped_full[i - 1].first);
-							pos_offset = search_start_pos - (search_start_pos % 360);
-							search_start_pos = search_start_pos % 360;
+							pos_offset = search_start_pos - fmod(search_start_pos, 360.0);
+							search_start_pos = fmod(search_start_pos, 360.0);
 
-							funscript_data_maped.push_back(QPair<int, int>(search_video_pos, search_start_pos));
-							funscript_data_maped.push_back(QPair<int, int>(funscript_data_maped_full[i].first, funscript_data_maped_full[i].second - pos_offset));
+							funscript_data_maped.push_back(QPair<int, double>(search_video_pos, search_start_pos));
+							funscript_data_maped.push_back(QPair<int, double>(funscript_data_maped_full[i].first, funscript_data_maped_full[i].second - pos_offset));
 
 							start_info += QString("search_video_time_and_exp_pos: [%1, %2] found_action_time_and_pos: [%3, %4] prev_action_time_and_pos: [%5, %6] pos_offset: %7")
 								.arg(VideoTimeToStr(search_video_pos).c_str())
@@ -5154,9 +5141,9 @@ void run_funscript()
 						}
 						else
 						{
-							search_start_pos = funscript_data_maped_full[i].second % 360;
+							search_start_pos = fmod(funscript_data_maped_full[i].second, 360.0);
 							pos_offset = funscript_data_maped_full[i].second - search_start_pos;
-							funscript_data_maped.push_back(QPair<int, int>(funscript_data_maped_full[i].first, search_start_pos));
+							funscript_data_maped.push_back(QPair<int, double>(funscript_data_maped_full[i].first, search_start_pos));
 
 							start_info += QString("search_video_time: %1 found_action_time_and_pos: [%2, %3] pos_offset: %4")
 								.arg(VideoTimeToStr(search_video_pos).c_str())
@@ -5168,7 +5155,7 @@ void run_funscript()
 				}
 				else
 				{
-					funscript_data_maped.push_back(QPair<int, int>(funscript_data_maped_full[i].first, funscript_data_maped_full[i].second - pos_offset));
+					funscript_data_maped.push_back(QPair<int, double>(funscript_data_maped_full[i].first, funscript_data_maped_full[i].second - pos_offset));
 				}
 			}
 
@@ -5256,13 +5243,13 @@ void run_funscript()
 				int avg_req_hismith_speed;
 				int min_dt_between_speed_changes;
 				int actual_action_id_dif;
-				int move_dif;
+				double move_dif;
 				int dif_cur_vs_req_action_end_time;
 				int dif_cur_vs_req_action_start_time;
-				int dif_cur_vs_req_exp_pos = -999;
+				double dif_cur_vs_req_exp_pos = -999.0;
 				int action_length_time;
-				int req_dpos;
-				int req_dpos_add;
+				double req_dpos;
+				double req_dpos_add;
 				int req_speed;
 				int start_speed;
 				int end_speed;
@@ -5278,7 +5265,7 @@ void run_funscript()
 
 			struct FrameData
 			{
-				int abs_pos;
+				double abs_pos;
 				int video_pos;
 			};
 
@@ -5326,8 +5313,8 @@ void run_funscript()
 					msec_video_prev_pos = -1;
 					abs_prev_pos = 0;
 					cur_speed = 0;
-					int exp_abs_pos_before_speed_change_to_target_pos = 0;
-					int abs_cur_pos_to_target_pos = 0;
+					double exp_abs_pos_before_speed_change_to_target_pos = 0.0;
+					double abs_cur_pos_to_target_pos = 0.0;
 
 					g_threaded_player_status.start(g_video_player_status, 100);
 
@@ -5570,9 +5557,10 @@ void run_funscript()
 			}
 
 			LARGE_INTEGER action_start_time, speed_change_time, prev_get_speed_time = start_time;
-			int start_abs_pos, exp_abs_cur_pos_to_req_time, tmp_val, dif_cur_vs_req_action_start_time, last_set_action_id_for_dif_cur_vs_req_exp_pos;
+			double start_abs_pos, exp_abs_cur_pos_to_req_time, tmp_val, dif_cur_vs_req_action_start_time;
+			int last_set_action_id_for_dif_cur_vs_req_exp_pos;
 
-			int exp_abs_pos_before_speed_change, action_start_abs_pos;
+			double exp_abs_pos_before_speed_change, action_start_abs_pos;
 			int req_speed, req_cur_speed, req_new_speed;
 			double optimal_hismith_speed = 0, hismith_speed_prev = 0, optimal_hismith_start_speed = 0, avg_hismith_speed_prev = 0;
 			QString actions_end_with = "success";
@@ -5627,7 +5615,7 @@ void run_funscript()
 
 			while ((action_id < actions_size) && ((int)((double)(FS_FIRST(action_id - 1) - cur_video_pos) / g_video_player_status.rate) < g_speed_change_delay))
 			{
-				start_info += QString("\ncur_video_time:%1 > (actio_start_time:%2 - speed_change_delay:%3) with action_id:%4 => action_id++")
+				start_info += QString("\ncur_video_time:%1 > (actio_start_time:%2 - device_speed_change_delay:%3) with action_id:%4 => action_id++")
 					.arg(VideoTimeToStr(cur_video_pos).c_str())
 					.arg(VideoTimeToStr(FS_FIRST(action_id - 1)).c_str())
 					.arg(g_speed_change_delay)
@@ -5739,7 +5727,7 @@ void run_funscript()
 					actual_action_id--;
 				}
 
-				int dpos_exp = 0;
+				double dpos_exp = 0.0;
 				if ( (g_actual_video_pos > FS_FIRST(actual_action_id - 1)) &&
 						(g_actual_video_pos <= FS_FIRST(actual_action_id)) )
 				{
@@ -5747,14 +5735,14 @@ void run_funscript()
 						(g_actual_video_pos - FS_FIRST(actual_action_id - 1))) /
 						(FS_FIRST(actual_action_id) - FS_FIRST(actual_action_id - 1));
 				}
-				int req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[actual_action_id - 1].second - dpos_exp;
-				int cur_dpos = funscript_data_maped[action_id].second - exp_abs_cur_pos;
+				double req_dpos = funscript_data_maped[action_id].second - funscript_data_maped[actual_action_id - 1].second - dpos_exp;
+				double cur_dpos = funscript_data_maped[action_id].second - exp_abs_cur_pos;
 
-				int move_dif = cur_dpos - req_dpos;
+				double move_dif = cur_dpos - req_dpos;
 
 				if (move_dif >= 360)
 				{
-					move_dif = move_dif - (move_dif % 360);
+					move_dif = move_dif - fmod(move_dif, 360.0);
 					hismith_speed_changed += QString("\n\t[skip_part_of_moves_by_shift_abs_cur_pos_on:%1]").arg(move_dif);
 					abs_cur_pos += move_dif;
 					exp_abs_cur_pos += move_dif;
@@ -5765,7 +5753,7 @@ void run_funscript()
 				if (move_dif < -360)
 				{
 					move_dif = -move_dif;
-					move_dif = move_dif - (move_dif % 360);
+					move_dif = move_dif - fmod(move_dif, 360.0);
 					move_dif = -move_dif;
 					hismith_speed_changed += QString("\n\t[it_looks_user_manually_changed_speed][shift_abs_cur_pos_on:%1]").arg(move_dif);
 					abs_cur_pos += move_dif;
@@ -6359,7 +6347,25 @@ void run_funscript()
 
 void disconnect_from_hismith()
 {
-	if (g_pMyDevice)
+	//-----------------------------------------------------
+	//  Direct BLE (WinRT)
+	//
+	//  1. Send "speed = 0" to stop the motor.
+	//  2. Wait ~1 second for mechanical inertia to settle (500ms per the
+	//     project spec, +500ms safety margin).
+	//  3. Release the BLE GATT link (Windows close + COM-ref drop) so that
+	//     the radio is immediately available for Intiface Central.
+	if (g_pW && g_pW->m_bleManager && g_pW->m_bleManager->isConnected())
+	{
+		g_pW->m_bleManager->sendSpeedCommand(0);
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		g_pW->m_bleManager->disconnectDevice();
+		return;
+	}
+
+	//-----------------------------------------------------
+	//  Intiface Central / Buttplug.io
+	if (g_pClient && g_pMyDevice)
 	{
 		g_pClient->stopAllDevices();
 		g_myDevices.clear();
@@ -6415,6 +6421,49 @@ bool get_devices_list(bool show_msgs)
 bool connect_to_hismith()
 {
 	bool res = false;
+
+	//-----------------------------------------------------
+	//  Direct BLE (WinRT)
+	//
+	//  Read the BLE MAC address that refreshDevices() stored in the
+	//  QComboBox item's UserRole (Qt::UserRole).  Call the synchronous
+	//  connectToDevice() which blocks until the WinRT coroutine finishes
+	//  the GATT handshake or times out (default 8 seconds).
+	if (g_pW && g_pW->ui && g_pW->ui->DeviceConnectionTypes->currentText() == g_winrt_ble)
+	{
+		if (!g_pW->m_bleManager)
+		{
+			error_msg("ERROR: WinRtBleManager is not initialized");
+			return false;
+		}
+
+		int cur_idx = g_pW->ui->Devices->currentIndex();
+		if (cur_idx < 0 || cur_idx >= g_pW->ui->Devices->count())
+		{
+			error_msg("ERROR: No BLE device selected in the device list.\nPlease press \"Refresh Devices\" first.");
+			return false;
+		}
+
+		uint64_t ble_address = g_pW->ui->Devices->itemData(cur_idx).toULongLong();
+		if (ble_address == 0)
+		{
+			error_msg("ERROR: Invalid BLE address stored in the device list.\nPlease press \"Refresh Devices\" first.");
+			return false;
+		}
+
+		bool ok = g_pW->m_bleManager->connectToDevice(ble_address, 8000);
+		if (!ok)
+		{
+			error_msg(QString("ERROR: Failed to connect to BLE device 0x%1.\n"
+				"Check that the device is powered on, within range, and NOT "
+				"already paired/locked by another app (e.g. Intiface Central).")
+				.arg(ble_address, 0, 16));
+		}
+		return ok;
+	}
+
+	//-----------------------------------------------------
+	//  Intiface Central / Buttplug.io  (original path — unchanged)
 	//-----------------------------------------------------
 	// Connecting to Hismith
 	// NOTE: At first start: intiface central
@@ -6469,11 +6518,12 @@ bool connect_to_hismith()
 
 void get_performance_with_hismith(int hismith_speed)
 {
-	int cur_pos, res;
+	double cur_pos;
+	int res;
 	__int64 msec_video_cur_pos = -1, last_msec_video_prev_pos;
-	int abs_cur_pos, abs_prev_pos = 0;
+	double abs_cur_pos, abs_prev_pos = 0.0;
 	__int64 msec_video_prev_pos = -1, msec_video_start_pos;
-	int dpos = 0;
+	double dpos = 0.0;
 	double cur_speed = -1;
 	int max_dt_according_webcam_to_get_new_frame_and_speed = 0;
 	int max_dt_according_GetTickCount = 0;
@@ -6491,6 +6541,17 @@ void get_performance_with_hismith(int hismith_speed)
 	{
 		show_msg("", 0, MessageType::Clean);
 		return;
+	}
+
+	if (g_speed_change_delay_from_settings_file == -1)
+	{
+		speeds_data all_speeds_data;
+		if (!get_speed_statistics_data(all_speeds_data))
+		{
+			disconnect_from_hismith();
+			return;
+		}
+		g_speed_change_delay = g_avg_time_delay;
 	}
 
 	//-----------------------------------------------------
@@ -6511,6 +6572,7 @@ void get_performance_with_hismith(int hismith_speed)
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
 			show_msg("", 0, MessageType::Clean);
+			disconnect_from_hismith();
 			g_threaded_capture.stop();
 			g_high_precision_timer_guard.Stop();
 			capture.release();
@@ -6583,7 +6645,8 @@ void get_performance_with_hismith(int hismith_speed)
 				"avg_dt_according_webcam_for_get_new_frame_and_speed:%6\n"
 				"avg_dt_according_QueryPerformanceCounter_for_get_new_frame_and_speed:%7\n"
 				"avg_fps_for_get_new_frame_and_speed:%8\n"
-				"max_webcam_time_diff_from_current_time:%9 + %10 (webcam_end_to_end_latency)")
+				"max_webcam_time_diff_from_current_time:%9 + %10 (webcam_end_to_end_latency)\n"
+				"device_speed_change_delay:%11")
 				.arg(last_get_frame_status)
 				.arg(max_dt_according_webcam_to_get_new_frame_and_speed)
 				.arg(num_frame_video)
@@ -6594,6 +6657,7 @@ void get_performance_with_hismith(int hismith_speed)
 				.arg(((double)num_frames*1000.0)/(double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)))
 				.arg(max_webcam_time_diff)
 				.arg(g_webcam_end_to_end_latency)
+				.arg(g_speed_change_delay)
 				,
 				"Performance Results");
 		}
@@ -6608,10 +6672,12 @@ void get_performance_with_hismith(int hismith_speed)
 
 void get_statistics_with_hismith(int start_speed, int end_speed)
 {
-	int cur_pos, res;
-	__int64 msec_video_cur_pos = -1, msec_video_prev_pos = -1, last_msec_video_prev_pos, msec_video_start_pos;
-	int abs_cur_pos, abs_prev_pos = 0, last_abs_prev_pos;
-	int dpos = 0;
+	double cur_pos;
+	int res;
+	__int64 msec_video_cur_pos = -1, msec_video_prev_pos = -1, msec_video_start_pos;
+	__int64 frame_time_in_ms, prev_frame_time_in_ms, delta_frame_read_time_vs_video_time;
+	double abs_cur_pos, abs_prev_pos = 0.0, last_abs_prev_pos;
+	double dpos = 0.0;
 	double cur_speed = -1;
 	int max_dt_according_webcam_to_get_new_frame_and_speed = 0;
 	int max_dt_according_GetTickCount = 0;
@@ -6622,15 +6688,10 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 		return;
 	}
 
-	LARGE_INTEGER get_statistics_start_time, start_time, cur_time, prev_time, Frequency;
+	LARGE_INTEGER get_statistics_start_time, start_time, cur_time, Frequency;
 	QueryPerformanceFrequency(&Frequency);
 
 	QueryPerformanceCounter(&get_statistics_start_time);
-
-	show_msg(QString("It can takes ~%1 minutes, please wait...\nIt will get data for speed from range: %2-%3")
-		.arg(((20*(end_speed-start_speed+1)) + 99)/100)
-		.arg(start_speed)
-		.arg(end_speed), 5000);
 
 	//-----------------------------------------------------
 	// Connecting to Hismith
@@ -6649,10 +6710,17 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 
 	if (init_camera(capture))
 	{
+		g_threaded_capture.start(&capture);
+
 		show_msg("", 0, MessageType::Clean);
 
 		if (g_stop_run)
 		{
+			disconnect_from_hismith();
+			g_threaded_capture.stop();
+			g_high_precision_timer_guard.Stop();
+			capture.release();
+			show_msg("Stoped to get statistics data.", 5000);
 			return;
 		}
 
@@ -6671,7 +6739,16 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 		QueryPerformanceCounter(&cur_time);
 		start_time = cur_time;
 
-		while ((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 1000)
+		show_msg("", 0, MessageType::Clean);
+		show_msg(QString(
+			"IMPORTANT: For get correct results you need to get at first correct: Webcam End-to-End Latency\n"
+			"It can takes ~%1 minutes, please wait...\n"
+			"It will get data for speed from range: %2-%3")
+			.arg(((20 * (end_speed - start_speed + 1)) + 99) / 100)
+			.arg(start_speed)
+			.arg(end_speed), 10000, MessageType::Always);
+
+		while ( ((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 10000) && !g_stop_run)
 		{
 			get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
@@ -6681,6 +6758,11 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 
 		if (g_stop_run)
 		{
+			disconnect_from_hismith();
+			g_threaded_capture.stop();
+			g_high_precision_timer_guard.Stop();
+			capture.release();
+			show_msg("Stoped to get statistics data.", 5000);
 			return;
 		}
 
@@ -6690,13 +6772,14 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 
 			do
 			{
-				show_msg(QString("Starting to get data for speed %1 ...").arg(hismith_speed), 2000);
+				show_msg("", 0, MessageType::Clean);
+				show_msg(QString("Starting to get data for speed %1 ...").arg(hismith_speed), 2000, MessageType::Always);
 
 				set_hismith_speed(0.0);
 
 				QueryPerformanceCounter(&cur_time);
 				start_time = cur_time;
-				while (((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 3000) || (cur_speed > 10))
+				while ( (((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 3000) || (cur_speed > 10)) && !g_stop_run)
 				{
 					get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
@@ -6704,29 +6787,42 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 					QueryPerformanceCounter(&cur_time);
 				}
 
-				need_restart = false;
+				if (g_stop_run)
+				{
+					disconnect_from_hismith();
+					g_threaded_capture.stop();
+					g_high_precision_timer_guard.Stop();
+					capture.release();
+					show_msg("Stoped to get statistics data.", 5000);
+					return;
+				}
 
-				g_pClient->sendScalar(*g_pMyDevice, (double)hismith_speed / 100.0);
+				need_restart = false;
 
 				result_id = 0;
 				QueryPerformanceCounter(&cur_time);
 				start_time = cur_time;
+				delta_frame_read_time_vs_video_time = g_delta_frame_read_time_vs_video_time;
+				frame_time_in_ms = (start_time.QuadPart * 1000) / g_frequency.QuadPart;
+
+				// Unified transport dispatch - works for both BLE and Buttplug.
+				set_hismith_speed((double)hismith_speed / 100.0);
 
 				while ( ((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 7000) && !g_stop_run )
 				{
 					last_abs_prev_pos = abs_cur_pos;
-					last_msec_video_prev_pos = msec_video_cur_pos;
+					prev_frame_time_in_ms = frame_time_in_ms;
 					get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 						msec_video_prev_pos, abs_prev_pos);
-					prev_time = cur_time;
 					QueryPerformanceCounter(&cur_time);
+					frame_time_in_ms = delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
 
 					if (result_id < results_size)
 					{
 						results[result_id].dpos = max(abs_cur_pos - last_abs_prev_pos, 0);
-						results[result_id].dt_video = (int)(msec_video_cur_pos - last_msec_video_prev_pos);
-						results[result_id].dt_gtc = (int)(time_diff_in_milliseconds(cur_time, prev_time, Frequency));
+						// The first 'dt_gtc' will (can) be negative because the camera has input lag.
+						results[result_id].dt_gtc = frame_time_in_ms - prev_frame_time_in_ms;
 						result_id++;
 					}
 					else
@@ -6740,6 +6836,9 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 					set_hismith_speed(0.0);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					disconnect_from_hismith();
+					g_threaded_capture.stop();
+					g_high_precision_timer_guard.Stop();
+					capture.release();
 					show_msg("Stoped to get statistics data.", 5000);
 					return;
 				}
@@ -6758,7 +6857,6 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 				{
 					QDomElement sub_data = document.createElement(QString("sub_data_%1").arg(i));
 					sub_data.setAttribute("dpos", results[i].dpos);
-					sub_data.setAttribute("dt_video", results[i].dt_video);
 					sub_data.setAttribute("dt_gtc", results[i].dt_gtc);
 					root.appendChild(sub_data);
 				}
@@ -6776,6 +6874,9 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 	}
 
 	disconnect_from_hismith();
+	g_threaded_capture.stop();
+	g_high_precision_timer_guard.Stop();
+	capture.release();
 
 	QueryPerformanceCounter(&cur_time);
 	show_msg(QString("All was done for time: %1 !").arg(VideoTimeToStr(time_diff_in_milliseconds(cur_time, get_statistics_start_time, Frequency)).c_str()), "Get Statistics Data");
@@ -6783,11 +6884,12 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 
 void test_hismith(int hismith_speed)
 {
-	int cur_pos, res;
+	double cur_pos;
+	int res;
 	__int64 msec_video_cur_pos = -1, last_msec_video_prev_pos;
-	int abs_cur_pos, abs_prev_pos = 0;
+	double abs_cur_pos, abs_prev_pos = 0.0;
 	__int64 msec_video_prev_pos = -1;
-	int dpos = 0;
+	double dpos = 0.0;
 	double cur_speed = -1;
 
 	g_ccxlcx_lh_ratio = -1.0;
@@ -6805,6 +6907,17 @@ void test_hismith(int hismith_speed)
 		return;
 	}
 
+	if (g_speed_change_delay_from_settings_file == -1)
+	{
+		speeds_data all_speeds_data;
+		if (!get_speed_statistics_data(all_speeds_data))
+		{
+			disconnect_from_hismith();
+			return;
+		}
+		g_speed_change_delay = g_avg_time_delay;
+	}
+
 	//-----------------------------------------------------
 	// Connecting to Webcam
 
@@ -6814,6 +6927,7 @@ void test_hismith(int hismith_speed)
 	if (init_camera(capture))
 	{
 		g_threaded_capture.start(&capture);
+
 		get_new_camera_frame(capture, frame, msec_video_cur_pos);
 		last_msec_video_prev_pos = msec_video_cur_pos;
 		if (!get_hismith_pos_by_image(frame, cur_pos))
@@ -6821,6 +6935,8 @@ void test_hismith(int hismith_speed)
 			g_threaded_capture.stop();
 			g_high_precision_timer_guard.Stop();
 			capture.release();
+			// Clean up: make sure the Hismith is released regardless of transport.
+			disconnect_from_hismith();
 			return;
 		}
 		abs_cur_pos = get_abs_to_target_pos(cur_pos, 0);
@@ -6840,7 +6956,7 @@ void test_hismith(int hismith_speed)
 		cv::String title("Test Webcam+Hismith");
 
 		cv::namedWindow(title, 1);
-		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		//cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
 		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
@@ -6972,7 +7088,7 @@ void SaveSettings()
 	data_list.append({ "min_dt_between_speed_changes_on_fast_moves", QString::number(g_min_dt_between_speed_changes_on_fast_moves) });
 	data_list.append({ "fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes", QString::number(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes) });
 	data_list.append({ "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40) });
-	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay) });
+	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay_from_settings_file) });
 	data_list.append({ "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout) });
 	data_list.append({ "funscript_time_shift_delta_ms", QString::number(g_funscript_time_shift_delta_ms) });
 
@@ -7071,7 +7187,8 @@ bool LoadSettings()
 	g_min_dt_between_speed_changes_on_fast_moves = data_map["min_dt_between_speed_changes_on_fast_moves"].toInt();
 	g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes = data_map["fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes"].toInt();
 	g_min_dt_start_for_speed_40 = data_map["min_dt_start_for_speed_40"].toInt();
-	g_speed_change_delay = data_map["speed_change_delay"].toInt();
+	g_speed_change_delay_from_settings_file = data_map["speed_change_delay"].toInt();
+	g_speed_change_delay = g_speed_change_delay_from_settings_file;
 	g_cpu_freezes_timeout = data_map["cpu_freezes_timeout"].toInt();
 	g_funscript_time_shift_delta_ms = data_map["funscript_time_shift_delta_ms"].toInt();
 
@@ -7181,32 +7298,13 @@ bool LoadSettings()
 
 	//--------------------
 
-	DeviceEnumerator de;
-	std::map<int, InputDevice> devices = de.getVideoDevicesMap();
-	for (auto const& device : devices) {
-		g_pW->ui->Webcams->addItem(device.second.deviceName.c_str());
-		if (QString(device.second.deviceName.c_str()).contains(g_req_webcam_name))
-		{
-			g_pW->ui->Webcams->setCurrentIndex(g_pW->ui->Webcams->count() - 1);
-		}
-	}
-	//--------------------
+	g_pW->refreshDevices(false);
 
-	//--------------------
-	get_devices_list(false);
-
-	for (DeviceClass& dev : g_myDevices)
-	{
-		g_pW->ui->Devices->addItem(dev.deviceName.c_str());
-		if (QString(dev.deviceName.c_str()).contains(g_hismith_device_name))
-		{
-			g_pW->ui->Devices->setCurrentIndex(g_pW->ui->Devices->count() - 1);
-		}
-	}
 	//--------------------
 
 	//--------------------
 	{
+		g_pW->ui->videoPlayerType->clear();
 		for (QString& video_player_type : VideoPlayerTypesUtils::get_types_list())
 		{
 			g_pW->ui->videoPlayerType->addItem(video_player_type);
@@ -7291,6 +7389,11 @@ void test_vlc()
 
 int main(int argc, char *argv[])
 {
+	// Install the global Qt message handler BEFORE QApplication so
+	// every qDebug/qWarning from WinRtBleManager, Buttplug, OpenCV
+	// and the rest of the app is captured into execution.log.
+	qInstallMessageHandler(log_handler);
+
 	std::srand(std::time(nullptr)); // use current time as seed for random generator
 
 	GdiplusStartupInput gdiplusStartupInput;
@@ -7299,6 +7402,17 @@ int main(int argc, char *argv[])
 
     QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();
+
+	// Open the global log file next to the exe. Every
+	// qDebug/qWarning from here on out (WinRtBleManager, Buttplug,
+	// OpenCV, run_funscript, ...) is appended to
+	// <exe directory>\execution.log
+	{
+		const QString log_path = g_root_dir + "/execution.log";
+		g_logFile.setFileName(log_path);
+		g_logFileOpen(log_path);
+		qDebug().noquote() << QString("Log file ready at: %1").arg(log_path);
+	}
 	QIcon icon(":/images/icon.ico");
 	a.setWindowIcon(icon);
 

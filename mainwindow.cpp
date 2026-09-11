@@ -219,6 +219,25 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this, &MainWindow::errorOccurred, this, &MainWindow::showErrorMsg, Qt::QueuedConnection);
     connect(this, &MainWindow::warningOccurred, this, &MainWindow::showWarningMsg, Qt::QueuedConnection);
     connect(this, &MainWindow::msgOccurred, this, &MainWindow::showMsg, Qt::QueuedConnection);
+
+    ui->DeviceConnectionTypes->clear();
+    ui->DeviceConnectionTypes->addItem(g_winrt_ble);
+    ui->DeviceConnectionTypes->addItem(g_intiface);
+    ui->DeviceConnectionTypes->setCurrentText(g_winrt_ble);
+
+    // Allocate the BLE manager ONCE for the lifetime of the program.
+    // All calls into it are now synchronous; the only signals we use from it
+    // are convenience ones (deviceConnected / errorOccurred) for log output.
+    m_bleManager = new WinRtBleManager(this);
+
+    // Log-only hookup: surface BLE connection events on the main window
+    // status bar (no UI state is driven by these signals anymore).
+    connect(m_bleManager, &WinRtBleManager::deviceConnected, this, [this]() {
+            qDebug() << "BLE: device connected (handshake complete)";
+        }, Qt::QueuedConnection);
+    connect(m_bleManager, &WinRtBleManager::errorOccurred, this, [this](const QString& e) {
+            qWarning() << "BLE: error:" << e;
+        }, Qt::QueuedConnection);
 }
 
 void MainWindow::handleOpenFunscript()
@@ -230,7 +249,7 @@ void MainWindow::handleOpenFunscript()
 
 void MainWindow::handleCheckFunscript()
 {
-    std::vector<QPair<int, int>> funscript_data_maped_full;
+    std::vector<QPair<int, double>> funscript_data_maped_full;
     QString result_details;
 
     funscript = ui->funscriptPathEdit->text();
@@ -294,6 +313,7 @@ void MainWindow::handleGetWebcamLatency()
 
 void MainWindow::handleStartButton()
 {
+    g_stop_run = false;
     g_functions_move_in_out_variant = ui->functionsMoveInOutVariants->currentIndex() + 1;
     hide();
     trayIcon->show();
@@ -302,16 +322,19 @@ void MainWindow::handleStartButton()
 
 void MainWindow::handleTestButton()
 {
+    g_stop_run = false;
     test_hismith(ui->testSpeed->text().toInt());
 }
 
 void MainWindow::handleGetPerformance()
 {
+    g_stop_run = false;
     get_performance_with_hismith(ui->testSpeed->text().toInt());
 }
 
 void MainWindow::handleGetStatistics()
 {
+    g_stop_run = false;
     if (!g_work_in_progress)
     {
         emit ctrlGetStatistics.operate();
@@ -325,6 +348,7 @@ void MainWindow::handleGetStatistics()
 
 void MainWindow::handleTestCameraButton()
 {
+    g_stop_run = false;
     test_camera();
 }
 
@@ -574,6 +598,11 @@ void MainWindow::handleFunctionsMoveInOutVariantsChanged(const QString& str)
 
 void MainWindow::handleRefreshDevicesButton()
 {
+    refreshDevices();
+}
+
+void MainWindow::refreshDevices(bool show_msgs)
+{
     ui->Webcams->clear();
     DeviceEnumerator de;
     std::map<int, InputDevice> devices = de.getVideoDevicesMap();
@@ -587,14 +616,60 @@ void MainWindow::handleRefreshDevicesButton()
 
     //--------------------
 
-    ui->Devices->clear();
-    get_devices_list();
-    for (DeviceClass& dev : g_myDevices)
+    if (ui->DeviceConnectionTypes->currentText() == g_winrt_ble)
     {
-        ui->Devices->addItem(dev.deviceName.c_str());
-        if (QString(dev.deviceName.c_str()).contains(g_hismith_device_name))
+        ui->Devices->clear();
+
+        // Synchronous BLE advertisement scan (3 seconds by default, ~5 for
+        // a typical UI refresh). Devices are NOT held / NOT connected here -
+        // we only collect name + MAC for the dropdown.
+        // The connection happens later inside connect_to_hismith() via the
+        // synchronous connectToDevice() call.
+        if (!m_bleManager)
         {
-            ui->Devices->setCurrentIndex(ui->Devices->count() - 1);
+            if (show_msgs)
+            {
+                warning_msg(QString("ERROR: WinRtBleManager is not initialized"), "Refresh BLE Devices");
+            }
+            return;
+        }
+
+        const auto devices = m_bleManager->findHismithDevices(5000);
+
+        for (const auto& d : devices)
+        {
+            // Store the MAC address in Qt::UserRole so that
+            // connect_to_hismith() can read it back later via itemData().
+            ui->Devices->addItem(d.name, QVariant::fromValue(d.address));
+
+            if (!g_hismith_device_name.isEmpty() && d.name.contains(g_hismith_device_name))
+            {
+                ui->Devices->setCurrentIndex(ui->Devices->count() - 1);
+            }
+        }
+
+        if (devices.empty() && show_msgs)
+        {
+            warning_msg(QString("No Hismith / Wildolo / Fredorch device was seen "
+                "in the BLE advertisement scan (5 second window).\n\n"
+                "Please verify the device is powered on, the Bluetooth radio is "
+                "enabled in Windows, and that it is NOT paired/locked by another "
+                "application (e.g. Intiface Central).")
+                , "Refresh BLE Devices");
+        }
+        return;
+    }
+    else
+    {
+        ui->Devices->clear();
+        get_devices_list(show_msgs);
+        for (DeviceClass& dev : g_myDevices)
+        {
+            ui->Devices->addItem(dev.deviceName.c_str());
+            if (QString(dev.deviceName.c_str()).contains(g_hismith_device_name))
+            {
+                ui->Devices->setCurrentIndex(ui->Devices->count() - 1);
+            }
         }
     }
 }
