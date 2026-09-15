@@ -1444,11 +1444,24 @@ void test_err_frame(QString fpath)
 	g_save_images = true;
 }
 
-void ThreadedCapture::start(cv::VideoCapture* p_capture) {
+void ThreadedCapture::start(cv::VideoCapture* p_capture, int buf_size) {
 	stop();
 
-	std::lock_guard<std::mutex> lock(cap_mutex);
-	p_cap = p_capture;
+	buf_size = (buf_size < 1) ? 1 : buf_size;
+	this->buffer_size = buf_size;
+
+	{
+		std::lock_guard<std::mutex> lock(cap_mutex);
+		p_cap = p_capture;
+		latest_frame.release();
+		m_frame_read_time.QuadPart = 0;
+		msec_pos_latest_frame = 0;
+		has_new_frame = false;
+		frame_queue.clear();
+		producer_total = 0;
+		consumer_total = 0;
+	}
+
 	if (p_cap && p_cap->isOpened())
 	{
 		is_running = true;
@@ -1482,12 +1495,23 @@ void ThreadedCapture::capture_loop() {
 			{
 				msec_frame_prev_pos = msec_frame_cur_pos;
 
+				if (buffer_size <= 1)
 				{
+					// Legacy single-slot fast path - exactly as before.
 					std::lock_guard<std::mutex> lock(cap_mutex);
+					if (has_new_frame) { producer_total++; }  // frame overwritten because consumer was too slow
 					std::swap(latest_frame, local_frame);
 					m_frame_read_time = frame_read_time;
 					msec_pos_latest_frame = msec_frame_cur_pos;
 					has_new_frame = true;
+					cvar.notify_one();
+				}
+				else
+				{
+					// FIFO ring buffer - consumer receives all accumulated frames in order.
+					std::lock_guard<std::mutex> lock(cap_mutex);
+					frame_queue.push_back(QueuedFrame{ std::move(local_frame), msec_frame_cur_pos, frame_read_time });
+					while ((int)frame_queue.size() > buffer_size) { frame_queue.pop_front(); }  // drop oldest if full
 					cvar.notify_one();
 				}
 			}
@@ -1508,17 +1532,30 @@ void ThreadedCapture::capture_loop() {
 bool ThreadedCapture::wait_and_get_fresh_frame(cv::Mat& output_frame, __int64& msec_pos_output_frame, LARGE_INTEGER& frame_read_time) {
 	if (!is_running) return false;
 
+	if (buffer_size <= 1)
+	{
+		// Legacy single-slot path - exactly as before.
+		std::unique_lock<std::mutex> lock(cap_mutex);
+		cvar.wait(lock, [this] { return this->has_new_frame || !this->is_running; });
+		if (!is_running) return false;
+		std::swap(output_frame, latest_frame);
+		frame_read_time = m_frame_read_time;
+		msec_pos_output_frame = msec_pos_latest_frame;
+		has_new_frame = false;
+		consumer_total++;
+		return true;
+	}
+
+	// FIFO ring-buffer path - return next queued frame (oldest first).
 	std::unique_lock<std::mutex> lock(cap_mutex);
-
-	cvar.wait(lock, [this] { return this->has_new_frame || !this->is_running; });
-
-	if (!is_running) return false;
-
-	std::swap(output_frame, latest_frame);
-	frame_read_time = m_frame_read_time;
-	msec_pos_output_frame = msec_pos_latest_frame;
-	has_new_frame = false;
-
+	cvar.wait(lock, [this] { return !this->frame_queue.empty() || !this->is_running; });
+	if (frame_queue.empty()) return false;
+	QueuedFrame q = std::move(frame_queue.front());
+	frame_queue.pop_front();
+	output_frame = std::move(q.frame);
+	frame_read_time = q.read_time;
+	msec_pos_output_frame = q.msec;
+	consumer_total++;
 	return true;
 }
 
@@ -6675,7 +6712,7 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 	double cur_pos;
 	int res;
 	__int64 msec_video_cur_pos = -1, msec_video_prev_pos = -1, msec_video_start_pos;
-	__int64 frame_time_in_ms, prev_frame_time_in_ms, delta_frame_read_time_vs_video_time;
+	__int64 frame_time_in_ms, start_time_in_ms, prev_frame_time_in_ms, delta_frame_read_time_vs_video_time;
 	double abs_cur_pos, abs_prev_pos = 0.0, last_abs_prev_pos;
 	double dpos = 0.0;
 	double cur_speed = -1;
@@ -6710,7 +6747,7 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 
 	if (init_camera(capture))
 	{
-		g_threaded_capture.start(&capture);
+		g_threaded_capture.start(&capture, 8);
 
 		show_msg("", 0, MessageType::Clean);
 
@@ -6803,31 +6840,40 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 				QueryPerformanceCounter(&cur_time);
 				start_time = cur_time;
 				delta_frame_read_time_vs_video_time = g_delta_frame_read_time_vs_video_time;
-				frame_time_in_ms = (start_time.QuadPart * 1000) / g_frequency.QuadPart;
+				start_time_in_ms = (start_time.QuadPart * 1000) / g_frequency.QuadPart;
+				prev_frame_time_in_ms = start_time_in_ms;
+				last_abs_prev_pos = abs_cur_pos;
 
 				// Unified transport dispatch - works for both BLE and Buttplug.
 				set_hismith_speed((double)hismith_speed / 100.0);
 
 				while ( ((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 7000) && !g_stop_run )
 				{
-					last_abs_prev_pos = abs_cur_pos;
-					prev_frame_time_in_ms = frame_time_in_ms;
 					get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 						msec_video_prev_pos, abs_prev_pos);
 					QueryPerformanceCounter(&cur_time);
 					frame_time_in_ms = delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
 
-					if (result_id < results_size)
+					if (frame_time_in_ms > start_time_in_ms)
 					{
-						results[result_id].dpos = max(abs_cur_pos - last_abs_prev_pos, 0);
-						// The first 'dt_gtc' will (can) be negative because the camera has input lag.
-						results[result_id].dt_gtc = frame_time_in_ms - prev_frame_time_in_ms;
-						result_id++;
+						if (result_id < results_size)
+						{
+							results[result_id].dpos = max(abs_cur_pos - last_abs_prev_pos, 0);
+							// The first 'dt_gtc' will (can) be negative because the camera has input lag.
+							results[result_id].dt_gtc = frame_time_in_ms - prev_frame_time_in_ms;
+							prev_frame_time_in_ms = frame_time_in_ms;
+							last_abs_prev_pos = abs_cur_pos;
+							result_id++;
+						}
+						else
+						{
+							break;
+						}
 					}
 					else
 					{
-						break;
+						last_abs_prev_pos = abs_cur_pos;
 					}
 				}
 
