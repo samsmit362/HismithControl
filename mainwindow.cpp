@@ -53,6 +53,36 @@ void GetStatisticsController::handleResults()
 
 //---------------------------------------------------------------
 
+void TestWorker::doWork(int speed)
+{
+    g_work_in_progress = true;
+    test_hismith(speed);
+    emit resultReady();
+}
+
+void TestController::handleResults()
+{
+    g_stop_run = false;
+    g_work_in_progress = false;
+}
+
+//---------------------------------------------------------------
+
+void PerfWorker::doWork(int speed)
+{
+    g_work_in_progress = true;
+    get_performance_with_hismith(speed);
+    emit resultReady();
+}
+
+void PerfController::handleResults()
+{
+    g_stop_run = false;
+    g_work_in_progress = false;
+}
+
+//---------------------------------------------------------------
+
 UINT get_key_mod(QString &ks)
 {
     UINT res = 0;
@@ -127,7 +157,7 @@ void MainWindow::RegisterHotKeys()
 }
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), ctrlStart(this), ctrlGetStatistics(this)
+    : QMainWindow(parent), ctrlStart(this), ctrlGetStatistics(this), ctrlTest(this), ctrlPerformance(this)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
@@ -323,13 +353,19 @@ void MainWindow::handleStartButton()
 void MainWindow::handleTestButton()
 {
     g_stop_run = false;
-    test_hismith(ui->testSpeed->text().toInt());
+    if (!g_work_in_progress)
+    {
+        emit ctrlTest.operate(ui->testSpeed->text().toInt());
+    }
 }
 
 void MainWindow::handleGetPerformance()
 {
     g_stop_run = false;
-    get_performance_with_hismith(ui->testSpeed->text().toInt());
+    if (!g_work_in_progress)
+    {
+        emit ctrlPerformance.operate(ui->testSpeed->text().toInt());
+    }
 }
 
 void MainWindow::handleGetStatistics()
@@ -338,11 +374,6 @@ void MainWindow::handleGetStatistics()
     if (!g_work_in_progress)
     {
         emit ctrlGetStatistics.operate();
-    }
-    else if (!g_stop_run)
-    {
-        show_msg("Stop pressed", 1000, MessageType::Clean);
-        g_stop_run = true;
     }
 }
 

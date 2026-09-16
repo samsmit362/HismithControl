@@ -135,6 +135,32 @@ struct WinRtBleManager::Impl
     // disconnectDevice waits for this to drain before dropping `device`.
     std::atomic<int> inFlightWrites { 0 };
 
+    // -------------------------------------------------------------------------
+    // Latest outstanding WriteValueAsync handle — LATEST-WINS coalescing:
+    //   (a) sendSpeedCommand: if a previous write is still pending, CANCEL
+    //       it before dispatching the new one, so the device is always
+    //       commanded at the freshest value.  Required for 50ms speed
+    //       cadence where the BLE link (7.5-15ms connection-interval)
+    //       could queue two writes out of order otherwise.
+    //   (b) disconnectDevice: instead of just spin-waiting on
+    //       inFlightWrites (which would never reach zero if the delegate
+    //       hasn't fired on this thread — see log line "2 writes still
+    //       in flight after 500ms drain — abandoning"), we CANCEL the
+    //       pending op directly AND pump the message queue so any
+    //       remaining Completed delegates can fire.
+    //
+    // Stored as the concrete IAsyncOperation<T> base (cppwinrt does not expose a type-erased async handle) so we do not need
+    // to name T (GattCommunicationStatus) in this struct.
+    // -------------------------------------------------------------------------
+    winrt::Windows::Foundation::IAsyncOperation<
+        winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> pendingWrite;
+
+    // Diagnostic state set by disconnectDevice()'s drain loop so the final
+    // log line can report precise drain outcome instead of the opaque
+    // "still in flight after 500ms drain — abandoning".
+    int            pendingCancelledDuringDrain { 0 };
+    long long      drainDurationMs             { 0 };
+
     // Handle for the ConnectionParametersChanged event subscription.
     // Subscribed in the handshake, released in disconnectDevice.
     // It is stored in Impl (pimpl) so the event stays attached to the device
@@ -221,14 +247,14 @@ WinRtBleManager::findHismithDevices(int timeout_ms)
 
     watcher.Start();
 
-    // Spin-block on the calling thread. This is intentional: refreshDevices()
-    // is a sequential UI operation; 3-5 seconds of blocking is acceptable and
-    // dramatically simpler than a signal/slot dance with a QEventLoop.
+    // Pump Qt events while we block so that Qt-network code paths (e.g. any
+    // pending HereSphereSync / VLC polling in the same UI thread) progress.
+    // findHismithDevices sits on the UI thread during refreshDevices().
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     }
 
     watcher.Stop();
@@ -580,6 +606,7 @@ bool WinRtBleManager::connectToDevice(uint64_t address, int timeout_ms)
         std::lock_guard l(m_mtx);
         pimpl->device = nullptr;
         pimpl->txCharacteristic = nullptr;
+        pimpl->pendingWrite = nullptr;  // clear any stale pending write handle
         m_protocolMode = DeviceProtocolMode::Unknown;
     }
 
@@ -639,6 +666,40 @@ bool WinRtBleManager::connectToDevice(uint64_t address, int timeout_ms)
             m_connected.store(true, std::memory_order_release);
             emit deviceConnected();
             qDebug() << "connectToDevice: SUCCESS";
+
+            // -------------------------------------------------------------
+            // PRIMING WRITE (speed=0): some Hismith firmwares reject the first
+            // real speed command if no write has been seen since the
+            // connection parameters settled. Sending a known-good "stop"
+            // write (speed 0) right after the handshake arms the device's
+            // GATT state machine so subsequent speed commands are accepted.
+            //
+            // Fire-and-forget variant + a short message-pump so the
+            // Completed delegate (which LOGs the real AsyncStatus +
+            // GattStatus) has time to run. The write result itself is
+            // non-fatal; set_hismith_speed() will retry if the device
+            // still rejects its own first command.
+            // -------------------------------------------------------------
+            {
+                const bool dispatched = sendSpeedCommand(0);
+                // Give the Completed delegate time to run. The delegate
+                // will print its OWN log line ("sendSpeedCommand: OK/NOT OK
+                // — AsyncStatus ... GattStatus ...") with the real status.
+                if (dispatched)
+                {
+                    const auto primingDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+                    while (std::chrono::steady_clock::now() < primingDeadline
+                           && pimpl->inFlightWrites.load(std::memory_order_acquire) > 0)
+                    {
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                    }
+                }
+                else
+                {
+                    qWarning().noquote()
+                        << "connectToDevice: priming write (speed=0) NOT DISPATCHED";
+                }
+            }
         }
         else
         {
@@ -683,7 +744,15 @@ bool WinRtBleManager::connectToDevice(uint64_t address, int timeout_ms)
         // Give the still-running coroutine a small grace period to finish and
         // publish its own cleanup (it clears impl->txCharacteristic), then
         // disconnect() to force any residual state down and drop the COM refs.
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        // Pump Qt events during the grace so the coroutine's continuations
+        // (which need the message pump to fire on this STA thread) actually
+        // run; a plain sleep_for would hang.
+        const auto grace_deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(500);
+        while (std::chrono::steady_clock::now() < grace_deadline)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        }
         disconnectDevice();
     }
 
@@ -691,7 +760,7 @@ bool WinRtBleManager::connectToDevice(uint64_t address, int timeout_ms)
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: sendSpeedCommand (low-latency fire-and-forget)
+// Phase 3: sendSpeedCommand (low-latency fire-and-forget, LATEST-WINS)
 // ---------------------------------------------------------------------------
 bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
 {
@@ -708,6 +777,7 @@ bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
     {
         std::lock_guard l(m_mtx);
         tx = pimpl->txCharacteristic;
+        mode = pimpl->pendingWrite ? mode : mode;  // (no-op; kept for clarity)
         mode = m_protocolMode;
     }
 
@@ -742,29 +812,74 @@ bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
     }
     auto buffer = writer.DetachBuffer();
 
-    // Increment the in-flight counter BEFORE dispatch so disconnectDevice can
-    // wait for the write to settle.
-    pimpl->inFlightWrites.fetch_add(1, std::memory_order_release);
+    // -------------------------------------------------------------------------
+    // LATEST-WINS coalescing: if a previous WriteValueAsync is still pending
+    // (e.g. 50ms cadence, connection-interval ~10ms, so 2 writes can be
+    // in flight at the L2 layer), CANCEL it before dispatching the new one.
+    // Without this, the BLE stack's internal queue may deliver the OLDER
+    // speed AFTER the new one, leaving the motor at the stale value.
+    // -------------------------------------------------------------------------
+    {
+        std::lock_guard l(m_mtx);
+        if (pimpl->pendingWrite)
+        {
+            try { pimpl->pendingWrite.Cancel(); }
+            catch (const winrt::hresult_error&) { /* already finished */ }
+            pimpl->pendingWrite = nullptr;
+        }
+        pimpl->inFlightWrites.fetch_add(1, std::memory_order_release);
+    }
 
     try
     {
         auto* selfRaw = this;
+        // Hold a strong ref to the async op so we can Cancel it later from
+        // sendSpeedCommand (latest-wins) or disconnectDevice (drain).
         auto asyncOp = tx.WriteValueAsync(buffer, GattWriteOption::WriteWithoutResponse);
+        {
+            std::lock_guard l(m_mtx);
+            pimpl->pendingWrite = asyncOp;  // erased to IAsyncOperation
+        }
         // The WinRT delegate invokes operator() const. const_cast the pointer
         // so we can touch pimpl's atomic counter from a const context. This is
         // safe: the counter is an atomic and the manager outlives the async op
         // (see disconnectDevice() which drains inFlightWrites before destroying
-        // pimpl).
-        asyncOp.Completed([selfRaw](winrt::Windows::Foundation::IAsyncOperation<
-            winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> const&,
+        // pimpl, and CANCELs any pending write first).
+        asyncOp.Completed([selfRaw, speed](winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> const& op,
             winrt::Windows::Foundation::AsyncStatus status)
         {
             auto* selfNC = const_cast<WinRtBleManager*>(selfRaw);
             selfNC->pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
-            if (status != winrt::Windows::Foundation::AsyncStatus::Completed)
+            const int intStatus = (int)status;
+            // DIAGNOSTICS: log every outcome (ok OR not). This is the
+            // fire-and-forget path — there is no caller that observes
+            // the result, so the only window into what happened on the
+            // BLE link is this log line. Keep it ON even for success.
+            int gstat = -1;
+            if (intStatus == 0)
             {
-                qWarning() << "sendSpeedCommand: BLE write failed (status:"
-                           << (int)status << ")";
+                try { gstat = (int)op.GetResults(); }
+                catch (const winrt::hresult_error&) { gstat = -1; }
+            }
+            static const char* kAsyncName[4] = { "Completed", "Canceled", "Error", "Started" };
+            const char* an = (intStatus >= 0 && intStatus < 4) ? kAsyncName[intStatus] : "Unknown";
+            const bool fullyOk = (intStatus == 0 && gstat == 0); // Completed && Gatt==Success
+            if (fullyOk)
+            {
+                qDebug().noquote()
+                    << "sendSpeedCommand: OK          "
+                    << "  AsyncStatus: 0 (Completed)"
+                    << "  GattStatus:  0 (Success)"
+                    << "  (speed=" << (int)speed << ")";
+            }
+            else
+            {
+                qWarning().noquote()
+                    << "sendSpeedCommand: NOT OK —"
+                    << "  AsyncStatus:" << intStatus << "(" << an << ")"
+                    << "  GattStatus:"
+                    << (intStatus == 0 ? QString::number(gstat) : QString("n/a (op not Completed)"))
+                    << "  (speed=" << (int)speed << ")";
             }
         });
         return true;
@@ -787,7 +902,163 @@ bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
 }
 
 // ---------------------------------------------------------------------------
-// Teardown
+// sendSpeedCommandAndWait — blocking variant (pumps events until GATT result)
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::sendSpeedCommandAndWait(uint8_t speed,
+                                               int timeout_ms,
+                                               int* status_out)
+{
+    if (status_out) *status_out = -1;
+    if (!m_connected.load(std::memory_order_acquire))
+        return false;
+
+    GattCharacteristic tx{ nullptr };
+    DeviceProtocolMode mode = DeviceProtocolMode::Unknown;
+    {
+        std::lock_guard l(m_mtx);
+        tx = pimpl->txCharacteristic;
+        mode = m_protocolMode;
+    }
+    if (!tx)
+    {
+        qWarning() << "sendSpeedCommandAndWait: TX characteristic not bound";
+        return false;
+    }
+
+    std::vector<unsigned char> payload;
+    if (mode == DeviceProtocolMode::LegacyHismith)
+    {
+        const unsigned char idx = 0x04;
+        const unsigned char checksum = (unsigned char)(speed + idx);
+        payload = { 0xAA, idx, speed, checksum };
+    }
+    else if (mode == DeviceProtocolMode::HismithMini)
+    {
+        payload = generateModbusPacketForSpeed(speed);
+    }
+    else
+    {
+        qWarning() << "sendSpeedCommandAndWait: protocol mode unresolved";
+        return false;
+    }
+
+    DataWriter writer;
+    for (const auto b : payload) writer.WriteByte(b);
+    auto buffer = writer.DetachBuffer();
+
+    // LATEST-WINS: cancel any pending write
+    {
+        std::lock_guard l(m_mtx);
+        if (pimpl->pendingWrite)
+        {
+            try { pimpl->pendingWrite.Cancel(); }
+            catch (const winrt::hresult_error&) {}
+            pimpl->pendingWrite = nullptr;
+        }
+        pimpl->inFlightWrites.fetch_add(1, std::memory_order_release);
+    }
+
+    // Heap-allocated result box — outlives the lambda if the op outlives us.
+    //   first  = whether the Completed delegate fired within the timeout
+    //   second = GattCommunicationStatus as int; -1 means "no result".
+    auto resultBox = std::make_shared<std::pair<bool, int>>(false, -1);
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto fut = promise->get_future();
+
+    try
+    {
+        auto* selfRaw = this;
+        auto asyncOp = tx.WriteValueAsync(buffer, GattWriteOption::WriteWithoutResponse);
+        {
+            std::lock_guard l(m_mtx);
+            pimpl->pendingWrite = asyncOp;
+        }
+
+        asyncOp.Completed([resultBox, promise, selfRaw, speed](
+            winrt::Windows::Foundation::IAsyncOperation<
+                winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> const& op,
+            winrt::Windows::Foundation::AsyncStatus status)
+        {
+            auto* selfNC = const_cast<WinRtBleManager*>(selfRaw);
+            selfNC->pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+
+            const int intStatus = ((int)status);
+            int gstat = -1;
+            bool ok = false;
+            if (intStatus == 0)   // AsyncStatus::Completed
+            {
+                try { gstat = (int)op.GetResults(); }
+                catch (const winrt::hresult_error&) { gstat = -1; }
+                ok = (gstat == 0);   // Gatt 0 = GattCommunicationStatus::Success
+            }
+            // --- DIAGNOSTICS (item 1): expose the AsyncStatus so we can tell
+            //     "not even Completed" (Canceled/Error/Started) apart from
+            //     "Completed but the device rejected the PDU" (Gatt!=Success).
+            if (!ok)
+            {
+                static const char* kAsyncName[4] = { "Completed", "Canceled", "Error", "Started" };
+                const char* an = (intStatus >= 0 && intStatus < 4) ? kAsyncName[intStatus] : "Unknown";
+                qWarning().noquote() << "sendSpeedCommandAndWait: write NOT OK —"
+                                     << "AsyncStatus:" << intStatus << "(" << an << ")"
+                                     << "  GattStatus:"
+                                     << (intStatus == 0 ? QString::number(gstat) : QString("n/a (op not Completed)"))
+                                     << "  (speed=" << (int)speed << ")"
+                                     << "  [0=Completed 1=Canceled 2=Error 3=Started; Gatt 0=Success, 2=InvalidPdu]";
+            }
+            *resultBox = { ok, gstat };
+            try { promise->set_value(ok); }
+            catch (const std::future_error&) { /* already set */ }
+        });
+
+        // Pump until delegate fires or timeout (10ms ticks)
+        const auto deadline = std::chrono::steady_clock::now()
+                             + std::chrono::milliseconds(timeout_ms);
+        bool done = false;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            if (fut.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready)
+            {
+                done = true;
+                break;
+            }
+        }
+
+        if (done)
+        {
+            fut.get();
+            if (status_out) *status_out = resultBox->second;
+            return resultBox->first;   // true only when Completed && Gatt==Success
+        }
+
+        // Timeout — cancel and drain briefly
+        try { asyncOp.Cancel(); } catch (...) {}
+        for (int i = 0; i < 5; ++i)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            if (fut.wait_for(std::chrono::milliseconds(5)) == std::future_status::ready)
+                break;
+        }
+        return false; // timed out
+    }
+    catch (const winrt::hresult_error& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        const wchar_t* msg = ex.message().c_str();
+        qWarning() << "sendSpeedCommandAndWait: WinRT exception:"
+                     << (msg && *msg ? QString::fromWCharArray(msg).toStdString() : std::string("unknown"));
+        return false;
+    }
+    catch (const std::exception& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        qWarning() << "sendSpeedCommandAndWait: C++ exception:" << ex.what();
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Teardown (BLOCKING: full drain + explicit Cancel + message pump)
 // ---------------------------------------------------------------------------
 void WinRtBleManager::disconnectDevice()
 {
@@ -799,56 +1070,93 @@ void WinRtBleManager::disconnectDevice()
         std::lock_guard l(m_mtx);
         pimpl->txCharacteristic = nullptr;
         m_protocolMode = DeviceProtocolMode::Unknown;
+        pimpl->pendingCancelledDuringDrain = 0;
+        pimpl->drainDurationMs = 0;
     }
 
-    // 2. If we were really connected and some write is still in flight, wait
-    // up to 500ms for WriteValueAsync coroutines to land their completion
-    // callback. That callback (see sendSpeedCommand above) only touches
-    // the manager's inFlightWrites counter, which lives in pimpl and stays
-    // valid until the next step destroys `pimpl`. 500ms comfortably covers
-    // a BLE link-level timeout on Windows (typical ~300-500ms).
     if (wasConnected)
     {
-        const auto begin = std::chrono::steady_clock::now();
-        const auto deadline = begin + std::chrono::milliseconds(500);
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto deadline = t0 + std::chrono::milliseconds(800);
+
+        // 2. Explicitly CANCEL the most-pending write. Without this, a
+        // stalled write whose Completed delegate has not yet fired on this
+        // thread would keep inFlightWrites > 0 forever, and the drain loop
+        // below would time out (the infamous "still in flight after 500ms
+        // drain — abandoning" log line).
+        {
+            winrt::Windows::Foundation::IAsyncOperation<
+            winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> pending;
+            {
+                std::lock_guard l(m_mtx);
+                pending = pimpl->pendingWrite;
+                pimpl->pendingWrite = nullptr;
+            }
+            if (pending)
+            {
+                try { pending.Cancel(); }
+                catch (const winrt::hresult_error&) { /* already finished */ }
+                ++pimpl->pendingCancelledDuringDrain;
+            }
+        }
+
+        // 3. Pump the Windows message loop until inFlightWrites drains
+        // to zero OR deadline is hit. WinRT Completed delegates fire on
+        // this thread via PostMessage — processEvents() delivers them.
+        // The previous implementation used std::this_thread::yield()
+        // which spins WITHOUT ever dispatching those messages → the
+        // drain could never finish within 500ms even though the write
+        // had ALREADY completed on the link.
         while (pimpl->inFlightWrites.load(std::memory_order_acquire) > 0
                && std::chrono::steady_clock::now() < deadline)
         {
-            std::this_thread::yield();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
         }
+
         const int remaining = pimpl->inFlightWrites.load(std::memory_order_relaxed);
+        pimpl->drainDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>
+            (std::chrono::steady_clock::now() - t0).count();
+
         if (remaining > 0)
         {
-            qWarning() << "disconnectDevice: " << remaining
-                       << "write(s) still in flight after 500ms drain — abandoning";
+            qWarning() << "disconnectDevice:" << remaining
+                       << "write(s) STILL in flight after"
+                       << pimpl->drainDurationMs << "ms drain"
+                       << "(canceled" << pimpl->pendingCancelledDuringDrain
+                       << "pending) — abandoning";
         }
-    }
+        else
+        {
+            qDebug() << "disconnectDevice: drain complete in"
+                     << pimpl->drainDurationMs << "ms"
+                     << "(canceled" << pimpl->pendingCancelledDuringDrain
+                     << "pending)"
+                     << (pimpl->drainDurationMs > 500 ? " — SLOW" : "");
+        }
 
-    // 3. Clear the ConnectionParametersChanged subscription token. We do
-    // NOT need to explicitly revoke it: dropping `pimpl->device` in
-    // step 4 destroys the COM object, which auto-detaches all its
-    // handlers. Moving the token out just clears the binding slot so a
-    // future connect() does not see a stale token.
-    {
-        winrt::event_token token;
+        // 4. Clear the ConnectionParametersChanged subscription token. We do
+        // NOT need to explicitly revoke it: dropping `pimpl->device` in
+        // step 5 destroys the COM object, which auto-detaches all its
+        // handlers. Moving the token out just clears the binding slot so a
+        // future connect() does not see a stale token.
+        {
+            winrt::event_token token;
+            {
+                std::lock_guard l(m_mtx);
+                token = std::move(pimpl->connectParamsToken);
+            }
+            // Scope-exit: `token` is destroyed; the remove_* slot runs and the
+            // handler is released. (cppwinrt event_token is move-only; no
+            // .revoke() method needed.)
+        }
+
+        // 5. Release the BluetoothLEDevice — drops the COM reference and asks
+        // Windows to close the physical BLE link, freeing it for Intiface.
         {
             std::lock_guard l(m_mtx);
-            token = std::move(pimpl->connectParamsToken);
+            pimpl->device = nullptr;
         }
-        // Scope-exit: `token` is destroyed; the remove_* slot runs and the
-        // handler is released. (cppwinrt event_token is move-only; no
-        // .revoke() method needed.)
-    }
 
-    // 4. Release the BluetoothLEDevice — drops the COM reference and asks
-    // Windows to close the physical BLE link, freeing it for Intiface.
-    {
-        std::lock_guard l(m_mtx);
-        pimpl->device = nullptr;
-    }
-
-    if (wasConnected)
-    {
         m_connected.store(false, std::memory_order_release);
         qDebug() << "disconnectDevice: BLE link closed, GATT handles released.";
     }

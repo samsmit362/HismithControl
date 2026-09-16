@@ -352,6 +352,38 @@ inline bool   hismith_uses_ble()
 	return (g_pW->m_bleManager && g_pW->m_bleManager->isConnected());
 }
 
+
+// ---------------------------------------------------------------------------
+// event_pump_pause event-loop-aware delay for the UI thread.
+//
+// Use INSTEAD of `std::this_thread::sleep_for` when we are on the UI
+// thread and we "wait for the motor to mechanically stop" after a BLE
+// speed write. The difference: it PUMPS the Windows message loop, which
+// is the ONLY way WinRT `Completed` delegates (used by the
+// WriteValueAsync completion path inside WinRtBleManager) can fire on
+// this STA thread.  Without this pump, the inFlightWrites counter in
+// WinRtBleManager never reaches zero and disconnectDevice() reports
+// "N writes still in flight after 500ms drain вЂ” abandoning".
+//
+// Safe to call from any thread that owns a Qt event loop context.
+// Falls back to a plain sleep if no QApplication is available.
+// ---------------------------------------------------------------------------
+inline void event_pump_pause(int ms_total, int ms_tick = 10)
+{
+    if (ms_total <= 0) return;
+    const auto t0  = std::chrono::steady_clock::now();
+    const auto end = t0 + std::chrono::milliseconds(ms_total);
+    if (!QCoreApplication::instance())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms_total));
+        return;
+    }
+    while (std::chrono::steady_clock::now() < end)
+    {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, ms_tick);
+    }
+}
+
 inline bool hismith_is_connected()
 {
 	if (!g_pW) return false;
@@ -428,7 +460,7 @@ void draw_text(QString text, cv::Mat &frame, int x1 = -1, int y1 = -1, int x2 = 
 void show_frame_in_cv_window(cv::String wname, cv::Mat &frame)
 {
 	cv::namedWindow(wname, cv::WINDOW_NORMAL);
-	//cv::setWindowProperty(wname, cv::WND_PROP_TOPMOST, 1);
+	cv::setWindowProperty(wname, cv::WND_PROP_TOPMOST, 1);
 	cv::imshow(wname, frame);
 	cv::Size s = frame.size();
 	cv::resizeWindow(wname, s);
@@ -1252,7 +1284,7 @@ void test_err_frame(QString fpath)
 
 	cv::String title("Test Error Frame");
 	cv::namedWindow(title, 1);
-	//cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+	cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
 	int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 	int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 	cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
@@ -1891,7 +1923,7 @@ void test_camera()
 		std::copy(&g_G_range[0][0], &g_G_range[0][0] + 3 * 2, &G_range[0][0]);
 
 		cv::namedWindow(title, 1);
-		//cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
 		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
@@ -3475,6 +3507,7 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest* req, Q
 				{
 					show_msg("Waiting for VLC is starded");
 					set_hismith_speed(0.0);
+					// event_pump_pause(1000);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					show_warning = false;
 				}
@@ -6429,6 +6462,13 @@ void disconnect_from_hismith()
 	if (g_pW && g_pW->m_bleManager && g_pW->m_bleManager->isConnected())
 	{
 		g_pW->m_bleManager->sendSpeedCommand(0);
+		// Wait ~1s for the motor to mechanically settle.  event_pump_pause
+		// pumps the Qt message loop so the WinRT `Completed` delegate of the
+		// speed=0 write fires on this STA thread BEFORE disconnectDevice() runs
+		// its drain loop. (A bare sleep_for would leave inFlightWrites > 0 and
+		// disconnectDevice() would report `N writes still in flight after 500ms
+		// drain -- abandoning` -- exactly the log line we are fixing.)
+		// event_pump_pause(1000);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		g_pW->m_bleManager->disconnectDevice();
 		return;
@@ -6710,6 +6750,7 @@ void get_performance_with_hismith(int hismith_speed)
 		show_msg("", 0, MessageType::Clean);
 
 		set_hismith_speed(0.0);
+		// event_pump_pause(1000);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 		if (num_frames > 0 && last_get_frame_status)
@@ -6924,6 +6965,7 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 				if (g_stop_run)
 				{
 					set_hismith_speed(0.0);
+					// event_pump_pause(1000);
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					disconnect_from_hismith();
 					g_threaded_capture.stop();
@@ -7046,7 +7088,7 @@ void test_hismith(int hismith_speed)
 		cv::String title("Test Webcam+Hismith");
 
 		cv::namedWindow(title, 1);
-		//cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+		cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
 		int sw = (int)GetSystemMetrics(SM_CXSCREEN);
 		int sh = (int)GetSystemMetrics(SM_CYSCREEN);
 		cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);
@@ -7564,4 +7606,3 @@ if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullpt
 
     return a.exec();
 }
-

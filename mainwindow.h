@@ -291,6 +291,102 @@ signals:
 };
 
 //---------------------------------------------------------------
+// Test Hismith worker — runs test_hismith() in a separate QThread
+// so that the UI is never blocked during the test loop.
+//---------------------------------------------------------------
+
+class TestWorker : public QObject
+{
+    Q_OBJECT
+
+    MainWindow* p_parent;
+
+public:
+    TestWorker(MainWindow* parent) : p_parent(parent) {}
+
+public slots:
+    void doWork(int speed);
+
+signals:
+    void resultReady();
+};
+
+class TestController : public QObject
+{
+    Q_OBJECT
+
+    QThread workerThread;
+    MainWindow* p_parent;
+
+public:
+    TestController(MainWindow* parent) : p_parent(parent) {
+        TestWorker* worker = new TestWorker(parent);
+        worker->moveToThread(&workerThread);
+        connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
+        connect(this, &TestController::operate, worker, &TestWorker::doWork);
+        connect(worker, &TestWorker::resultReady, this, &TestController::handleResults);
+        workerThread.start();
+    }
+    ~TestController() {
+        workerThread.quit();
+        workerThread.wait();
+    }
+
+public slots:
+    void handleResults();
+signals:
+    void operate(int speed);
+};
+
+//---------------------------------------------------------------
+// Get Performance worker — runs get_performance_with_hismith() in
+// a separate QThread so that the UI never blocks.
+//---------------------------------------------------------------
+
+class PerfWorker : public QObject
+{
+    Q_OBJECT
+
+    MainWindow* p_parent;
+
+public:
+    PerfWorker(MainWindow* parent) : p_parent(parent) {}
+
+public slots:
+    void doWork(int speed);
+
+signals:
+    void resultReady();
+};
+
+class PerfController : public QObject
+{
+    Q_OBJECT
+
+    QThread workerThread;
+    MainWindow* p_parent;
+
+public:
+    PerfController(MainWindow* parent) : p_parent(parent) {
+        PerfWorker* worker = new PerfWorker(parent);
+        worker->moveToThread(&workerThread);
+        connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
+        connect(this, &PerfController::operate, worker, &PerfWorker::doWork);
+        connect(worker, &PerfWorker::resultReady, this, &PerfController::handleResults);
+        workerThread.start();
+    }
+    ~PerfController() {
+        workerThread.quit();
+        workerThread.wait();
+    }
+
+public slots:
+    void handleResults();
+signals:
+    void operate(int speed);
+};
+
+//---------------------------------------------------------------
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -306,6 +402,8 @@ public:
 
     StartController ctrlStart;
     GetStatisticsController ctrlGetStatistics;
+    TestController ctrlTest;
+    PerfController ctrlPerformance;
 
     QSystemTrayIcon* trayIcon;
 
