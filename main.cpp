@@ -68,7 +68,7 @@ static void log_handler(QtMsgType type, const QMessageLogContext& context, const
 static bool g_logFileOpen(const QString& path)
 {
     Q_UNUSED(path);
-    if (!g_logFile.open(QIODevice::Append | QIODevice::Text))
+    if (!g_logFile.open(QIODevice::WriteOnly | QIODevice::Text))
         return false;
     if (!g_logStream)
     {
@@ -3325,7 +3325,9 @@ void shift_get_next_frame_and_cur_speed_data(double dpos)
 
 bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
 	double& abs_cur_pos, double& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
-	__int64& msec_video_prev_pos, double& abs_prev_pos, bool show_results = false, cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString())
+	__int64& msec_video_prev_pos, double& abs_prev_pos, bool show_results = false,
+	cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString(),
+	bool stop_at_first_error = false)
 {
 	double prev_pos, dpos;
 	bool res = false;
@@ -3404,6 +3406,11 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
 			QueryPerformanceCounter(&cur_time);
 			dt = time_diff_in_milliseconds(cur_time, start_time, Frequency);
 		}
+
+		if (stop_at_first_error)
+		{
+			break;
+		}
 	}
 
 	if (res)
@@ -3440,8 +3447,6 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
 	}
 	else
 	{
-		// remove showed messages
-		show_msg("", 0, MessageType::Clean);
 		g_ccxlcx_lh_ratio = -1.0;
 		g_max_ccxlcx_lh_ratio_prev_to_cur_dif = -1.0;
 	}
@@ -6850,9 +6855,15 @@ void get_statistics_with_hismith(int start_speed, int end_speed)
 
 				while ( ((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) < 7000) && !g_stop_run )
 				{
-					get_next_frame_and_cur_speed(capture, frame,
+					if (!get_next_frame_and_cur_speed(capture, frame,
 						abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-						msec_video_prev_pos, abs_prev_pos);
+						msec_video_prev_pos, abs_prev_pos,
+						false, NULL, cv::String(), QString(), true))
+					{
+						need_restart = true;
+						break;
+					}
+
 					QueryPerformanceCounter(&cur_time);
 					frame_time_in_ms = delta_frame_read_time_vs_video_time + msec_video_cur_pos - g_webcam_end_to_end_latency;
 
