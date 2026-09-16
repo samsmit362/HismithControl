@@ -97,6 +97,7 @@ extern std::atomic<int> g_funscript_time_shift_ms;
 
 extern const QString g_winrt_ble;
 extern const QString g_intiface;
+extern QString g_device_connection_type;
 
 //---------------------------------------------------------------
 

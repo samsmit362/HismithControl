@@ -64,7 +64,7 @@ public:
     //               UI call, 1000-1500 for a quick probe in tests.
     //   Returns a deduped list of Hismith/Wildolo/Fredorch devices seen.
     // -----------------------------------------------------------------
-    std::vector<BleDeviceInfo> findHismithDevices(int timeout_ms = 5000);
+    std::vector<BleDeviceInfo> findHismithDevices(int timeout_ms = 10000);
 
     // -----------------------------------------------------------------
     // PHASE 2: Synchronous targeted connection. Identifies the device model

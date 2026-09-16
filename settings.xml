@@ -13,6 +13,10 @@
  <min_dt_start_for_speed_40>1000</min_dt_start_for_speed_40>
  <speed_change_delay>-1</speed_change_delay>
  <cpu_freezes_timeout>300</cpu_freezes_timeout>
+ <funscript_time_shift_ms>-30</funscript_time_shift_ms>
+ <funscript_time_shift_delta_ms>10</funscript_time_shift_delta_ms>
+ <min_search_pos_dif>-10</min_search_pos_dif>
+ <max_search_pos_dif>70</max_search_pos_dif>
  <B_range>[5-160][144-205][60-125]</B_range>
  <G_range>[35-210][120-155][10-110]</G_range>
  <max_telescopic_motor_rocker_arm_proportions>0.35</max_telescopic_motor_rocker_arm_proportions>
@@ -24,11 +28,11 @@
  <webcam_fps>-1</webcam_fps>
  <webcam_focus>-1</webcam_focus>
  <webcam_exposure>0</webcam_exposure>
- <webcam_end_to_end_latency>50</webcam_end_to_end_latency>
+ <webcam_end_to_end_latency>62</webcam_end_to_end_latency>
  <intiface_central_client_url>ws://127.0.0.1</intiface_central_client_url>
  <intiface_central_client_port>12345</intiface_central_client_port>
  <hismith_device_name>Hismith Sex Machine</hismith_device_name>
-  <video_player_types>
+ <video_player_types>
   <VLC>
    <url>http://127.0.0.1</url>
    <port>8080</port>
@@ -44,8 +48,12 @@
   </HereSphere>
  </video_player_types>
  <video_player_type>VLC</video_player_type>
+ <device_connection_type>Direct Bluetooth LE (WinRT)</device_connection_type>
+ <align_to_p_cores>1</align_to_p_cores>
  <hotkey_stop>Shift+Q</hotkey_stop>
  <hotkey_pause>Shift+W</hotkey_pause>
  <hotkey_resume>Shift+E</hotkey_resume>
  <hotkey_use_modify_funscript_functions>Shift+B</hotkey_use_modify_funscript_functions>
+ <hotkey_funscript_time_shift_up>Shift+T</hotkey_funscript_time_shift_up>
+ <hotkey_funscript_time_shift_down>Shift+G</hotkey_funscript_time_shift_down>
 </settings>

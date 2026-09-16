@@ -35,6 +35,7 @@ set(PROJECT_SOURCES
         ThreadedCapture.h
         ThreadedPlayerStatus.h
         HighPrecisionTimerGuard.h
+        ThreadAffinity.h
         HereSphereSync.cpp
         HereSphereSync.h
         WinRtBleManager.cpp
@@ -55,14 +56,23 @@ if(6 GREATER_EQUAL 6)
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET HismithControl APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
 #                 ${CMAKE_CURRENT_SOURCE_DIR}/android)
-# For more information, see https://doc.qt.io/qt-6/qt-add-executable.html#target-creation
+# For more information see https://doc.qt.io/qt-6/qt-add-executable.html
 else()
     if(ANDROID)
         add_library(HismithControl SHARED
             ${PROJECT_SOURCES}
         )
-# Define properties for Android with Qt 5 after find_package() calls as:
-#    set(ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
+# Define target properties for Android with Qt 5 as:
+#    set_property(TARGET HismithControl APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
+#                 ${CMAKE_CURRENT_SOURCE_DIR}/android)
+# For example add path to your android app source folder here:
+#    list(APPEND QT_ANDROID_PACKAGE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/android)
+# Define Java source dirs
+#    set_property(TARGET HismithControl APPEND PROPERTY QT_ANDROID_JAVA_SRC
+#                 ${CMAKE_CURRENT_SOURCE_DIR}/android/java)
+# Define the java package to use for Qt resources files
+#    set_property(TARGET HismithControl APPEND PROPERTY QT_ANDROID_PACKAGE_NAME
+#                 com.example.hismithcontrol)
     else()
         add_executable(HismithControl
             ${PROJECT_SOURCES}
@@ -84,8 +94,13 @@ set_target_properties(OpenCVLib PROPERTIES
              IMPORTED_LOCATION_DEBUG "$ENV{OPENCV_BUILD_PATH_X64}/x64/vc16/lib/opencv_world$ENV{OPENCV_LIBS_VER}d.lib"
              IMPORTED_LOCATION_RELEASE "$ENV{OPENCV_BUILD_PATH_X64}/x64/vc16/lib/opencv_world$ENV{OPENCV_LIBS_VER}.lib")
 
+# NOTE: explicit `kernel32` link added so ThreadAffinity.h can call
+# GetSystemCpuSetInformation (Win10 21H1+) without relying on the
+# implicit transitive import that comes through Qt / WinRT.  Harmless
+# on platforms where kernel32 is already reachable because Qt::Core
+# pulls it in.  The linker is OK with duplicate .lib entries.
 target_link_libraries(HismithControl
-					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt::Charts Qt::Core Qt::Gui windowsapp
+					PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt::Charts Qt::Core Qt::Gui windowsapp kernel32
 					PUBLIC ixwebsocket::ixwebsocket nlohmann_json::nlohmann_json Threads::Threads bcrypt OpenCVLib)
 
 # Clearing the global CMake flags from the default /EHsc so that it does not conflict with /EHa

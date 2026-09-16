@@ -4,6 +4,7 @@
 #include "ThreadedCapture.h"
 #include "ThreadedPlayerStatus.h"
 #include "FastLatencyWindow.h"
+#include "ThreadAffinity.h"
 #include "HereSphereSync.h"
 #include <gdiplus.h>
 #include <sys/timeb.h>
@@ -83,7 +84,7 @@ static bool g_logFileOpen(const QString& path)
 
 // ---------------------------------------------------------------
 
-QString g_cur_version = "12.00";
+QString g_cur_version = "13.00";
 
 //---------------------------------------------------------------
 
@@ -199,8 +200,8 @@ QString g_modify_funscript_function_move_in_out_variants;
 int g_functions_move_in_out_variant = 1;
 
 int g_hismith_speed_for_set_initial_pos = 5;
-const int g_min_search_pos_dif = -10;
-const int g_max_search_pos_dif = 70;
+int g_min_search_pos_dif = -10;
+int g_max_search_pos_dif = 70;
 
 LARGE_INTEGER g_frequency;
 
@@ -208,12 +209,32 @@ LARGE_INTEGER g_frequency;
 
 const QString g_winrt_ble = "Direct Bluetooth LE (WinRT)";
 const QString g_intiface = "Intiface® Central (Buttplug.io)";
+QString g_device_connection_type = g_winrt_ble;
 
 //---------------------------------------------------------------
 
 HighPrecisionTimerGuard g_high_precision_timer_guard;
 __int64 g_delta_frame_read_time_vs_video_time = (std::numeric_limits<__int64>::max)();
 
+//-------------------------------------------------------------------------------
+// ThreadAffinity globals — see ThreadAffinity.h for the full contract.
+// Defined here because main.cpp is the only TU that has access to both
+// <windows.h> and Qt. mainwindow.cpp references them via the extern
+// declarations in ThreadAffinity.h.
+//-------------------------------------------------------------------------------
+namespace ThreadAffinity
+{
+    std::atomic<bool> g_align_to_p_cores = true;   // master switch — default ON
+    std::atomic<int>  g_p_core_count     = 0;      // 0 = auto (min(4, hw_concurrency))
+
+    // Tag strings used at every pin-call-site so the user can see, in the
+    // diagnostic line, WHICH logical thread just got pinned.
+    const char* const kTagUiWorkerMain     = "ui/main (QApplication + WinRT STA pump)";
+    const char* const kTagWorkerMainLoop   = "worker (run_funscript/test_hismith/get_performance/get_statistics)";
+    const char* const kTagThreadedCapture  = "ThreadedCapture::capture_loop (OpenCV)";
+    const char* const kTagThreadedPlayer   = "ThreadedPlayerStatus::status_loop (HTTP poll / TCP socket)";
+}
+//-------------------------------------------------------------------------------
 //---------------------------------------------------------------
 
 ThreadedCapture g_threaded_capture;
@@ -223,11 +244,12 @@ VideoPlayerStatus g_video_player_status;
 //---------------------------------------------------------------
 
 int g_funscript_time_shift_delta_ms = 10;
+int g_funscript_time_shift_ms_default = 0;
 
 // Runtime-adjustable time shift for funscript actions (in milliseconds).
 // Read by the tracking loop and written from the UI thread.
 // Applied dynamically on every read of funscript_data_maped[*].first.
-std::atomic<int> g_funscript_time_shift_ms = 0;
+std::atomic<int> g_funscript_time_shift_ms = g_funscript_time_shift_ms_default;
 
 //---------------------------------------------------------------
 
@@ -1506,8 +1528,35 @@ void ThreadedCapture::stop() {
 	}
 }
 
+__int64 ThreadedCapture::get_skipped_frames()
+{
+	std::lock_guard<std::mutex> lock(cap_mutex);
+	return producer_total - consumer_total;
+}
+
+__int64 ThreadedCapture::get_bad_frames()
+{
+	std::lock_guard<std::mutex> lock(cap_mutex);
+	return bad_total;
+}
+
+void ThreadedCapture::clean_counters()
+{
+	std::lock_guard<std::mutex> lock(cap_mutex);
+	bad_total = 0;
+	producer_total = 0;
+	consumer_total = 0;
+}
+
 void ThreadedCapture::capture_loop() {
-	//SetThreadAffinityMask(GetCurrentThread(), 0x04);
+	// P-core pin (T3, see ThreadAffinity.h). On hybrid CPUs this keeps
+	// the OpenCV capture loop on a high-performance core. Without this
+	// the Windows scheduler can migrate this thread onto an E-core
+	// mid-frame and the user observes the random 50-fps dips.
+	::ThreadAffinity::pinCurrentThread(/*idx=*/2, ::ThreadAffinity::kTagThreadedCapture);
+
+	//Legacy placeholder (kept for historical grep-ability):
+	//(previously) SetThreadAffinityMask(GetCurrentThread(), 0x04);
 
 	cv::Mat local_frame;
 	__int64 msec_frame_prev_pos = -1;
@@ -1529,7 +1578,7 @@ void ThreadedCapture::capture_loop() {
 				{
 					// Legacy single-slot fast path - exactly as before.
 					std::lock_guard<std::mutex> lock(cap_mutex);
-					if (has_new_frame) { producer_total++; }  // frame overwritten because consumer was too slow
+					producer_total++;
 					std::swap(latest_frame, local_frame);
 					m_frame_read_time = frame_read_time;
 					msec_pos_latest_frame = msec_frame_cur_pos;
@@ -1544,6 +1593,11 @@ void ThreadedCapture::capture_loop() {
 					while ((int)frame_queue.size() > buffer_size) { frame_queue.pop_front(); }  // drop oldest if full
 					cvar.notify_one();
 				}
+			}
+			else
+			{
+				std::lock_guard<std::mutex> lock(cap_mutex);
+				bad_total++;
 			}
 		}
 		else {
@@ -4814,6 +4868,12 @@ VideoPlayerStatus ThreadedPlayerStatus::getLatestState() const
 
 void ThreadedPlayerStatus::status_loop()
 {
+	// P-core pin (T3, see ThreadAffinity.h). The HTTP poller runs
+	// QNetworkAccessManager, and on hybrid CPUs a mid-request migration
+	// onto an E-core produces visible 1-frame stutters in the
+	// "Test Performance" statistics.
+	::ThreadAffinity::pinCurrentThread(/*idx=*/3, ::ThreadAffinity::kTagThreadedPlayer);
+
 	QNetworkAccessManager nma;
 	QNetworkRequest       req;
 	configure_video_player_request(req);
@@ -4850,10 +4910,8 @@ void ThreadedPlayerStatus::status_loop()
 
 //---------------------------------------------------------------
 
-void update_start_video_pos(int &start_video_pos, int &cur_video_pos, int &prev_cur_video_pos, LARGE_INTEGER &cur_time, const LARGE_INTEGER &start_time, const LARGE_INTEGER & Frequency, QString &log_data)
+void update_start_video_pos(int &start_video_pos, int &cur_video_pos, LARGE_INTEGER &cur_time, const LARGE_INTEGER &start_time, const LARGE_INTEGER & Frequency, QString &log_data)
 {
-	prev_cur_video_pos = cur_video_pos;
-
 	get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 	g_actual_video_pos = cur_video_pos;
 
@@ -4873,7 +4931,7 @@ void update_start_video_pos(int &start_video_pos, int &cur_video_pos, int &prev_
 				}
 				else
 				{
-					log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 is not > 0 or <= -50, keep start_video_pos the same]").arg(start_video_pos_dif).arg(new_start_video_pos);
+					log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 is not > 0 or <= -50, keep start_video_pos the same]").arg(start_video_pos_dif);
 				}
 			}
 			else
@@ -5148,7 +5206,7 @@ void run_funscript()
 
 			if (last_load_funscript_video_filepath != last_play_video_filepath)
 			{
-				g_funscript_time_shift_ms = 0;
+				g_funscript_time_shift_ms = g_funscript_time_shift_ms_default;
 				QFileInfo info(last_play_video_filepath);
 				funscript_fname = QDir::toNativeSeparators(info.path() + "/" + info.completeBaseName() + ".funscript");
 
@@ -5214,7 +5272,7 @@ void run_funscript()
 			g_video_player_status = g_threaded_player_status.make_video_player_status();
 			get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 			g_actual_video_pos = cur_video_pos;
-			search_video_pos = cur_video_pos;
+			search_video_pos = cur_video_pos + g_funscript_time_shift_ms;
 			prev_rate = g_video_player_status.rate;
 
 			for (int i = 0; i < funscript_data_maped_full.size(); i++)
@@ -6019,12 +6077,13 @@ void run_funscript()
 
 					prev_vp_st_poll_time = g_video_player_status.poll_time;
 					g_video_player_status = g_threaded_player_status.getLatestState();
+					prev_cur_video_pos = cur_video_pos;
 					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
 
 					if (g_video_player_status.poll_time.QuadPart != prev_vp_st_poll_time.QuadPart)
 					{
-						update_start_video_pos(start_video_pos, cur_video_pos, prev_cur_video_pos, cur_time, start_time, Frequency, hismith_speed_changed);
+						update_start_video_pos(start_video_pos, cur_video_pos, cur_time, start_time, Frequency, hismith_speed_changed);
 
 						if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
 							(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
@@ -6160,14 +6219,6 @@ void run_funscript()
 					}
 
 				} while (dt > dtime);
-
-				prev_vp_st_poll_time = g_video_player_status.poll_time;
-				g_video_player_status = g_threaded_player_status.getLatestState();
-
-				if (g_video_player_status.poll_time.QuadPart != prev_vp_st_poll_time.QuadPart)
-				{
-					update_start_video_pos(start_video_pos, cur_video_pos, prev_cur_video_pos, cur_time, start_time, Frequency, hismith_speed_changed);
-				}
 
 				results[action_id - 1].avg_req_hismith_speed = avg_req_hismith_speed;
 				results[action_id - 1].min_dt_between_speed_changes = min_dt_between_speed_changes;
@@ -6708,17 +6759,27 @@ void get_performance_with_hismith(int hismith_speed)
 		bool last_get_frame_status = false;
 		__int64 max_webcam_time_diff = 0;
 
+
+		g_threaded_capture.clean_counters();
+		int bad_frames = 0, skipped_frames = 0;
+
 		while (1)
 		{
 			last_msec_video_prev_pos = msec_video_cur_pos;
+
+			//get_new_camera_frame(capture, frame, msec_video_cur_pos);
+			//last_get_frame_status = true;
+
 			last_get_frame_status = get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
 				msec_video_prev_pos, abs_prev_pos,
 				false, NULL, cv::String(), QString(), true, false);
+
 			if (!last_get_frame_status)
 			{
 				break;
 			}
+
 			prev_time = cur_time;
 			QueryPerformanceCounter(&cur_time);
 			num_frames++;
@@ -6742,6 +6803,8 @@ void get_performance_with_hismith(int hismith_speed)
 				break;
 			}
 		}
+		skipped_frames = g_threaded_capture.get_skipped_frames();
+		bad_frames = g_threaded_capture.get_bad_frames();
 
 		g_threaded_capture.stop();
 		g_high_precision_timer_guard.Stop();
@@ -6760,9 +6823,11 @@ void get_performance_with_hismith(int hismith_speed)
 				"max_dt_according_QueryPerformanceCounter_for_get_new_frame_and_speed:%4 frame_number:%5\n"
 				"avg_dt_according_webcam_for_get_new_frame_and_speed:%6\n"
 				"avg_dt_according_QueryPerformanceCounter_for_get_new_frame_and_speed:%7\n"
-				"avg_fps_for_get_new_frame_and_speed:%8\n"
-				"max_webcam_time_diff_from_current_time:%9 + %10 (webcam_end_to_end_latency)\n"
-				"device_speed_change_delay:%11")
+				"max_webcam_time_diff_from_current_time:%8 + %9 (webcam_end_to_end_latency)\n"
+				"device_speed_change_delay:%10\n"
+				"analized_frames:%11 skipped_frames:%12 bad_frames:%13\n"
+				"avg_get_camera_frames_fps:%14\n"
+				"avg_fps_for_get_new_frame_and_speed:%15\n")
 				.arg(last_get_frame_status)
 				.arg(max_dt_according_webcam_to_get_new_frame_and_speed)
 				.arg(num_frame_video)
@@ -6770,10 +6835,14 @@ void get_performance_with_hismith(int hismith_speed)
 				.arg(num_frame_gtc)
 				.arg((int)(msec_video_cur_pos - msec_video_start_pos) / num_frames)
 				.arg((int)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) / num_frames)
-				.arg(((double)num_frames*1000.0)/(double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)))
 				.arg(max_webcam_time_diff)
 				.arg(g_webcam_end_to_end_latency)
 				.arg(g_speed_change_delay)
+				.arg(num_frames)
+				.arg(skipped_frames)
+				.arg(bad_frames)
+				.arg(((double)(num_frames + skipped_frames + bad_frames) * 1000.0) / (double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)))
+				.arg(((double)num_frames * 1000.0) / (double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)))
 				,
 				"Performance Results");
 		}
@@ -7222,7 +7291,11 @@ void SaveSettings()
 	data_list.append({ "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40) });
 	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay_from_settings_file) });
 	data_list.append({ "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout) });
+	data_list.append({ "funscript_time_shift_ms", QString::number(g_funscript_time_shift_ms_default) });
 	data_list.append({ "funscript_time_shift_delta_ms", QString::number(g_funscript_time_shift_delta_ms) });
+
+	data_list.append({ "min_search_pos_dif", QString::number(g_min_search_pos_dif) });
+	data_list.append({ "max_search_pos_dif", QString::number(g_max_search_pos_dif) });
 
 	data_list.append({ "B_range", QString("[%1-%2][%3-%4][%5-%6]")
 												.arg(g_B_range[0][0])
@@ -7268,6 +7341,10 @@ void SaveSettings()
 
 	g_video_player_type = VideoPlayerTypesUtils::from_string(g_pW->ui->videoPlayerType->currentText());
 	data_list.append({ "video_player_type", VideoPlayerTypesUtils::to_string(g_video_player_type) });
+
+	data_list.append({ "device_connection_type", g_device_connection_type });
+
+	data_list.append({ "align_to_p_cores", QString::number(::ThreadAffinity::g_align_to_p_cores.load() ? 1 : 0)});
 
 	data_list.append({ "hotkey_stop", g_hotkey_stop });
 	data_list.append({ "hotkey_pause", g_hotkey_pause });
@@ -7322,6 +7399,8 @@ bool LoadSettings()
 	g_speed_change_delay_from_settings_file = data_map["speed_change_delay"].toInt();
 	g_speed_change_delay = g_speed_change_delay_from_settings_file;
 	g_cpu_freezes_timeout = data_map["cpu_freezes_timeout"].toInt();
+	g_funscript_time_shift_ms_default = data_map["funscript_time_shift_ms"].toInt();
+	g_funscript_time_shift_ms = g_funscript_time_shift_ms_default;
 	g_funscript_time_shift_delta_ms = data_map["funscript_time_shift_delta_ms"].toInt();
 
 	g_hotkey_stop = data_map["hotkey_stop"];
@@ -7402,7 +7481,16 @@ bool LoadSettings()
 	g_modify_funscript_function_move_in_out_variants = data_map["functions_move_in_out_variants"];
 	g_functions_move_in_out_variant = data_map["functions_move_in_out_variant"].toInt();
 
+	g_min_search_pos_dif = data_map["min_search_pos_dif"].toInt();
+	g_max_search_pos_dif = data_map["max_search_pos_dif"].toInt();
+
+	g_device_connection_type = data_map["device_connection_type"];
+
+	::ThreadAffinity::g_align_to_p_cores = (data_map["align_to_p_cores"].toInt() == 0) ? false : true;
+
 	//------------------------------------------------------------------------------------------------
+
+	g_pW->ui->DeviceConnectionTypes->setCurrentText(g_device_connection_type);
 
 	g_pW->ui->speedLimit->setText(QString::number(g_max_allowed_hismith_speed));
 	g_pW->ui->minRelativeMove->setText(QString::number(g_min_funscript_relative_move));
@@ -7523,23 +7611,24 @@ int main(int argc, char *argv[])
 	// every qDebug/qWarning from WinRtBleManager, Buttplug, OpenCV
 	// and the rest of the app is captured into execution.log.
 	qInstallMessageHandler(log_handler);
-//---------------------------------------------------------------
-// Single-instance guard: refuse to start a second HismithControl in the same
-// user session. Uses a named Win32 mutex (Local\HismithControl_SingleInstance_v1).
-// The OS releases the kernel handle automatically when the owner process exits,
-// so a legitimate restart after closing the first window always works.
-HANDLE g_singleInstanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\HismithControl_SingleInstance_v1");
-if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullptr))
-{
-    MessageBoxW(nullptr,
-        L"HismithControl is already running.\nPlease close the existing instance first and try again.",
-        L"HismithControl - single instance guard", MB_ICONERROR | MB_OK);
-    if (g_singleInstanceMutex) CloseHandle(g_singleInstanceMutex);
-    return 1; // non-zero so scripts / Task Scheduler can flag a failed startup
-}
-// Success path: do NOT CloseHandle() here. The kernel object must stay alive
-// for the whole lifetime of the process; the OS auto-releases the handle at
-// termination, which is exactly when we want the lock to drop.
+
+	//---------------------------------------------------------------
+	// Single-instance guard: refuse to start a second HismithControl in the same
+	// user session. Uses a named Win32 mutex (Local\HismithControl_SingleInstance_v1).
+	// The OS releases the kernel handle automatically when the owner process exits,
+	// so a legitimate restart after closing the first window always works.
+	HANDLE g_singleInstanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\HismithControl_SingleInstance_v1");
+	if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullptr))
+	{
+		MessageBoxW(nullptr,
+			L"HismithControl is already running.\nPlease close the existing instance first and try again.",
+			L"HismithControl - single instance guard", MB_ICONERROR | MB_OK);
+		if (g_singleInstanceMutex) CloseHandle(g_singleInstanceMutex);
+		return 1; // non-zero so scripts / Task Scheduler can flag a failed startup
+	}
+	// Success path: do NOT CloseHandle() here. The kernel object must stay alive
+	// for the whole lifetime of the process; the OS auto-releases the handle at
+	// termination, which is exactly when we want the lock to drop.
 
 	std::srand(std::time(nullptr)); // use current time as seed for random generator
 
@@ -7547,7 +7636,7 @@ if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullpt
 	ULONG_PTR gdiplusToken;
 	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
-    QApplication a(argc, argv);
+	QApplication a(argc, argv);
 	g_root_dir = a.applicationDirPath();
 
 	// Open the global log file next to the exe. Every
@@ -7560,6 +7649,7 @@ if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullpt
 		g_logFileOpen(log_path);
 		qDebug().noquote() << QString("Log file ready at: %1").arg(log_path);
 	}
+
 	QIcon icon(":/images/icon.ico");
 	a.setWindowIcon(icon);
 
@@ -7576,6 +7666,52 @@ if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullpt
 	if (!LoadSettings())
 	{
 		return 0;
+	}
+
+	// ---------------------------------------------------------------------
+	// T1 — Dump the system topology NOW (after log-file is open), so the
+	// line is captured in execution.log and the user can verify, before any
+	// pin call happens, what the OS reports for this machine:
+	//   - total logical-processor count (hardware_concurrency)
+	//   - active-processor mask
+	//   - resolved P-core count & master-switch state
+	// ---------------------------------------------------------------------
+	qDebug().noquote() << ::ThreadAffinity::dumpTopology();
+	qDebug().noquote() << "[ThreadAffinity] Topology above. "
+		<< (::ThreadAffinity::g_align_to_p_cores.load() ? "PINNING ENABLED" : "PINNING DISABLED") << ".";
+
+	// ---------------------------------------------------------------------
+	// T3 — pin the UI (main) thread to P-core #0.
+	//
+	// On hybrid CPUs (Intel 12th-14th Gen, AMD Strix) this is the single most
+	// impactful pin: WinRT Completed delegates (i.e. the BLE write ack for
+	// "Direct Bluetooth LE (WinRT)") fire through PostMessage into THIS
+	// thread's message queue, so the UI thread's core placement directly
+	// determines the observed 50 fps vs 60 fps on the winrt transport.
+	// Buttplug is a plain TCP socket and is insensitive to this, which is
+	// why Intiface Central looks stable.
+	//
+	// Core allocation (matches ThreadAffinity.h contract):
+	//   idx 0 : UI thread (here)
+	//   idx 1 : worker (run_funscript / test_hismith / get_performance /
+	//           get_statistics)      — see mainwindow.cpp
+	//   idx 2 : ThreadedCapture      — see ThreadedCapture::capture_loop
+	//   idx 3 : ThreadedPlayer       — see ThreadedPlayerStatus::status_loop
+	//
+	// No-op when g_align_to_p_cores is false OR when the system has fewer
+	// than one usable P-core slot (impossible on x64, but the check covers
+	// 32-bit and exotic topologies).
+	// ---------------------------------------------------------------------
+	if (::ThreadAffinity::resolvedPCoreCount() >= 1)
+	{
+		::ThreadAffinity::pinCurrentThread(/*idx=*/0, ::ThreadAffinity::kTagUiWorkerMain);
+		qDebug().noquote() << "[ThreadAffinity] UI thread pinning completed.";
+	}
+	else
+	{
+		qInfo().noquote() << "[ThreadAffinity] UI thread pinning SKIPPED — "
+			<< "g_align_to_p_cores=false or no P-core slots available. "
+			<< "Windows scheduler will place the UI thread as it wishes.";
 	}
 
 	// for testing functions:

@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
 #include "HighPrecisionTimerGuard.h"
+#include "ThreadAffinity.h"
 #include <thread>
 #include <condition_variable>
 #include <mutex>
@@ -17,6 +18,12 @@
 void StartWorker::doWork()
 {
     g_work_in_progress = true;
+    // P-core pin (T3, see ThreadAffinity.h). All 4 worker types share P-core
+    // index 1 because they are mutually exclusive via g_work_in_progress —
+    // only ONE of them is ever running on this thread at any given moment,
+    // so a single P-core slot is sufficient for the whole worker pool.
+    ::ThreadAffinity::pinCurrentThread(/*idx=*/1, ::ThreadAffinity::kTagWorkerMainLoop);
+
     g_runing_funscript = false;
     g_initial_start = true;
     g_stop_run = false;
@@ -39,6 +46,11 @@ void StartController::handleResults()
 void GetStatisticsWorker::doWork()
 {
     g_work_in_progress = true;
+    // P-core pin (T3, see ThreadAffinity.h) — same P-core #1 as the other
+    // 3 workers, because they are all mutually exclusive via
+    // g_work_in_progress.
+    ::ThreadAffinity::pinCurrentThread(/*idx=*/1, ::ThreadAffinity::kTagWorkerMainLoop);
+
     p_parent->ui->getStatistics->setText(QString("Stop Get Hismith Statistics Data"));
     get_statistics_with_hismith(p_parent->ui->startSpeed->text().toInt(), p_parent->ui->endSpeed->text().toInt());
     emit resultReady();
@@ -56,6 +68,10 @@ void GetStatisticsController::handleResults()
 void TestWorker::doWork(int speed)
 {
     g_work_in_progress = true;
+    // P-core pin (T3, see ThreadAffinity.h) — same P-core #1 as the other
+    // 3 workers, mutually exclusive via g_work_in_progress.
+    ::ThreadAffinity::pinCurrentThread(/*idx=*/1, ::ThreadAffinity::kTagWorkerMainLoop);
+
     test_hismith(speed);
     emit resultReady();
 }
@@ -71,6 +87,10 @@ void TestController::handleResults()
 void PerfWorker::doWork(int speed)
 {
     g_work_in_progress = true;
+    // P-core pin (T3, see ThreadAffinity.h) — same P-core #1 as the other
+    // 3 workers, mutually exclusive via g_work_in_progress.
+    ::ThreadAffinity::pinCurrentThread(/*idx=*/1, ::ThreadAffinity::kTagWorkerMainLoop);
+
     get_performance_with_hismith(speed);
     emit resultReady();
 }
@@ -253,7 +273,6 @@ MainWindow::MainWindow(QWidget *parent)
     ui->DeviceConnectionTypes->clear();
     ui->DeviceConnectionTypes->addItem(g_winrt_ble);
     ui->DeviceConnectionTypes->addItem(g_intiface);
-    ui->DeviceConnectionTypes->setCurrentText(g_winrt_ble);
 
     // Allocate the BLE manager ONCE for the lifetime of the program.
     // All calls into it are now synchronous; the only signals we use from it
@@ -665,7 +684,10 @@ void MainWindow::refreshDevices(bool show_msgs)
             return;
         }
 
-        const auto devices = m_bleManager->findHismithDevices(5000);
+        int timeout = 10000;
+        show_msg("", 0, MessageType::Clean);
+        show_msg(QString("Refreshing BLE Devices for %1ms, please wait...").arg(timeout), timeout, MessageType::Always);
+        const auto devices = m_bleManager->findHismithDevices(timeout);
 
         for (const auto& d : devices)
         {

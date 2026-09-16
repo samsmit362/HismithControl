@@ -864,10 +864,10 @@ bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
             static const char* kAsyncName[4] = { "Completed", "Canceled", "Error", "Started" };
             const char* an = (intStatus >= 0 && intStatus < 4) ? kAsyncName[intStatus] : "Unknown";
             const bool fullyOk = (intStatus == 0 && gstat == 0); // Completed && Gatt==Success
-            if (fullyOk)
+            /*if (fullyOk)
             {
                 qDebug().noquote()
-                    << "sendSpeedCommand: OK          "
+                    << "sendSpeedCommand: OK"
                     << "  AsyncStatus: 0 (Completed)"
                     << "  GattStatus:  0 (Success)"
                     << "  (speed=" << (int)speed << ")";
@@ -875,12 +875,12 @@ bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
             else
             {
                 qWarning().noquote()
-                    << "sendSpeedCommand: NOT OK —"
+                    << "sendSpeedCommand:"
                     << "  AsyncStatus:" << intStatus << "(" << an << ")"
                     << "  GattStatus:"
                     << (intStatus == 0 ? QString::number(gstat) : QString("n/a (op not Completed)"))
                     << "  (speed=" << (int)speed << ")";
-            }
+            }*/
         });
         return true;
     }

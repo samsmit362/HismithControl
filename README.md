@@ -31,7 +31,8 @@ I'm using for this blue and green insulating tapes (Multi Coloured Electrical Ta
 Also you will need that used colors mostly will not be present on Web Camera scene except tracked Hismith parts.\
 Example how to do this you can see in [example_images](https://github.com/samsmit362/HismithControl/tree/master/example_images) folder.**\
 So after getting all of this you will need:
-1) to start [Intiface Central](https://intiface.com/central/) (download: win: exe)\
+1) **[OPTIONAL / NOT REQUIRED] see "Device Connection Types" for more details**\
+to start [Intiface® Central](https://intiface.com/central/) (download: win: exe)\
 check that it can find your Hismith and you can change speed by using it.
 2) to run this program
 3) select Web Camera in combo box which you wish to use for detect Hismith rotation angle.\
@@ -140,7 +141,7 @@ Also after play you can open new generated res_data\\!results_[date].txt for che
 
 ## <font color="red">! WARNING !</font>
 **<font color="red">Be aware to stop Hismith by power button or hotkeys to stop running.</font>**\
-Due to different reasons like computer freeze or "Intiface Central" lose Hismith device or "Funscript - some of which has very fast stroking or vibration simulations on scenes where they are totally missed or not".\
+Due to different reasons like computer freeze or "Intiface® Central" lose Hismith device or "Funscript - some of which has very fast stroking or vibration simulations on scenes where they are totally missed or not".\
 If you are not sure about script or fear to get injury you can limit max speed in program by changing "Hismith Speed Limit" in GUI also recommend to minimize stroke length in this case.\
 **So I highly recommend checking each scene before usage especially with using "Check Funscript" button for check on "Min Funscript Relative Move" (more details below in separate topic).**\
 \
@@ -154,6 +155,40 @@ Sometimes it start too quick during video navigation, especially if you moved to
 \
 **For get max good experience but wholly on you risk it is recommended to set "Hismith Speed Limit" to 100 (100%) and try to use with turned "off" and "on" (both variants) "Use Modify Funscript Functions" CheckBox but don't forget to check on each scene before usage**
 
+## Device Connection Types
+- Program now supports two types of Device Connection Types:
+	- Direct Bluetooth LE (WinRT) - should work faster with Hismith with less end to end latency
+	- Intiface® Central (Buttplug.io) - supports more devices (https://intiface.com/central/)
+
+## Align to P-cores
+Pin threads to P-cores for enhanced performance and synchronization.\
+In settings.xml:
+```xml
+<align_to_p_cores>1</align_to_p_cores>
+
+values:
+	1 - enabled
+	0 - disabled
+	by default == 1
+```
+
+## Align Position At Actions Start
+The **search_pos_dif** parameter represents the difference (in degrees) between the target rotation angle and the actual angle detected at the start of the first action. A value of '360' corresponds to a full circle of rotation.\
+In settings.xml:
+```xml
+<min_search_pos_dif>-10</min_search_pos_dif>
+<max_search_pos_dif>70</max_search_pos_dif>
+```
+
+## Funscript Time Shift Milliseconds
+The **funscript_time_shift_ms** setting defines the execution time shift for the funscript. This allows you to align the funscript actions with the video playback in real time using hotkeys.\
+In settings.xml:
+```xml
+<funscript_time_shift_ms>-30</funscript_time_shift_ms>
+<funscript_time_shift_delta_ms>10</funscript_time_shift_delta_ms>
+<hotkey_funscript_time_shift_up>Shift+T</hotkey_funscript_time_shift_up>
+<hotkey_funscript_time_shift_down>Shift+G</hotkey_funscript_time_shift_down> 
+```
 
 ## Min Funscript Relative Move
 **It is used for modify funscript actions to increase safety in cases of very fast stroking or vibration simulations on scenes where they are totally missed or not.**\
@@ -224,9 +259,9 @@ additional detail points will be added from move variant with id == 2 (according
 This program also supports video speed rate changes, so you can assign hotkeys for slow down or increase video speed in video player, and this application will automatically detect it in real time.
 
 ## Known issues
-**Sometimes "Intiface Central" lost Hismith device, in such case device continue to run on last set speed, in such case be ready to stop it moves by using its original wired controller.**\
+**Sometimes "Intiface® Central" lost Hismith device, in such case device continue to run on last set speed, in such case be ready to stop it moves by using its original wired controller.**\
 \
-Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication with "Intiface Central" (Antivirus, System update, etc) or its "Intiface Central" internal issue), in order to avoid such situations i recommend to: after each initial "Start" to check how Run is going with video navigation and etc, and only if all is going well to use it, in other case reboot OS resolve an issue.\
+Sometimes (in some rare cases) after press "Start" it do some unpredictable moves, freezes or increase speed (looks something freeze communication with "Intiface® Central" (Antivirus, System update, etc) or its "Intiface® Central" internal issue), in order to avoid such situations i recommend to: after each initial "Start" to check how Run is going with video navigation and etc, and only if all is going well to use it, in other case reboot OS resolve an issue.\
 \
 Sometimes even when Hismith device is found on "Test Webcam+Hismith" after press "Start" it still show issue that can't find device or etc, known solution is to reboot OS.\
 \

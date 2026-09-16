@@ -18,14 +18,14 @@ class ThreadedCapture
 public:
     bool is_running{ false };
 
-    // Diagnostic metrics (read-only after stop()).
-    // Total frames captured by the producer thread (successful p_cap->read + fresh timestamp).
-    uint64_t producer_total{ 0 };
-    // Total frames delivered to the consumer through wait_and_get_fresh_frame.
-    uint64_t consumer_total{ 0 };
-    // In single-slot mode (buffer_size == 1), producer_total - consumer_total
-    // is the number of "overwritten/skipped" frames. In ring-buffer mode it is 0.
-    uint64_t skipped_frames() const { return producer_total - consumer_total; }
+    __int64 get_skipped_frames();
+    __int64 get_bad_frames();
+    void clean_counters();
+
+private:
+    __int64 producer_total{ 0 };
+    __int64 consumer_total{ 0 };
+    __int64 bad_total{ 0 };
 
 private:
     std::thread capture_thread;
