@@ -19,6 +19,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <limits>
+#include <windows.h>    //  Win32 API: CreateMutexW / MessageBoxW / GetLastError / CloseHandle
 
 #include <winrt/base.h> // WinRT apartment init (must happen before QApplication)
 
@@ -7439,6 +7440,23 @@ int main(int argc, char *argv[])
 	// every qDebug/qWarning from WinRtBleManager, Buttplug, OpenCV
 	// and the rest of the app is captured into execution.log.
 	qInstallMessageHandler(log_handler);
+//---------------------------------------------------------------
+// Single-instance guard: refuse to start a second HismithControl in the same
+// user session. Uses a named Win32 mutex (Local\HismithControl_SingleInstance_v1).
+// The OS releases the kernel handle automatically when the owner process exits,
+// so a legitimate restart after closing the first window always works.
+HANDLE g_singleInstanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\HismithControl_SingleInstance_v1");
+if ((GetLastError() == ERROR_ALREADY_EXISTS) || (g_singleInstanceMutex == nullptr))
+{
+    MessageBoxW(nullptr,
+        L"HismithControl is already running.\nPlease close the existing instance first and try again.",
+        L"HismithControl - single instance guard", MB_ICONERROR | MB_OK);
+    if (g_singleInstanceMutex) CloseHandle(g_singleInstanceMutex);
+    return 1; // non-zero so scripts / Task Scheduler can flag a failed startup
+}
+// Success path: do NOT CloseHandle() here. The kernel object must stay alive
+// for the whole lifetime of the process; the OS auto-releases the handle at
+// termination, which is exactly when we want the lock to drop.
 
 	std::srand(std::time(nullptr)); // use current time as seed for random generator
 
@@ -7505,3 +7523,4 @@ int main(int argc, char *argv[])
 
     return a.exec();
 }
+
