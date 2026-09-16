@@ -161,9 +161,6 @@ Client* g_pClient = NULL;
 std::vector<DeviceClass> g_myDevices;
 DeviceClass* g_pMyDevice = NULL;
 
-QNetworkAccessManager* g_pNetworkAccessManager = NULL;
-QNetworkRequest* g_pNetworkRequest = NULL;
-HereSphereSync* g_pHereSphereSync = NULL;
 
 bool g_stop_run = false;
 bool g_pause = false;
@@ -999,8 +996,8 @@ bool get_hismith_pos_by_image(cv::Mat& frame, double& pos, bool ignore_error = f
 									g_max_ccxlcx_lh_ratio_prev_to_cur_dif = dif;
 								}
 
-								// more then 10%
-								if (dif > 10.0)
+								// more then 20%
+								if (dif > 20.0)
 								{
 									if (!ignore_error)
 									{
@@ -3325,9 +3322,9 @@ void shift_get_next_frame_and_cur_speed_data(double dpos)
 
 bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
 	double& abs_cur_pos, double& cur_pos, __int64& msec_video_cur_pos, double& cur_speed,
-	__int64& msec_video_prev_pos, double& abs_prev_pos, bool show_results = false,
-	cv::Mat* p_res_frame = NULL, cv::String title = "", QString add_data = QString(),
-	bool stop_at_first_error = false)
+	__int64& msec_video_prev_pos, double& abs_prev_pos,
+	bool show_results = false, cv::Mat* p_res_frame = NULL, cv::String title = cv::String(),
+	QString add_data = QString(), bool stop_at_first_error = false, bool ignore_error = true)
 {
 	double prev_pos, dpos;
 	bool res = false;
@@ -3349,7 +3346,7 @@ bool get_next_frame_and_cur_speed(cv::VideoCapture& capture, cv::Mat& frame,
 			abs_prev_pos = _tmp_abs_prev_poss[0];
 		}
 
-		if (get_hismith_pos_by_image(frame, cur_pos, true, show_results, p_res_frame, &cur_speed, title, add_data))
+		if (get_hismith_pos_by_image(frame, cur_pos, ignore_error, show_results, p_res_frame, &cur_speed, title, add_data))
 		{
 			dpos = update_abs_pos(cur_pos, prev_pos, abs_cur_pos, frame, cur_speed);
 
@@ -3464,7 +3461,6 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest* req, Q
 	{
 		req->setUrl(QUrl(ReqUrl));
 		QNetworkReply* rep = manager->get(*req);
-		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 
 
 		QEventLoop loop;
@@ -3489,6 +3485,8 @@ QByteArray get_vlc_reply(QNetworkAccessManager* manager, QNetworkRequest* req, Q
 				res = true;
 			}
 		}
+
+		delete rep;
 
 		if (!res && !g_stop_run)
 		{
@@ -3519,7 +3517,6 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest* re
 	{
 		req->setUrl(QUrl(ReqUrl));
 		QNetworkReply* rep = manager->get(*req);
-		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 		QByteArray reply_res;
 
 		QEventLoop loop;
@@ -3694,6 +3691,8 @@ void make_vlc_status_request(QNetworkAccessManager *manager, QNetworkRequest* re
 			}
 		}
 
+		delete rep;
+
 		if (!res && !g_stop_run)
 		{
 			video_pos = -1;
@@ -3727,7 +3726,6 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 	{
 		req->setUrl(QUrl(ReqUrl));
 		QNetworkReply* rep = manager->get(*req);
-		QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 		QString reply_res;
 
 		QEventLoop loop;
@@ -3829,6 +3827,8 @@ void make_rvp_status_request(QNetworkAccessManager* manager, QNetworkRequest* re
 			}
 		}
 
+		delete rep;
+
 		if (!res && !g_stop_run)
 		{
 			video_pos = -1;
@@ -3863,12 +3863,13 @@ void make_rvp_command(QNetworkAccessManager* manager, VideoPlayerCommand command
 	}
 
 	QNetworkReply* rep = manager->post(request, postData);
-	QObject::connect(manager, &QNetworkAccessManager::finished, rep, &QNetworkReply::deleteLater);
 	QString reply_res;
 
 	QEventLoop loop;
 	QObject::connect(rep, &QNetworkReply::finished, &loop, &QEventLoop::quit);
 	int loop_res = loop.exec();
+
+	delete rep;
 
 	/*if (!rep->isFinished())
 	{
@@ -3876,7 +3877,7 @@ void make_rvp_command(QNetworkAccessManager* manager, VideoPlayerCommand command
 	}*/
 }
 
-void make_here_sphere_status_request(bool& is_paused, QString& video_filepath, int& video_pos, __int64& sys_time, double& rate)
+void make_here_sphere_status_request(HereSphereSync* hs, bool& is_paused, QString& video_filepath, int& video_pos, __int64& sys_time, double& rate)
 {
 	bool res = false;
 	bool show_warning_here_sphere_is_not_started = true;
@@ -3892,7 +3893,7 @@ void make_here_sphere_status_request(bool& is_paused, QString& video_filepath, i
 
 	do
 	{
-		g_pHereSphereSync->getLatestData(data);
+		hs->getLatestData(data);
 
 		if (!data.gotData)
 		{
@@ -4528,59 +4529,82 @@ public:
 
 //---------------------------------------------------------------
 
-void init_video_player_connection()
+// Applies the per-playertype request settings (auth header + timeout)
+// to a stack-local QNetworkRequest.  Called once per fetch from
+// make_video_player_status() and once at status_loop() start.
+static void configure_video_player_request(QNetworkRequest& req)
 {
+	if (g_video_player_type != VideoPlayerTypes::VLC)
+		return;
+
+	QString concatenated = ":" + g_vlc_password; //username:password
+	QByteArray data = concatenated.toLocal8Bit().toBase64();
+	QString headerData = "Basic " + data;
+	req.setRawHeader("Authorization", headerData.toLocal8Bit());
+	req.setTransferTimeout(1000);
+}
+
+//---------------------------------------------------------------
+
+void ThreadedPlayerStatus::connect_to_player()
+{
+	stop();
+	disconnect_from_player();
+
 	g_video_player_type = VideoPlayerTypesUtils::from_string(g_pW->ui->videoPlayerType->currentText());
 
 	show_msg(QString("Connecting to \"%1\" video player...").arg(VideoPlayerTypesUtils::to_string(g_video_player_type)), 5000, MessageType::Clean);
 
 	if (g_video_player_type == VideoPlayerTypes::VLC)
 	{
-		g_pNetworkAccessManager = new QNetworkAccessManager();
-		g_pNetworkRequest = new QNetworkRequest();
-
-		QString concatenated = ":" + g_vlc_password; //username:password
-		QByteArray data = concatenated.toLocal8Bit().toBase64();
-		QString headerData = "Basic " + data;
-		g_pNetworkRequest->setRawHeader("Authorization", headerData.toLocal8Bit());
-		g_pNetworkRequest->setTransferTimeout(1000);
+		m_p_nma = new QNetworkAccessManager();
+		m_p_req = new QNetworkRequest();
+		configure_video_player_request(*m_p_req);
 	}
 	else if (g_video_player_type == VideoPlayerTypes::RVP)
 	{
+		m_p_nma = new QNetworkAccessManager();
+		m_p_req = new QNetworkRequest();
+		configure_video_player_request(*m_p_req);
 		g_is_video_player_time_in_milliseconds = true;
-		g_pNetworkAccessManager = new QNetworkAccessManager();
-		g_pNetworkRequest = new QNetworkRequest();
 	}
 	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
 	{
 		g_is_video_player_time_in_milliseconds = true;
-		g_pHereSphereSync = new HereSphereSync();
-		g_pHereSphereSync->start(g_HereSphere_ip_address, g_HereSphere_port);
+		m_heresphere = new HereSphereSync();
+		m_heresphere->start(g_HereSphere_ip_address, g_HereSphere_port);
+		m_player_connected = true;
 	}
 }
 
 //---------------------------------------------------------------
 
-void stop_video_player_connection()
+void ThreadedPlayerStatus::disconnect_from_player()
 {
-	if (g_video_player_type == VideoPlayerTypes::VLC || g_video_player_type == VideoPlayerTypes::RVP)
+	if (m_p_req)
 	{
-		g_pNetworkAccessManager->deleteLater();
-		g_pNetworkAccessManager = NULL;
-		delete g_pNetworkRequest;
-		g_pNetworkRequest = NULL;
+		delete m_p_req;
+		m_p_req = nullptr;
 	}
-	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
+
+	if (m_p_nma)
 	{
-		g_pHereSphereSync->stop();
-		delete g_pHereSphereSync;
-		g_pHereSphereSync = NULL;
+		delete m_p_nma;
+		m_p_nma = nullptr;
+	}
+
+	if (m_heresphere)
+	{
+		m_heresphere->stop();
+		delete m_heresphere;
+		m_heresphere = nullptr;
+		m_player_connected = false;
 	}
 }
 
 //---------------------------------------------------------------
 
-VideoPlayerStatus make_video_player_status(VideoPlayerCommand command = VideoPlayerCommand::None)
+VideoPlayerStatus ThreadedPlayerStatus::do_fetch(QNetworkAccessManager* nma, QNetworkRequest* req, VideoPlayerCommand command) const
 {
 	VideoPlayerStatus result;
 
@@ -4597,7 +4621,7 @@ VideoPlayerStatus make_video_player_status(VideoPlayerCommand command = VideoPla
 			vlc_command = QString("?command=pl_pause");
 		}
 
-		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, result.is_paused, video_filename, g_is_video_player_time_in_milliseconds, result.video_pos, result.sys_time, result.rate, vlc_command);
+		make_vlc_status_request(nma, req, result.is_paused, video_filename, g_is_video_player_time_in_milliseconds, result.video_pos, result.sys_time, result.rate, vlc_command);
 		result.video_filepath = video_filename;
 
 		if (video_filename != _tmp_video_filename)
@@ -4605,7 +4629,7 @@ VideoPlayerStatus make_video_player_status(VideoPlayerCommand command = VideoPla
 			_tmp_video_filename = video_filename;
 			_tmp_video_filepath.clear();
 
-			QByteArray vlc_reply = get_vlc_reply(g_pNetworkAccessManager, g_pNetworkRequest, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
+			QByteArray vlc_reply = get_vlc_reply(nma, req, g_vlc_url + ":" + QString::number(g_vlc_port) + "/requests/playlist.xml");
 			QDomDocument doc("data");
 			doc.setContent(vlc_reply);
 			QDomElement docElem = doc.documentElement();
@@ -4644,20 +4668,20 @@ VideoPlayerStatus make_video_player_status(VideoPlayerCommand command = VideoPla
 	}
 	else if (g_video_player_type == VideoPlayerTypes::RVP)
 	{
-		make_rvp_status_request(g_pNetworkAccessManager, g_pNetworkRequest, result.is_paused, result.video_filepath, result.video_pos, result.sys_time, result.rate);
+		make_rvp_status_request(nma, req, result.is_paused, result.video_filepath, result.video_pos, result.sys_time, result.rate);
 
 		if (command != VideoPlayerCommand::None)
 		{
-			make_rvp_command(g_pNetworkAccessManager, VideoPlayerCommand::Pause);
+			make_rvp_command(nma, VideoPlayerCommand::Pause);
 		}
 	}
 	else if (g_video_player_type == VideoPlayerTypes::HereSphere)
 	{
-		make_here_sphere_status_request(result.is_paused, result.video_filepath, result.video_pos, result.sys_time, result.rate);
+		make_here_sphere_status_request(m_heresphere, result.is_paused, result.video_filepath, result.video_pos, result.sys_time, result.rate);
 
 		if (command == VideoPlayerCommand::Pause)
 		{
-			g_pHereSphereSync->setPlaying(false);
+			if (m_heresphere) m_heresphere->setPlaying(false);
 		}
 	}
 
@@ -4691,7 +4715,7 @@ void ThreadedPlayerStatus::start(VideoPlayerStatus& initial_state, unsigned int 
 	{
 		try
 		{
-			m_cached_state = ::make_video_player_status();
+			m_cached_state = do_fetch(m_p_nma, m_p_req, VideoPlayerCommand::None);
 			QueryPerformanceCounter(&m_cached_state.poll_time);
 			initial_state = m_cached_state;
 		}
@@ -4733,7 +4757,7 @@ VideoPlayerStatus ThreadedPlayerStatus::make_video_player_status(VideoPlayerComm
 	try
 	{
 		std::lock_guard<std::mutex> lk(m_make_mutex);
-		state = ::make_video_player_status(command);
+		state = do_fetch(m_p_nma, m_p_req, command);
 		QueryPerformanceCounter(&state.poll_time);
 	}
 	catch (...)
@@ -4757,6 +4781,10 @@ VideoPlayerStatus ThreadedPlayerStatus::getLatestState() const
 
 void ThreadedPlayerStatus::status_loop()
 {
+	QNetworkAccessManager nma;
+	QNetworkRequest       req;
+	configure_video_player_request(req);
+
 	while (!m_stop_requested)
 	{
 		VideoPlayerStatus state;
@@ -4764,7 +4792,7 @@ void ThreadedPlayerStatus::status_loop()
 		try
 		{
 			std::lock_guard<std::mutex> lk(m_make_mutex);
-			state = ::make_video_player_status();
+			state = do_fetch(&nma, &req, VideoPlayerCommand::None);
 			QueryPerformanceCounter(&state.poll_time);
 		}
 		catch (...)
@@ -4930,7 +4958,7 @@ void run_funscript()
 	//-----------------------------------------------------
 	// Connecting to video player with already opened video
 
-	init_video_player_connection();
+	g_threaded_player_status.connect_to_player();
 	g_video_player_status = g_threaded_player_status.make_video_player_status();
 	get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos, false);
 	g_actual_video_pos = cur_video_pos;
@@ -6385,7 +6413,7 @@ void run_funscript()
 		g_video_player_status = g_threaded_player_status.make_video_player_status(VideoPlayerCommand::Pause);
 	}
 
-	stop_video_player_connection();
+	g_threaded_player_status.disconnect_from_player();
 }
 
 void disconnect_from_hismith()
@@ -6464,6 +6492,8 @@ bool get_devices_list(bool show_msgs)
 bool connect_to_hismith()
 {
 	bool res = false;
+
+	disconnect_from_hismith();
 
 	//-----------------------------------------------------
 	//  Direct BLE (WinRT)
@@ -6615,10 +6645,10 @@ void get_performance_with_hismith(int hismith_speed)
 		if (!get_hismith_pos_by_image(frame, cur_pos))
 		{
 			show_msg("", 0, MessageType::Clean);
-			disconnect_from_hismith();
 			g_threaded_capture.stop();
 			g_high_precision_timer_guard.Stop();
 			capture.release();
+			disconnect_from_hismith();
 			return;
 		}
 		abs_cur_pos = get_abs_to_target_pos(cur_pos, 0);
@@ -6627,7 +6657,8 @@ void get_performance_with_hismith(int hismith_speed)
 
 		get_next_frame_and_cur_speed(capture, frame,
 			abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-			msec_video_prev_pos, abs_prev_pos);
+			msec_video_prev_pos, abs_prev_pos,
+			false, NULL, cv::String(), QString(), true, false);
 
 		QueryPerformanceCounter(&cur_time);
 		start_time = cur_time;
@@ -6642,7 +6673,8 @@ void get_performance_with_hismith(int hismith_speed)
 			last_msec_video_prev_pos = msec_video_cur_pos;
 			last_get_frame_status = get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-				msec_video_prev_pos, abs_prev_pos);
+				msec_video_prev_pos, abs_prev_pos,
+				false, NULL, cv::String(), QString(), true, false);
 			if (!last_get_frame_status)
 			{
 				break;
@@ -6680,7 +6712,7 @@ void get_performance_with_hismith(int hismith_speed)
 		set_hismith_speed(0.0);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-		if (num_frames > 0)
+		if (num_frames > 0 && last_get_frame_status)
 		{
 			show_msg(QString("last_get_frame_status: %1\n"
 				"max_dt_according_webcam_for_get_new_frame_and_speed:%2 frame_number:%3\n"
@@ -7024,7 +7056,7 @@ void test_hismith(int hismith_speed)
 			last_msec_video_prev_pos = msec_video_cur_pos;
 			if (!get_next_frame_and_cur_speed(capture, frame,
 				abs_cur_pos, cur_pos, msec_video_cur_pos, cur_speed,
-				msec_video_prev_pos, abs_prev_pos, true, &res_frame, title, add_data))
+				msec_video_prev_pos, abs_prev_pos, true, &res_frame, title, add_data, true, false))
 			{
 				break;
 			}
@@ -7392,14 +7424,15 @@ void test_vlc()
 	//-----------------------------------------------------
 	// Connecting to VLC player with already opened video
 
-	g_pNetworkAccessManager = new QNetworkAccessManager();
-	g_pNetworkRequest = new QNetworkRequest();
-
-	QString concatenated = ":" + g_vlc_password; //username:password
-	QByteArray data = concatenated.toLocal8Bit().toBase64();
-	QString headerData = "Basic " + data;
-	g_pNetworkRequest->setRawHeader("Authorization", headerData.toLocal8Bit());
-	g_pNetworkRequest->setTransferTimeout(1000);
+	QNetworkAccessManager test_nma;
+	QNetworkRequest test_req;
+	{
+		QString concatenated = ":" + g_vlc_password; //username:password
+		QByteArray data = concatenated.toLocal8Bit().toBase64();
+		QString headerData = "Basic " + data;
+		test_req.setRawHeader("Authorization", headerData.toLocal8Bit());
+		test_req.setTransferTimeout(1000);
+	}
 
 	int cur_video_pos = 0, prev_video_pos = 0, video_pos = 0, dt;
 	__int64 vlc_sys_time = -1;
@@ -7413,7 +7446,7 @@ void test_vlc()
 	while (1)
 	{
 		prev_video_pos = cur_video_pos;
-		make_vlc_status_request(g_pNetworkAccessManager, g_pNetworkRequest, is_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
+		make_vlc_status_request(&test_nma, &test_req, is_paused, cur_video_filename, is_vlc_time_in_milliseconds, video_pos, vlc_sys_time, cur_rate);
 		{
 			VideoPlayerStatus tmp;
 			tmp.is_valid = true;
@@ -7439,10 +7472,7 @@ void test_vlc()
 
 	show_msg(QString("test_vlc ended"));
 
-	g_pNetworkAccessManager->deleteLater();
-	g_pNetworkAccessManager = NULL;
-	delete g_pNetworkRequest;
-	g_pNetworkRequest = NULL;
+	// Stack-local NMA/req destroyed at scope exit.
 }
 
 int main(int argc, char *argv[])
