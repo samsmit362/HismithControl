@@ -84,7 +84,7 @@ static bool g_logFileOpen(const QString& path)
 
 // ---------------------------------------------------------------
 
-QString g_cur_version = "13.00";
+QString g_cur_version = "13.10";
 
 //---------------------------------------------------------------
 
@@ -5432,7 +5432,7 @@ void run_funscript()
 			};
 
 			uint64_t pool_size_bytes = min(static_cast<uint64_t>(g_webcam_fps *
-				((double)(funscript_data_maped[actions_size - 1].first - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
+				((double)(funscript_data_maped[actions_size - 1].first + 200 + std::abs(g_funscript_time_shift_ms) - cur_video_pos) / (g_video_player_status.rate * 1000.0)) *
 				(double)sizeof(FrameData) * 1.2), 1ULL << 30); // no more than 1 Gbyte
 			auto* mem_pool = new std::pmr::monotonic_buffer_resource(pool_size_bytes);
 			std::pmr::deque<FrameData> frames_data_history(mem_pool);
@@ -5526,7 +5526,7 @@ void run_funscript()
 						d_cur_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 						d_exp_from_search_start_pos = get_abs_to_target_pos(exp_abs_cur_pos + ((cur_speed * (double)g_speed_change_delay) / 1000.0), funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
+						if (g_stop_run || g_pause || g_video_freezed || !g_video_player_status.is_paused || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200 + std::abs(g_funscript_time_shift_ms)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 						{
 							break;
 						}
@@ -5551,7 +5551,7 @@ void run_funscript()
 
 					g_d_from_search_start_pos = get_abs_to_target_pos(abs_cur_pos, funscript_data_maped[0].second) - funscript_data_maped[0].second;
 
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200 + std::abs(g_funscript_time_shift_ms)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate))
 					{
 						if (g_pause)
 						{
@@ -5586,7 +5586,7 @@ void run_funscript()
 			start_time = cur_time;
 			start_video_pos = cur_video_pos;
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || (cur_video_pos > funscript_data_maped[1].first) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200 + std::abs(g_funscript_time_shift_ms)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 				(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
 			{
 				if (g_pause)
@@ -5649,7 +5649,7 @@ void run_funscript()
 					start_time = cur_time;
 					start_video_pos = cur_video_pos;
 
-				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200 + std::abs(g_funscript_time_shift_ms)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 					(g_video_player_status.is_paused && g_update) ||
 					(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)) ||
 					(g_is_video_player_time_in_milliseconds && !video_was_paused && g_video_player_status.is_paused))
@@ -5690,7 +5690,7 @@ void run_funscript()
 				.arg(cur_pos)
 				.arg(action_id - 1);
 
-			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
+			if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || (last_play_video_filepath != g_video_player_status.video_filepath) || ((int)((double)(cur_video_pos - funscript_data_maped[1].first) / g_video_player_status.rate) > 200 + std::abs(g_funscript_time_shift_ms)) || (cur_video_pos < search_video_pos) || (prev_rate != g_video_player_status.rate) ||
 				(g_video_player_status.is_paused && (cur_video_pos - search_video_pos >= 1000)))
 			{
 				if (g_pause)
