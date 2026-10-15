@@ -5223,7 +5223,15 @@ void run_funscript()
 						g_video_player_status = g_threaded_player_status.make_video_player_status();
 						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 						g_actual_video_pos = cur_video_pos;
-					} while (last_play_video_filepath == g_video_player_status.video_filepath && !g_stop_run);
+					} while (last_play_video_filepath == g_video_player_status.video_filepath && !g_stop_run && !g_pause && !g_update);
+
+					if (g_update)
+					{
+						g_update = false;
+						clear_msgs = false;
+						g_update_cvar.notify_all();
+					}
+
 					continue;
 				}
 			}
@@ -5255,7 +5263,15 @@ void run_funscript()
 						g_video_player_status = g_threaded_player_status.make_video_player_status();
 						get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 						g_actual_video_pos = cur_video_pos;
-					} while (last_play_video_filepath == g_video_player_status.video_filepath && !g_stop_run);
+					} while (last_play_video_filepath == g_video_player_status.video_filepath && !g_stop_run && !g_pause && !g_update);
+
+					if (g_update)
+					{
+						g_update = false;
+						clear_msgs = false;
+						g_update_cvar.notify_all();
+					}
+
 					continue;
 				}
 			}
@@ -5330,7 +5346,23 @@ void run_funscript()
 					g_video_player_status = g_threaded_player_status.make_video_player_status();
 					get_cur_video_pos(g_video_player_status, cur_time, cur_video_pos);
 					g_actual_video_pos = cur_video_pos;
-				} while ((last_play_video_filepath == g_video_player_status.video_filepath) && (cur_video_pos >= search_video_pos) && (cur_video_pos <= search_video_pos + 1000) && !g_stop_run);
+					if (funscript_data_maped_full.size() > 0)
+					{
+						if (cur_video_pos < funscript_data_maped_full[funscript_data_maped_full.size() - 1].first)
+						{
+							break;
+						}
+					}
+
+				} while ((last_play_video_filepath == g_video_player_status.video_filepath) && !g_stop_run && !g_pause && !g_update);
+
+				if (g_update)
+				{
+					g_update = false;
+					clear_msgs = false;
+					g_update_cvar.notify_all();
+				}
+
 				continue;
 			}
 			else
@@ -5750,9 +5782,9 @@ void run_funscript()
 					{
 						show_cur_execution_status(QString("Minimize time difference sync with video.\n"));
 					}
-				} while ((prev_video_pos / 1000 == cur_video_pos / 1000) && !g_stop_run);
+				} while ((prev_video_pos / 1000 == cur_video_pos / 1000) && !g_stop_run && !g_pause);
 
-				if (g_stop_run)
+				if (g_stop_run || g_pause)
 				{
 					break;
 				}
