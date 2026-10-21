@@ -96,9 +96,7 @@ const int g_min_dt_for_set_hismith_speed = 20;
 
 int g_speed_change_delay_from_settings_file;
 int g_speed_change_delay;
-int g_min_dt_between_speed_changes_on_slow_moves;
-int g_min_dt_between_speed_changes_on_fast_moves;
-int g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes;
+int g_min_dt_between_speed_changes;
 int g_min_dt_start_for_speed_40;
 int g_cpu_freezes_timeout;
 
@@ -5082,13 +5080,9 @@ void run_funscript()
 		g_speed_change_delay = g_avg_time_delay;
 	}
 
-	g_results_file_data += QString("min_dt_between_speed_changes_on_slow_moves:%1\n"
-		"min_dt_between_speed_changes_on_fast_moves:%2\n"
-		"fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes:%3\n"
-		"device_speed_change_delay:%4\n")
-		.arg(g_min_dt_between_speed_changes_on_slow_moves)
-		.arg(g_min_dt_between_speed_changes_on_fast_moves)
-		.arg(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes)
+	g_results_file_data += QString("min_dt_between_speed_changes:%1\n"
+		"device_speed_change_delay:%2\n")
+		.arg(g_min_dt_between_speed_changes)
 		.arg(g_speed_change_delay);
 	g_results_file_data += QString("get_speed_statistics_data:\naverage_time_delay:%1\n").arg(g_avg_time_delay);
 	for (int h_speed = 1; h_speed <= 100; h_speed++)
@@ -5671,8 +5665,8 @@ void run_funscript()
 
 			while (
 				g_video_player_status.is_paused ||
-				( ((int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) > g_speed_change_delay + g_min_dt_between_speed_changes_on_fast_moves) && position_was_aligned ) ||
-				((int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes_on_fast_moves)
+				( ((int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) > g_speed_change_delay + g_min_dt_between_speed_changes) && position_was_aligned ) ||
+				((int)((double)(FS_FIRST(0) - cur_video_pos) / g_video_player_status.rate) >= g_speed_change_delay + 2*g_min_dt_between_speed_changes)
 				)
 				{
 					g_video_player_status = g_threaded_player_status.make_video_player_status();
@@ -5968,12 +5962,7 @@ void run_funscript()
 
 				avg_req_hismith_speed = get_avg_hismith_speed(all_speeds_data, avg_req_speed);
 
-				int min_dt_between_speed_changes = g_min_dt_between_speed_changes_on_slow_moves;
-
-				if (avg_req_hismith_speed >= g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes)
-				{
-					min_dt_between_speed_changes = g_min_dt_between_speed_changes_on_fast_moves;
-				}
+				int min_dt_between_speed_changes = g_min_dt_between_speed_changes;
 
 				action_start_abs_pos = exp_abs_cur_pos;
 				action_start_speed = cur_speed;
@@ -7317,9 +7306,7 @@ void SaveSettings()
 	data_list.append({ "functions_move_in_out_variants", g_modify_funscript_function_move_in_out_variants });
 	data_list.append({ "functions_move_in_out_variant", QString::number(g_functions_move_in_out_variant) });
 	data_list.append({ "dt_for_get_cur_speed", QString::number(g_dt_for_get_cur_speed) });
-	data_list.append({ "min_dt_between_speed_changes_on_slow_moves", QString::number(g_min_dt_between_speed_changes_on_slow_moves) });
-	data_list.append({ "min_dt_between_speed_changes_on_fast_moves", QString::number(g_min_dt_between_speed_changes_on_fast_moves) });
-	data_list.append({ "fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes", QString::number(g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes) });
+	data_list.append({ "min_dt_between_speed_changes", QString::number(g_min_dt_between_speed_changes) });
 	data_list.append({ "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40) });
 	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay_from_settings_file) });
 	data_list.append({ "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout) });
@@ -7424,9 +7411,7 @@ bool LoadSettings()
 	g_hismith_speed_for_set_initial_pos = data_map["hismith_speed_for_set_initial_pos"].toInt();
 	g_min_funscript_relative_move = data_map["min_funscript_relative_move"].toInt();
 	g_dt_for_get_cur_speed = data_map["dt_for_get_cur_speed"].toInt();
-	g_min_dt_between_speed_changes_on_slow_moves = data_map["min_dt_between_speed_changes_on_slow_moves"].toInt();
-	g_min_dt_between_speed_changes_on_fast_moves = data_map["min_dt_between_speed_changes_on_fast_moves"].toInt();
-	g_fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes = data_map["fast_move_min_hismith_speed_for_switch_min_dt_between_speed_changes"].toInt();
+	g_min_dt_between_speed_changes = data_map["min_dt_between_speed_changes"].toInt();
 	g_min_dt_start_for_speed_40 = data_map["min_dt_start_for_speed_40"].toInt();
 	g_speed_change_delay_from_settings_file = data_map["speed_change_delay"].toInt();
 	g_speed_change_delay = g_speed_change_delay_from_settings_file;
