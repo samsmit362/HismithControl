@@ -6,7 +6,7 @@
  <functions_move_variants>[unchanged],[0.75:0.95],[0.25:0.05],[0.25:0.38|0.75:0.62],[0.25:0.12|0.75:0.87]</functions_move_variants>
  <functions_move_in_out_variants>[0-120:1/1|2/3|3/2|5/5|4/4];[0-120:1/1|2/3|3/2];[0-120:2/3];[0-120:3/2]</functions_move_in_out_variants>
  <functions_move_in_out_variant>1</functions_move_in_out_variant>
- <dt_for_get_cur_speed>120</dt_for_get_cur_speed>
+ <dt_for_get_cur_speed>60</dt_for_get_cur_speed>
  <min_dt_between_speed_changes>100</min_dt_between_speed_changes>
  <min_dt_start_for_speed_40>1000</min_dt_start_for_speed_40>
  <speed_change_delay>-1</speed_change_delay>
