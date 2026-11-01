@@ -17,7 +17,7 @@ Discussion forum on: [discuss.eroscripts.com](https://discuss.eroscripts.com/t/h
 - You will need:
 	- Hismith with remote control support or possibly any other similar machine
 	- Web Camera **with external or integrated backlight**, i have tested on:
-		- Web Camera with: Full HD support (1080p), 60fps, focus set to 300, exposure set to -7, "webcam_end_to_end_latency" set to 50. In this case i got best results with average 60fps during "Test Performance".
+		- Web Camera with: Full HD support (1080p), 60fps, focus set to 300, exposure set to -6 or lower, "webcam_end_to_end_latency" set to 50. In this case i got best results with average 60fps during "Test Performance".
 		- Smartphone with: USB connection, 720p+30fps (for decrease End-to-End Latency), "webcam_end_to_end_latency" set to 120, turned on Flash light, manual focus, manual temperature, with using \"Camo Studio\".
 		- Very chip Web Camera but with: Full HD support (1080p), 30fps (camera frame rate can greatly affects on how correctly it will know what is current angle rotation and also on speed for making decision)
 	- External backlight: I'm using external backlight with Ring Light which is set almost to a minimum. Web Camera is placed in the center of it.
@@ -37,7 +37,7 @@ check that it can find your Hismith and you can change speed by using it.
 2) to run this program
 3) select Web Camera in combo box which you wish to use for detect Hismith rotation angle.\
 **Press "Test Webcam".**\
-**<font color="red">IT IS HIGHLY RECOMMENDED TO SET MANUAL WEBCAM FOCUS AND MANUAL WEBCAM EXPOSURE TO ABOUT -7 (BEST VARIANT) OR -6 TO MINIMIZE WEBCAM END-TO-END LATENCY</font>**\
+**<font color="red">IT IS HIGHLY RECOMMENDED TO SET MANUAL WEBCAM FOCUS AND MANUAL WEBCAM EXPOSURE TO -6 OR LOWER TO MINIMIZE WEBCAM END-TO-END LATENCY</font>**\
 **You can set manual webcam focus (for example to 300) and exposure if it support it by using shown hotkeys, also as change manual webcam focus, exposure and fps (for example to 30 or 60) through settings.xml**\
 **According images in "example_images" folder you will need to find what are best colors in your case, don't forget to save all changes by "Enter" during "Test Webcam" then after close "Test Webcam" by menu (File->"Save Settings") or hotkey (Ctrl+S):**\
 <code><B_range>[10-160][150-205][60-120]</B_range>\

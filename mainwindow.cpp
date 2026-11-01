@@ -684,10 +684,9 @@ void MainWindow::refreshDevices(bool show_msgs)
             return;
         }
 
-        int timeout = 10000;
         show_msg("", 0, MessageType::Clean);
-        show_msg(QString("Refreshing BLE Devices for %1ms, please wait...").arg(timeout), timeout, MessageType::Always);
-        const auto devices = m_bleManager->findHismithDevices(timeout);
+        show_msg(QString("Refreshing BLE Devices for %1ms, please wait...").arg(g_search_ble_devices_timeout), g_search_ble_devices_timeout, MessageType::Always);
+        const auto devices = m_bleManager->findHismithDevices(g_search_ble_devices_timeout);
 
         for (const auto& d : devices)
         {

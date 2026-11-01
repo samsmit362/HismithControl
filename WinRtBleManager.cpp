@@ -36,6 +36,7 @@
 #include <QString>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QTimer>
 
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
@@ -212,6 +213,12 @@ WinRtBleManager::findHismithDevices(int timeout_ms)
     std::vector<Entry> entries;
     std::mutex localMtx;
 
+    QEventLoop loop;
+
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+
     auto watcher = BluetoothLEAdvertisementWatcher();
     watcher.ScanningMode(BluetoothLEScanningMode::Active);
 
@@ -247,15 +254,9 @@ WinRtBleManager::findHismithDevices(int timeout_ms)
 
     watcher.Start();
 
-    // Pump Qt events while we block so that Qt-network code paths (e.g. any
-    // pending HereSphereSync / VLC polling in the same UI thread) progress.
-    // findHismithDevices sits on the UI thread during refreshDevices().
-    const auto deadline = std::chrono::steady_clock::now()
-        + std::chrono::milliseconds(timeout_ms);
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    }
+    timer.start(timeout_ms);
+
+    loop.exec(QEventLoop::ExcludeUserInputEvents | QEventLoop::WaitForMoreEvents);
 
     watcher.Stop();
 

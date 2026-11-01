@@ -99,6 +99,8 @@ extern const QString g_winrt_ble;
 extern const QString g_intiface;
 extern QString g_device_connection_type;
 
+extern int g_search_ble_devices_timeout;
+
 //---------------------------------------------------------------
 
 enum MessageType {Add, Always, Clean};

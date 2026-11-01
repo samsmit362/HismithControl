@@ -84,7 +84,7 @@ static bool g_logFileOpen(const QString& path)
 
 // ---------------------------------------------------------------
 
-QString g_cur_version = "13.10";
+QString g_cur_version = "14.00";
 
 //---------------------------------------------------------------
 
@@ -99,6 +99,8 @@ int g_speed_change_delay;
 int g_min_dt_between_speed_changes;
 int g_min_dt_start_for_speed_40;
 int g_cpu_freezes_timeout;
+
+int g_search_ble_devices_timeout = 5000;
 
 int g_actual_video_pos = 0;
 int g_video_cur_actions_end_time = 0;
@@ -1703,6 +1705,12 @@ enum OpenCvExposureModes {
 
 void set_camera_settings(cv::VideoCapture& capture)
 {
+	cv::Mat frame;
+
+	show_msg("Setting Webcam settings ...\n", 120000, MessageType::Always);
+
+	double cur_webcam_fps = max(capture.get(cv::CAP_PROP_FPS), 10);
+
 	int fourcc_yuy2 = cv::VideoWriter::fourcc('Y', 'U', 'Y', '2');
 	int fourcc_mjpg = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
 	int cur_fourcc = static_cast<int>(capture.get(cv::CAP_PROP_FOURCC));
@@ -1722,48 +1730,7 @@ void set_camera_settings(cv::VideoCapture& capture)
 
 	capture.set(cv::CAP_PROP_FRAME_WIDTH, g_webcam_frame_width);
 	capture.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_frame_height);
-
-	set_webcam_fps(capture);
-
 	capture.set(cv::CAP_PROP_BUFFERSIZE, 1);
-
-	if (g_webcam_focus >= 0)
-	{
-		capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
-		capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
-	}
-	else
-	{
-		capture.set(cv::CAP_PROP_AUTOFOCUS, 1);
-	}
-
-	if (g_webcam_exposure < 0)
-	{
-		cv::Mat frame;
-
-		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
-
-		for (int i = 0; i < g_webcam_fps / 2; i++)
-		{
-			capture.read(frame);
-		}
-
-		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
-		capture.set(cv::CAP_PROP_EXPOSURE, -6);
-		capture.set(cv::CAP_PROP_GAIN, 0.0);
-
-		for (int i = 0; i < g_webcam_fps / 2; i++)
-		{
-			capture.read(frame);
-		}
-
-		capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
-	}
-	else
-	{
-		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
-		g_webcam_exposure = 0;
-	}
 
 	int webcam_frame_width = capture.get(cv::CAP_PROP_FRAME_WIDTH);
 	int webcam_frame_height = capture.get(cv::CAP_PROP_FRAME_HEIGHT);
@@ -1779,12 +1746,53 @@ void set_camera_settings(cv::VideoCapture& capture)
 		g_webcam_frame_width = webcam_frame_width;
 		g_webcam_frame_height = webcam_frame_height;
 	}
+
+	set_webcam_fps(capture);
+
+	if (g_webcam_focus >= 0)
+	{
+		capture.set(cv::CAP_PROP_AUTOFOCUS, 0);
+		capture.set(cv::CAP_PROP_FOCUS, g_webcam_focus);
+	}
+	else
+	{
+		capture.set(cv::CAP_PROP_AUTOFOCUS, 1);
+	}
+
+	if (g_webcam_exposure != 0)
+	{
+		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
+
+		for (int i = 0; i < g_webcam_fps * 2; i++)
+		{
+			capture.read(frame);
+		}
+
+		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
+		capture.set(cv::CAP_PROP_GAIN, 0.0);
+		capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
+
+		for (int i = 0; i < g_webcam_fps; i++)
+		{
+			capture.read(frame);
+		}
+	}
+	else
+	{
+		capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
+
+		for (int i = 0; i < g_webcam_fps * 2; i++)
+		{
+			capture.read(frame);
+		}
+	}
 }
 
 bool init_camera(cv::VideoCapture &capture)
 {
 	bool res = false;
 	g_webcam_msmf_supported = false;
+	cv::Mat frame;
 
 	int video_dev_id = get_video_dev_id();
 	if (video_dev_id == -1)
@@ -1799,24 +1807,35 @@ bool init_camera(cv::VideoCapture &capture)
 
 	if (capture.isOpened())
 	{
+		/**
+		 * Note on: g_high_precision_timer_guard.Start() => timeBeginPeriod(1)
+		 * Microsoft Media Foundation (MSMF) internally manages the system timer resolution
+		 * or leverages the Windows Multimedia Class Scheduler Service (MMCSS).
+		 * When OpenCV initializes the camera using cv::CAP_MSMF, the underlying MSMF
+		 * components automatically request high scheduler precision to prevent frame drops.
+		 * Therefore, calling timeBeginPeriod(1) is redundant here.
+		 *
+		 * However, if MSMF is not supported and the system falls back to older backends
+		 * like DirectShow (cv::CAP_DSHOW), timeBeginPeriod(1) must be called manually
+		 * to ensure stable framerate and avoid jitter.
+		 */
+
 		set_camera_settings(capture);
+		res = capture.read(frame);
 
-		cv::Mat frame;
-		for (int i = 0; i < g_webcam_fps / 2; i++)
+		if (res)
 		{
-			capture.read(frame);
-		}
+			double msec = capture.get(cv::CAP_PROP_POS_MSEC);
 
-		double msec = capture.get(cv::CAP_PROP_POS_MSEC);
-
-		if (msec <= 0.0) {
-			show_msg(QString("API: CAP_MSMF is not supported by Webcam, returned CAP_PROP_POS_MSEC:%1 <= 0.0").arg(msec), 5000, MessageType::Always);
-			capture.release();
-		}
-		else
-		{
-			g_webcam_msmf_supported = true;
-			res = true;
+			if (msec <= 0.0) {
+				show_msg(QString("API: CAP_MSMF is not supported by Webcam, returned CAP_PROP_POS_MSEC:%1 <= 0.0").arg(msec), 5000, MessageType::Always);
+				capture.release();
+				res = false;
+			}
+			else
+			{
+				g_webcam_msmf_supported = true;
+			}
 		}
 	}
 	else
@@ -1832,10 +1851,8 @@ bool init_camera(cv::VideoCapture &capture)
 		if (capture.isOpened())
 		{
 			g_high_precision_timer_guard.Start();
-
 			set_camera_settings(capture);
-
-			res = true;
+			res = capture.read(frame);
 		}
 		else
 		{
@@ -1845,18 +1862,13 @@ bool init_camera(cv::VideoCapture &capture)
 
 	if (res)
 	{
-		cv::Mat frame;
 		__int64 msec_video_cur_pos;
-
 		LARGE_INTEGER cur_time;
 		QueryPerformanceFrequency(&g_frequency);
 
+		// getting initial g_delta_frame_read_time_vs_video_time
 		g_delta_frame_read_time_vs_video_time = (std::numeric_limits<__int64>::max)();
-
-		show_msg("Geting first ~5 secons Webcam frames for get better Webcam focus and sync...\n", 5000, MessageType::Always);
-
-		// geting first 5 * g_webcam_fps (~5 seconds) frames for get better camera focus and correct g_delta_frame_read_time_vs_video_time
-		for (int i = 0; i < 5 * g_webcam_fps; i++)
+		for (int i = 0; i < g_webcam_fps; i++)
 		{
 			get_new_camera_frame(capture, frame, msec_video_cur_pos);
 		}
@@ -2238,22 +2250,13 @@ void test_camera()
 
 			else if (key == '-')
 			{
+				g_webcam_exposure--;
+
 				if (g_webcam_exposure == 0)
 				{
-					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
-					capture.set(cv::CAP_PROP_GAIN, 0.0);
-					g_webcam_exposure = capture.get(cv::CAP_PROP_EXPOSURE);
-					if (g_webcam_exposure >= 0)
-					{
-						g_webcam_exposure = -1;
-					}
+					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
 				}
 				else
-				{
-					g_webcam_exposure--;
-				}
-
-				if (g_webcam_exposure < 0)
 				{
 					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
 					capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
@@ -2262,25 +2265,18 @@ void test_camera()
 			}
 			else if (key == '=')
 			{
-				if (g_webcam_exposure < 0)
-				{
-					g_webcam_exposure++;
-				}
+				g_webcam_exposure++;
 
-				if (g_webcam_exposure < 0)
+				if (g_webcam_exposure == 0)
+				{
+					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
+				}
+				else
 				{
 					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Manual);
 					capture.set(cv::CAP_PROP_EXPOSURE, g_webcam_exposure);
 					capture.set(cv::CAP_PROP_GAIN, 0.0);
 				}
-				else
-				{
-					capture.set(cv::CAP_PROP_AUTO_EXPOSURE, OpenCvExposureModes::Auto);
-				}
-			}
-
-			{
-
 			}
 		}
 
@@ -4942,7 +4938,7 @@ void update_start_video_pos(int &start_video_pos, int &cur_video_pos, LARGE_INTE
 		{
 			int new_start_video_pos = cur_video_pos - (int)((double)(time_diff_in_milliseconds(g_video_player_status.poll_time, start_time, Frequency)) * g_video_player_status.rate);
 			int start_video_pos_dif = new_start_video_pos - start_video_pos;
-			if (start_video_pos_dif > 0)
+			if ((start_video_pos_dif > 0) || (start_video_pos_dif <= -100))
 			{
 				start_video_pos = new_start_video_pos;
 				log_data += QString("\n\t[update_start_video_pos: start_video_pos_dif:%1 new_start_video_pos:%2]").arg(start_video_pos_dif).arg(new_start_video_pos);
@@ -6043,8 +6039,10 @@ void run_funscript()
 
 				do
 				{
-					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-						(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
+					if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused ||
+						((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+						((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) < -300) ||
+						(last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 					{
 						break;
 					}
@@ -6101,8 +6099,10 @@ void run_funscript()
 					{
 						update_start_video_pos(start_video_pos, cur_video_pos, cur_time, start_time, Frequency, hismith_speed_changed);
 
-						if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused || ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-							(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
+						if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused ||
+							((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+							((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) < -300) ||
+							(last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 						{
 							break;
 						}
@@ -6194,30 +6194,29 @@ void run_funscript()
 				}
 
 				if (g_stop_run || g_pause || g_video_freezed || g_was_change_in_use_modify_funscript_functions || g_video_player_status.is_paused ||
-					((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
-					(cur_video_pos < prev_cur_video_pos - 300) || (last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
+					((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000)) ||
+					((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) < -300) ||
+					(last_play_video_filepath != g_video_player_status.video_filepath) || (prev_rate != g_video_player_status.rate))
 				{
 					if (last_play_video_filepath != g_video_player_status.video_filepath)
 					{
 						show_msg("Played video was changed");
-						actions_end_with = QString("last_play_video_filepath (%1) != video_filepath (%2)").arg(last_play_video_filepath).arg(g_video_player_status.video_filepath);
+						actions_end_with = QString("Played video was changed: last_play_video_filepath (%1) != video_filepath (%2)").arg(last_play_video_filepath).arg(g_video_player_status.video_filepath);
 					}
-					else if ((int)((double)(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000))
+					else if ((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) > (g_is_video_player_time_in_milliseconds ? 300 : 1000))
 					{
 						show_msg("Video time was jumped forward");
-						actions_end_with = QString("(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate))) (%1)  > %2")
-							.arg(cur_video_pos - (start_video_pos + (int)((double)(time_diff_in_milliseconds(cur_time, start_time, Frequency)) * g_video_player_status.rate)))
-							.arg(g_is_video_player_time_in_milliseconds ? 300 : 1000);
+						actions_end_with = QString("Video time was jumped forward: cur_video_pos - prev_cur_video_pos == %1").arg(cur_video_pos - prev_cur_video_pos);
 					}
-					else if ((action_id > 1) && (cur_video_pos < prev_cur_video_pos - 300))
+					else if ((int)((double)(cur_video_pos - prev_cur_video_pos) / g_video_player_status.rate) < -300)
 					{
 						show_msg("Video time was jumped backward");
-						actions_end_with = QString("cur_video_pos (%1) < prev_cur_video_pos (%2) - 300").arg(cur_video_pos).arg(prev_cur_video_pos);
+						actions_end_with = QString("Video time was jumped backward: cur_video_pos - prev_cur_video_pos == %1").arg(cur_video_pos - prev_cur_video_pos);
 					}
 					else if (prev_rate != g_video_player_status.rate)
 					{
 						show_msg(QString("Video speed rate was changed to: %1").arg(g_video_player_status.rate));
-						actions_end_with = QString("prev_rate: %1 != g_video_player_status.rate: %2")
+						actions_end_with = QString("Video speed rate was changed: prev_rate: %1 != g_video_player_status.rate: %2")
 							.arg(prev_rate)
 							.arg(g_video_player_status.rate);
 					}
@@ -7235,6 +7234,7 @@ void SaveSettings()
 	data_list.append({ "min_dt_start_for_speed_40", QString::number(g_min_dt_start_for_speed_40) });
 	data_list.append({ "speed_change_delay", QString::number(g_speed_change_delay_from_settings_file) });
 	data_list.append({ "cpu_freezes_timeout", QString::number(g_cpu_freezes_timeout) });
+	data_list.append({ "search_ble_devices_timeout", QString::number(g_search_ble_devices_timeout) });
 	data_list.append({ "funscript_time_shift_ms", QString::number(g_funscript_time_shift_ms_default) });
 	data_list.append({ "funscript_time_shift_delta_ms", QString::number(g_funscript_time_shift_delta_ms) });
 
@@ -7341,6 +7341,7 @@ bool LoadSettings()
 	g_speed_change_delay_from_settings_file = data_map["speed_change_delay"].toInt();
 	g_speed_change_delay = g_speed_change_delay_from_settings_file;
 	g_cpu_freezes_timeout = data_map["cpu_freezes_timeout"].toInt();
+	g_search_ble_devices_timeout = data_map["search_ble_devices_timeout"].toInt();
 	g_funscript_time_shift_ms_default = data_map["funscript_time_shift_ms"].toInt();
 	g_funscript_time_shift_ms = g_funscript_time_shift_ms_default;
 	g_funscript_time_shift_delta_ms = data_map["funscript_time_shift_delta_ms"].toInt();

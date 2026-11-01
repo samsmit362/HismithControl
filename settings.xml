@@ -11,6 +11,7 @@
  <min_dt_start_for_speed_40>1000</min_dt_start_for_speed_40>
  <speed_change_delay>-1</speed_change_delay>
  <cpu_freezes_timeout>300</cpu_freezes_timeout>
+ <search_ble_devices_timeout>5000</search_ble_devices_timeout>
  <funscript_time_shift_ms>-30</funscript_time_shift_ms>
  <funscript_time_shift_delta_ms>10</funscript_time_shift_delta_ms>
  <min_search_pos_dif>-10</min_search_pos_dif>
