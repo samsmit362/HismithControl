@@ -15,6 +15,9 @@
 #include <memory_resource>
 #include <algorithm>
 #include <atomic>
+#include <thread>
+#include <condition_variable>
+#include <vector>
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
@@ -30,14 +33,110 @@ using namespace Gdiplus; // Required for Graphics in WndProc
 #pragma comment(lib, "winmm.lib") // Required for timeBeginPeriod
 
 //---------------------------------------------------------------
-// Global Qt message handler - writes all qDebug/qWarning/qCritical
-// output to <exe directory>\execution.log plus stderr.
+// Global Qt message handler — asynchronous producer-consumer design:
+//  - producer (any thread, incl. the UI): formats the line and pushes it
+//    into a bounded in-memory queue. No disk I/O on the caller path, so a
+//    stuck hard drive can never freeze the UI / tracking loop.
+//  - consumer (dedicated low-priority std::thread): drains the queue in
+//    order and writes to <exe directory>\execution.log plus stderr.
 // Installed at the very top of main(), BEFORE QApplication, so
 // WinRtBleManager / Buttplug / OpenCV diagnostics are all captured.
 //---------------------------------------------------------------
 static QFile        g_logFile;
 static QTextStream* g_logStream = nullptr;
-static std::mutex    g_logMutex; // Protects g_logStream from concurrent access (WinRT worker thread vs Qt UI thread)
+static std::mutex    g_logMutex; // Protects g_logFile/g_logStream (consumer writes vs. main-thread open)
+
+//--- Async log queue (producer -> consumer) ------------------------------
+static std::mutex              g_logQueueMutex;
+static std::condition_variable g_logQueueCvar;
+static std::deque<QString>     g_logQueue;
+static std::atomic<bool>       g_logQueueStop{ false };
+static std::thread             g_logWorkerThread;
+static size_t                  g_logDroppedCount = 0;
+static const size_t            g_logQueueMax = 4096; // Back-pressure cap: oldest lines are dropped
+
+// Producer side: called from the Qt message handler (any thread).
+// Fast and non-blocking: enqueue only, no disk I/O.
+static void log_enqueue(const QString& line)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_logQueueMutex);
+        if (g_logQueue.size() >= g_logQueueMax)
+        {
+            // Disk stuck (or consumer too slow): drop oldest lines so memory
+            // stays bounded and the caller is never blocked.
+            g_logQueue.pop_front();
+            if ((++g_logDroppedCount & 0x3FF) == 1) // report first drop, then every 1024th
+            {
+                // Bypass the queue (direct fprintf) so the producer never re-enters.
+                fprintf(stderr, "(async log) queue full: dropping oldest lines, total dropped so far: %zu\n",
+                        g_logDroppedCount);
+            }
+        }
+        g_logQueue.push_back(line);
+    }
+    g_logQueueCvar.notify_one();
+}
+
+// Consumer side: dedicated worker thread performing all file I/O.
+static void log_worker_loop()
+{
+    // Low priority: a flush hanging on a stuck disk should steal as little
+    // CPU time from the realtime tracking / UI threads as possible.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
+    std::vector<QString> batch;
+    while (true)
+    {
+        bool stop;
+        {
+            std::unique_lock<std::mutex> lock(g_logQueueMutex);
+            g_logQueueCvar.wait(lock, [] {
+                return !g_logQueue.empty() || g_logQueueStop.load(std::memory_order_relaxed);
+            });
+            stop = g_logQueueStop.load(std::memory_order_relaxed);
+            batch.clear();
+            while (!g_logQueue.empty())
+            {
+                batch.push_back(std::move(g_logQueue.front()));
+                g_logQueue.pop_front();
+            }
+        }
+        if (stop && batch.empty())
+            break; // All queued lines have been flushed; worker can exit.
+
+        // --- File I/O outside the queue lock: a stuck disk never blocks producers ---
+        {
+            std::lock_guard<std::mutex> lock(g_logMutex);
+            if (g_logStream)
+            {
+                for (const QString& line : batch)
+                    *g_logStream << line;
+                g_logStream->flush(); // one flush per batch (not per line) — fewer disk I/O
+            }
+        }
+        // Mirror the batch to stderr (useful when running from a console).
+        for (const QString& line : batch)
+            fprintf(stderr, "%s", line.toLocal8Bit().constData());
+    }
+}
+
+// Idempotent shutdown: set the stop flag, wake the worker and join it so all
+// queued lines are flushed to disk before the process exits. Registered via
+// std::atexit, which covers every exit path of main() (including the early
+// single-instance and LoadSettings returns) and runs before static
+// destructors, so g_logFile/g_logStream are still alive.
+static void log_shutdown()
+{
+    static std::atomic<bool> s_done{ false };
+    bool expected = false;
+    if (!s_done.compare_exchange_strong(expected, true))
+        return;
+    g_logQueueStop.store(true, std::memory_order_relaxed);
+    g_logQueueCvar.notify_all();
+    if (g_logWorkerThread.joinable())
+        g_logWorkerThread.join();
+}
 
 static void log_handler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
 {
@@ -56,14 +155,10 @@ static void log_handler(QtMsgType type, const QMessageLogContext& context, const
             .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
             .arg(level)
             .arg(msg);
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    if (g_logStream)
-    {
-        *g_logStream << line;
-        g_logStream->flush();
-    }
-    // Also mirror to stderr (useful when running from a console).
-    fprintf(stderr, "%s", line.toLocal8Bit().constData());
+    // Producer: enqueue only. All disk I/O happens in the consumer thread,
+    // so a stuck hard drive can never freeze the calling thread
+    // (UI, WinRT, tracking, ...).
+    log_enqueue(line);
 }
 
 static bool g_logFileOpen(const QString& path)
@@ -71,13 +166,16 @@ static bool g_logFileOpen(const QString& path)
     Q_UNUSED(path);
     if (!g_logFile.open(QIODevice::WriteOnly | QIODevice::Text))
         return false;
-    if (!g_logStream)
     {
-        g_logStream = new QTextStream(&g_logFile);
-        *g_logStream << "\n[SESSION START "
-                     << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
-                     << "]\n";
-        g_logStream->flush();
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        if (!g_logStream)
+        {
+            g_logStream = new QTextStream(&g_logFile);
+            *g_logStream << "\n[SESSION START "
+                         << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+                         << "]\n";
+            g_logStream->flush();
+        }
     }
     return true;
 }
@@ -7149,6 +7247,207 @@ void test_hismith(int hismith_speed)
 	cv::destroyAllWindows();
 }
 
+void test_FredorchF21S()
+{
+	//-----------------------------------------------------
+	// Only the WinRT BLE transport supports the Fredorch F21S.
+	if (!g_pW || !g_pW->ui || g_pW->ui->DeviceConnectionTypes->currentText() != g_winrt_ble)
+	{
+		error_msg("test_FredorchF21S: only the WinRT BLE transport is supported for the Fredorch F21S");
+		return;
+	}
+
+	int cur_idx = g_pW->ui->Devices->currentIndex();
+	if (cur_idx < 0 || cur_idx >= g_pW->ui->Devices->count())
+	{
+		error_msg("test_FredorchF21S: no BLE device selected in the device list.\nPlease press \"Refresh Devices\" first.");
+		return;
+	}
+
+	uint64_t ble_address = g_pW->ui->Devices->itemData(cur_idx).toULongLong();
+	if (ble_address == 0)
+	{
+		error_msg("test_FredorchF21S: invalid BLE address stored in the device list.\nPlease press \"Refresh Devices\" first.");
+		return;
+	}
+
+	//-----------------------------------------------------
+	// Connecting to Fredorch F21S
+	// (the controller sends the Program Mode init sequence on connect)
+
+	if (!g_pW->connect_to_fredorch(QString::number(ble_address, 16)))
+	{
+		// connect_to_fredorch already showed the detailed error message.
+		return;
+	}
+	show_msg("Fredorch F21S connected.", 2000, MessageType::Always);
+
+	//-----------------------------------------------------
+	// Connecting to Webcam + live preview window
+	// (closing the window or pressing Esc aborts the test)
+
+	/*cv::Mat frame;
+	cv::VideoCapture capture;
+
+	if (!init_camera(capture) || !capture.isOpened())
+	{
+		g_pW->disconnect_from_fredorch();
+		return;
+	}
+
+	cv::String title("Test Webcam+Fredorch F21S");
+	cv::namedWindow(title, 1);
+	cv::setWindowProperty(title, cv::WND_PROP_TOPMOST, 1);
+	int sw = (int)GetSystemMetrics(SM_CXSCREEN);
+	int sh = (int)GetSystemMetrics(SM_CYSCREEN);
+	cv::moveWindow(title, (sw - g_webcam_frame_width) / 2, (sh - g_webcam_frame_height) / 2);*/
+
+	//-----------------------------------------------------
+	// OLD MOVE TIMELINE (commented out — replaced by loop range test):
+	//   t0        -> moveTo(150, 4)
+	//   t0 + 5000 -> moveTo(10, 6)
+	//   t0 + 5000 -> stop()
+
+	using clock_ms = std::chrono::steady_clock;
+	auto t_start = clock_ms::now();
+	auto elapsed_ms = [&t_start]() -> int64_t {
+		return std::chrono::duration_cast<std::chrono::milliseconds>(clock_ms::now() - t_start).count();
+	};
+
+	/* OLD CODE (moveTo / stop sequence) — commented out:
+	bool cmd1_done = false;
+	bool cmd2_done = false;
+	bool cmd3_done = false;
+
+	while (1)
+	{
+		if (!cmd1_done)
+		{
+			g_pW->fredorch_moveTo(150, 4);
+			t_start = clock_ms::now();
+			cmd1_done = true;
+			show_msg("Started move to 150, 4.", 2000, MessageType::Always);
+		}
+		if (cmd1_done && !cmd2_done && elapsed_ms() >= 5000)
+		{
+			g_pW->fredorch_moveTo(10, 6);
+			t_start = clock_ms::now();
+			show_msg("Started move to 10, 6.", 2000, MessageType::Always);
+			cmd2_done = true;
+		}
+		if (cmd2_done && !cmd3_done && elapsed_ms() >= 5000)
+		{
+			g_pW->fredorch_stop();
+			show_msg("fredorch_stop", 2000, MessageType::Always);
+			cmd3_done = true;
+			break;
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		//int key = cv::waitKey(1);
+		//if ( (key == 27) || (cv::getWindowProperty(title, cv::WND_PROP_VISIBLE) != 1.0) )
+		//{
+		//	break;
+		//}
+	}
+	*/
+
+	//-----------------------------------------------------
+	// NEW: Loop Range test (Intiface-style A<->B oscillation)
+	//   Sends: Loop ON + step block (posA=10 -> posB=150, speed=5) + Play
+	//   The device should continuously oscillate between 10 and 150.
+	//   Wait 15 seconds, then stop.
+
+	/*if (!g_pW->fredorch_startLoopRange(10, 150, 10))
+	{
+		error_msg("fredorch_startLoopRange(10, 150, 10) failed");
+		g_pW->disconnect_from_fredorch();
+		return;
+	}
+	show_msg("Loop range started: 10 <-> 150, speed 10. Wait 5s...", 3000, MessageType::Always);*/
+
+	// PING-PONG TEST (stride +6 confirmed on HW):
+	//   t0     -> start looping the 10-step spline (Play OFF, Loop ON,
+	//             slots 0..9, Play ON).
+	//   t0+2s  -> LIVE rewrite of slots 0..1 (no Play OFF / Play ON —
+	//             the firmware picks up the new data on the next lap).
+	//   t0+12s -> stop.
+	show_msg("PING-PONG TEST: 10-step spline loop ON, then live-rewrite slots 0..1 after 2s. Wait 12s ...", 3000, MessageType::Always);
+	// Re-enter Program Mode (stop()/RF-remote may have left 0x0064=0).
+	g_pW->start_programMode();
+	if (!g_pW->fredorch_moveTo(0,
+		{
+
+		{150, 10, 150, 10},
+		{0, 10, 0, 10},
+		{150, 7, 150, 7},
+		{0, 7, 0, 7},
+		{120, 8, 120, 8},
+		{0, 8, 0, 8},
+		{100, 9, 100, 9},
+		{0, 9, 0, 9},
+		{100, 7, 100, 7},
+		{0, 7, 0, 7},
+
+//
+		// {  30,  3,   60,  7 },
+		// { 100, 12,  130,  8 },
+		// { 150,  3,  130,  5 },
+		// {  90, 11,   50,  9 },
+		// {  20,  4,    0,  2 },
+
+		// {  30,  4,   70,  8 },
+		// { 110, 11,  140,  6 },
+		// { 150,  2,  120,  6 },
+		// {  80, 10,   40,  7 },
+		// {  10,  3,    0,  2 }
+
+		}, /*loop=*/true))
+	{
+		error_msg("fredorch_moveTo(10 steps, loop) failed");
+		g_pW->disconnect_from_fredorch();
+		return;
+	}
+	uint16_t state = 0;
+	bool ok;
+	std::this_thread::sleep_for(std::chrono::milliseconds(14000));
+
+	// Live rewrite: overwrite the first 2 slots WHILE the device is
+	// looping. Expected: no pause, the next lap starts 50 -> 150 -> 10.
+	if (!g_pW->fredorch_moveTo(8,
+		{
+			{20, 5, 20, 5},
+			{0, 5, 0, 5}
+//
+			// { 20, 3,  40, 5 },
+			// { 50, 6,  60, 5 },
+			// { 70, 3,  60, 6 },
+			// { 50, 5,  40, 4 },
+			// { 20, 3,  0, 2 }
+		}, /*loop=*/true))
+	{
+		error_msg("fredorch_moveTo(live rewrite) failed");
+		g_pW->disconnect_from_fredorch();
+		return;
+	}
+	show_msg("Live rewrite of slots 0..1 ...", 2000, MessageType::Always);
+	std::this_thread::sleep_for(std::chrono::milliseconds(20000));
+
+	// Stop the oscillation
+	g_pW->fredorch_stop();
+	show_msg("fredorch_stop called.", 2000, MessageType::Always);
+
+	/*capture.release();
+	cv::destroyAllWindows();*/
+
+	//-----------------------------------------------------
+	// Disconnect from Fredorch F21S (fail-safe: always executed on exit)
+	g_pW->disconnect_from_fredorch();
+
+	show_msg("disconnect_from_fredorch", 2000, MessageType::Always);
+}
+
 void xmlToLinearList(const QDomElement& element, const QString& currentPath, QList<QPair<QString, QString>>& dataList) {
 	QDomNode n = element.firstChild();
 	bool hasChildElements = false;
@@ -7554,6 +7853,13 @@ int main(int argc, char *argv[])
 	// every qDebug/qWarning from WinRtBleManager, Buttplug, OpenCV
 	// and the rest of the app is captured into execution.log.
 	qInstallMessageHandler(log_handler);
+
+	// Start the async log consumer thread (producer-consumer): all qDebug/
+	// qWarning disk writes happen there, so a stuck hard drive can never
+	// freeze the UI or tracking threads. std::atexit guarantees the queue is
+	// flushed and the thread joined on every exit path of main().
+	g_logWorkerThread = std::thread(&log_worker_loop);
+	std::atexit(log_shutdown);
 
 	//---------------------------------------------------------------
 	// Single-instance guard: refuse to start a second HismithControl in the same

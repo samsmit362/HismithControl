@@ -71,6 +71,23 @@ namespace
         0xFFE9, 0x0000, 0x1000,
         {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
 
+    // -------------------------------------------------------------------------
+    // Fredorch F21S / T8 GATT UUIDs (per github.com/buttplugio/stpihkal/issues/131).
+    //   Service  : 0xFFB0
+    //   TX char  : 0xFFB1 (Write / WriteWithoutResponse) — Modbus RTU frames
+    //   Rx char  : 0xFFB2 (Notify) — telemetry / ACKs
+    // Full 128-bit form: 0000xxxx-0000-1000-8000-00805f9b34fb.
+    // -------------------------------------------------------------------------
+    static constexpr winrt::guid FREDORCH_SERVICE_UUID{
+        0xFFB0, 0x0000, 0x1000,
+        {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
+    static constexpr winrt::guid FREDORCH_CHAR_TX_UUID{
+        0xFFB1, 0x0000, 0x1000,
+        {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
+    static constexpr winrt::guid FREDORCH_CHAR_RX_UUID{
+        0xFFB2, 0x0000, 0x1000,
+        {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
+
     // Model identifiers (lower-case hex strings) seen in the wild on the GATT
     // FF96 RX characteristic of Legacy Hismith hardware. Anything NOT in this
     // list is treated as the "Hismith-Mini / Fredorch" Modbus variant.
@@ -83,7 +100,12 @@ namespace
     }
 
     // Advertisement-name keywords (lower-case) we recognize.
-    const char* const NAME_KEYWORDS[] = { "hismith", "wildolo", "fredorch" };
+    // NOTE: "yxlinks" — factory Bluetooth UART-bridge module name. The
+    // Fredorch F21S / T8 advertises over BLE as "YXlinksSPP" / "YXLinksSPP"
+    // (dual-mode BT chip from the YX family), NOT as "Fredorch F21S".
+    // Substring match is case-insensitive, so all vendor name revisions
+    // (with/without suffix, different casing) are covered.
+    const char* const NAME_KEYWORDS[] = { "hismith", "wildolo", "fredorch", "yxlinks" };
 
     inline std::string to_lower(std::string s)
     {
@@ -156,6 +178,30 @@ struct WinRtBleManager::Impl
     winrt::Windows::Foundation::IAsyncOperation<
         winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> pendingWrite;
 
+    // -------------------------------------------------------------------------
+    // Ring buffer for sendRawFrameQueued() (protocol-framed writes like
+    // Modbus sequences, e.g. Fredorch Play OFF + Step + Play ON). Holds
+    // strong references to the last kQueuedWritesDepth queued IAsyncOperations
+    // so the WinRT runtime does not destroy (GC) them before the BLE driver
+    // has flushed them to the radio.
+    //
+    // Why depth 32 (not 8): if GattStatus on the YXLinksSPP bridge hangs or
+    // returns with a 200-300 ms delay, a shallow buffer (8) would wrap around
+    // and overwrite (release) ops that have not yet completed, tearing them
+    // down on the C++ side. With 32 slots, old asyncOps are guaranteed to
+    // live until natural completion. A typical moveTo burst is 3 frames;
+    // 32 slots comfortably holds ~10 bursts even under worst-case stall.
+    //
+    // No LATEST-WINS cancel: the Windows driver bundles queued writes into
+    // a single connection event (one 15-30 ms radio interval instead of one
+    // per write). Guarded by m_mtx.
+    // -------------------------------------------------------------------------
+    static constexpr int kQueuedWritesDepth = 32;
+    winrt::Windows::Foundation::IAsyncOperation<
+        winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus>
+        queuedWrites[kQueuedWritesDepth];
+    int queuedWriteIndex { 0 };
+
     // Diagnostic state set by disconnectDevice()'s drain loop so the final
     // log line can report precise drain outcome instead of the opaque
     // "still in flight after 500ms drain — abandoning".
@@ -168,6 +214,15 @@ struct WinRtBleManager::Impl
     // for the full lifetime of the BLE link (dropping it would tear down the
     // COM handler and we would lose the negotiated-parameter log).
     winrt::event_token connectParamsToken;
+
+    // Handle for the Fredorch FFB2 notify (ValueChanged) subscription.
+    // Subscribed in connectFredorchHandshakeImpl, released in disconnectDevice.
+    winrt::event_token fredorchNotifyToken;
+
+    // Optional raw-notification callback (see setRawNotifyCallback in the
+    // header). Guarded by m_mtx. Invoked from the FFB2 ValueChanged handler
+    // for every notification payload (in addition to the log line).
+    RawNotifyCallback rawNotifyCallback;
 };
 
 // ---------------------------------------------------------------------------
@@ -761,6 +816,354 @@ bool WinRtBleManager::connectToDevice(uint64_t address, int timeout_ms)
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2b coroutine — Fredorch F21S / T8 handshake.
+//
+// Binds the FFB0 -> FFB1 TX characteristic (falling back to the legacy
+// FFE5 -> FFE9 layout if FFB1 is absent, so the manager still works against
+// HismithMini firmware that shares the FFB0 service). Best-effort subscribes
+// to the FFB2 notify characteristic for telemetry / ACK logging.
+//
+// Signature notes:
+// - `self` is captured by RAW pointer. Safe because WinRtBleManager is the
+//   app-lifetime singleton owned by MainWindow, and the only code path that
+//   destroys it also drains in-flight operations first.
+// - `out_promise` is set_value'd exactly once, whether success or failure.
+// ---------------------------------------------------------------------------
+static winrt::Windows::Foundation::IAsyncAction
+connectFredorchHandshakeImpl(
+    WinRtBleManager* self,
+    uint64_t address,
+    WinRtBleManager::Impl* impl,
+    HandshakePromise out_promise)
+{
+    // Single-shot completion latch.
+    std::atomic<bool> finished{ false };
+    auto complete = [&](bool ok) {
+        if (finished.exchange(true))
+        {
+            return;
+        }
+        try
+        {
+            out_promise->set_value(ok);
+        }
+        catch (const std::future_error&)
+        {
+            // promise already fulfilled — ignore
+        }
+    };
+
+    auto cleanup_and_complete = [&](bool ok, const QString& reason = QString()) {
+        {
+            std::lock_guard l(self->m_mtx);
+            impl->device = nullptr;
+            impl->txCharacteristic = nullptr;
+            impl->fredorchNotifyToken = winrt::event_token{};
+        }
+        if (!ok && !reason.isEmpty())
+        {
+            self->setLastError(reason);
+        }
+        complete(ok);
+    };
+
+    try
+    {
+        // 1. Open device by address.
+        BluetoothLEDevice device = co_await BluetoothLEDevice::FromBluetoothAddressAsync(address);
+        if (!device)
+        {
+            qDebug().noquote() << "Fredorch handshake: BluetoothLEDevice null (address 0x"
+                               << QString::number(address, 16) << ")";
+            cleanup_and_complete(false,
+                QStringLiteral("Fredorch Step 1/4 FAILED: BluetoothLEDevice::FromBluetoothAddressAsync returned null device handle. "
+                               "The device dropped its BLE radio, went out of range, or was power-cycled during the handshake."));
+            co_return;
+        }
+        impl->device = device;
+        qDebug().noquote() << "Fredorch handshake: device link OK";
+
+        // 1b. REQUEST LOW-LATENCY CONNECTION PARAMETERS (best-effort).
+        //     Same rationale as connectHandshakeImpl: ThroughputOptimized
+        //     asks Windows to queue LL_Exchange_Connection_Parameters_Request
+        //     with a 7.5-15ms interval + 0 slave latency, which is the
+        //     primary lever for reducing the 13-100ms write jitter.
+        try
+        {
+            const auto request = device.RequestPreferredConnectionParameters(
+                BluetoothLEPreferredConnectionParameters::ThroughputOptimized());
+            const auto status = request.Status();
+            qDebug().noquote()
+                << "Fredorch handshake: ThroughputOptimized — status:"
+                << (int)status
+                << "(0=Success, 1=DeviceNotAvailable, 2=AccessDenied, 3=Unspecified)";
+        }
+        catch (const winrt::hresult_error& ex)
+        {
+            qWarning().noquote()
+                << "Fredorch handshake: RequestPreferredConnectionParameters threw:"
+                << QString::fromWCharArray(ex.message().c_str());
+        }
+
+        // 2. Resolve the FFB0 service.
+        const auto svcResult = co_await device.GetGattServicesForUuidAsync(FREDORCH_SERVICE_UUID);
+        if (svcResult.Status() != GattCommunicationStatus::Success
+            || svcResult.Services().Size() == 0)
+        {
+            qDebug().noquote() << "Fredorch handshake: FFB0 service NOT FOUND (status:"
+                               << (int)svcResult.Status() << ")";
+            cleanup_and_complete(false,
+                QStringLiteral("Fredorch Step 2/4 FAILED: GATT service 0xFFB0 not found on the device (Gatt status=%1). "
+                               "The device firmware may not expose the expected GATT layout, "
+                               "or another client (Intiface?) still holds the connection.")
+                .arg((int)svcResult.Status()));
+            co_return;
+        }
+        const auto svc = svcResult.Services().GetAt(0);
+
+        // 3. Resolve the TX characteristic. Try FFB1 first (F21S layout),
+        //    then fall back to FFE9 (legacy HismithMini layout) in case the
+        //    device shares the FFB0 service but uses the old TX UUID.
+        GattCharacteristic txChar{ nullptr };
+        const auto txCharResult = co_await svc.GetCharacteristicsForUuidAsync(FREDORCH_CHAR_TX_UUID);
+        if (txCharResult.Status() == GattCommunicationStatus::Success
+            && txCharResult.Characteristics().Size() > 0)
+        {
+            txChar = txCharResult.Characteristics().GetAt(0);
+            qDebug().noquote() << "Fredorch handshake: TX char bound to 0xFFB1 (F21S layout)";
+        }
+        else
+        {
+            qDebug().noquote() << "Fredorch handshake: FFB1 TX char NOT FOUND (status:"
+                               << (int)txCharResult.Status()
+                               << ") — falling back to legacy FFE9";
+            const auto legacyResult = co_await svc.GetCharacteristicsForUuidAsync(CHAR_TX_DATA_UUID);
+            if (legacyResult.Status() == GattCommunicationStatus::Success
+                && legacyResult.Characteristics().Size() > 0)
+            {
+                txChar = legacyResult.Characteristics().GetAt(0);
+                qDebug().noquote() << "Fredorch handshake: TX char bound to 0xFFE9 (legacy layout)";
+            }
+        }
+
+        if (!txChar)
+        {
+            cleanup_and_complete(false,
+                QStringLiteral("Fredorch Step 3/4 FAILED: no TX characteristic found under service 0xFFB0 "
+                               "(tried 0xFFB1 and legacy 0xFFE9)."));
+            co_return;
+        }
+
+        // 3b. Best-effort subscribe to FFB2 notify (telemetry / ACKs).
+        //     Non-fatal: the device may not expose FFB2, or the subscription
+        //     may fail on some firmware builds. We log notifications only.
+        try
+        {
+            const auto rxResult = co_await svc.GetCharacteristicsForUuidAsync(FREDORCH_CHAR_RX_UUID);
+            if (rxResult.Status() == GattCommunicationStatus::Success
+                && rxResult.Characteristics().Size() > 0)
+            {
+                const auto rxChar = rxResult.Characteristics().GetAt(0);
+                impl->fredorchNotifyToken = rxChar.ValueChanged(
+                    [self, impl](const GattCharacteristic&,
+                       const GattValueChangedEventArgs& args)
+                {
+                    try
+                    {
+                        const auto buf = args.CharacteristicValue();
+                        const auto reader = DataReader::FromBuffer(buf);
+                        std::string hex;
+                        std::vector<uint8_t> bytes;
+                        bytes.reserve(reader.UnconsumedBufferLength());
+                        while (reader.UnconsumedBufferLength() > 0)
+                        {
+                            const unsigned char b = reader.ReadByte();
+                            bytes.push_back(b);
+                            char hexstr[3] = { 0, 0, 0 };
+                            std::snprintf(hexstr, 3, "%02x", b);
+                            hex.append(hexstr);
+                        }
+                        qDebug().noquote()
+                            << "Fredorch FFB2 notify:" << QString::fromStdString(hex);
+                        // Forward the raw payload to the registered callback
+                        // (e.g. FredorchF21sController::readPlayState).
+                        std::function<void(const uint8_t*, size_t)> cb;
+                        {
+                            std::lock_guard l(self->m_mtx);
+                            cb = impl->rawNotifyCallback;
+                        }
+                        if (cb)
+                        {
+                            try { cb(bytes.data(), bytes.size()); }
+                            catch (...) { /* callback must be exception-safe */ }
+                        }
+                    }
+                    catch (const winrt::hresult_error& ex)
+                    {
+                        qWarning().noquote()
+                            << "Fredorch FFB2 notify: WinRT exception:"
+                            << QString::fromWCharArray(ex.message().c_str());
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        qWarning().noquote()
+                            << "Fredorch FFB2 notify: C++ exception:" << ex.what();
+                    }
+                    catch (...)
+                    {
+                        qWarning() << "Fredorch FFB2 notify: unknown exception";
+                    }
+                });
+                qDebug().noquote() << "Fredorch handshake: FFB2 notify subscribed";
+            }
+            else
+            {
+                qDebug().noquote() << "Fredorch handshake: FFB2 Rx char NOT FOUND (status:"
+                                   << (int)rxResult.Status()
+                                   << ") — skipping notify subscription";
+            }
+        }
+        catch (const winrt::hresult_error& ex)
+        {
+            qWarning().noquote()
+                << "Fredorch handshake: FFB2 ValueChanged subscription threw:"
+                << QString::fromWCharArray(ex.message().c_str());
+        }
+
+        // 4. Bind the TX characteristic and mark the protocol mode.
+        {
+            std::lock_guard l(self->m_mtx);
+            impl->device = device;
+            impl->txCharacteristic = txChar;
+            self->m_protocolMode = DeviceProtocolMode::FredorchF21S;
+        }
+        self->setLastError(QString()); // clear any prior diagnostic
+        complete(true);
+        qDebug().noquote() << "Fredorch handshake: SUCCESS — TX pipeline ready";
+        co_return;
+    }
+    catch (const winrt::hresult_error& ex)
+    {
+        const wchar_t* msg = ex.message().c_str();
+        qWarning().noquote() << "Fredorch handshake: WinRT exception:"
+                             << (msg && *msg ? QString::fromWCharArray(msg).toStdString()
+                                             : std::string("unknown"));
+        cleanup_and_complete(false);
+    }
+    catch (const std::exception& ex)
+    {
+        qWarning().noquote() << "Fredorch handshake: C++ exception:" << ex.what();
+        cleanup_and_complete(false);
+    }
+    catch (...)
+    {
+        qWarning().noquote() << "Fredorch handshake: unknown exception";
+        cleanup_and_complete(false);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2b: connectToFredorch (synchronous)
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::connectToFredorch(uint64_t address, int timeout_ms)
+{
+    if (!address)
+    {
+        qWarning() << "connectToFredorch: address == 0 — aborted";
+        return false;
+    }
+
+    // Idempotency: cleanly close any previous link first.
+    if (m_connected.load(std::memory_order_acquire))
+    {
+        disconnectDevice();
+    }
+
+    // Zero out stale impl state before the handshake starts.
+    {
+        std::lock_guard l(m_mtx);
+        pimpl->device = nullptr;
+        pimpl->txCharacteristic = nullptr;
+        pimpl->fredorchNotifyToken = winrt::event_token{};
+        pimpl->pendingWrite = nullptr;
+        m_protocolMode = DeviceProtocolMode::Unknown;
+    }
+
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto fut = promise->get_future();
+
+    // CRITICAL: hold the IAsyncAction alive across the wait (see
+    // connectToDevice for the full rationale — dropping the handle detaches
+    // the op and the continuation may never run, giving a spurious timeout).
+    auto asyncOp = connectFredorchHandshakeImpl(this, address, pimpl.get(), promise);
+
+    // PUMP Qt events while waiting (WinRT continuations on the STA thread
+    // deliver via the Windows message queue).
+    std::future_status wait_result = std::future_status::timeout;
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        wait_result = fut.wait_for(std::chrono::milliseconds(10));
+        if (wait_result == std::future_status::ready)
+        {
+            break;
+        }
+    }
+    bool ok = false;
+
+    if (wait_result == std::future_status::ready)
+    {
+        ok = fut.get();
+        if (ok)
+        {
+            m_connected.store(true, std::memory_order_release);
+            emit deviceConnected();
+            qDebug() << "connectToFredorch: SUCCESS";
+        }
+        else
+        {
+            m_connected.store(false, std::memory_order_release);
+            emit errorOccurred(QString("Fredorch BLE handshake failed for address 0x%1")
+                               .arg(address, 0, 16));
+            qWarning() << "connectToFredorch: handshake FAILED (see logs above)";
+        }
+    }
+    else
+    {
+        m_connected.store(false, std::memory_order_release);
+        emit errorOccurred(QString("Fredorch BLE connect TIMEOUT after %1 ms").arg(timeout_ms));
+        qWarning() << "connectToFredorch: TIMEOUT after" << timeout_ms << "ms — tearing down";
+
+        {
+            std::lock_guard l(m_mtx);
+            if (m_lastError.isEmpty())
+            {
+                m_lastError = QStringLiteral("Fredorch handshake TIMEOUT after %1 ms — "
+                                             "the GATT operation chain exceeded the budget. "
+                                             "The device is powered on but slow to respond, "
+                                             "or another GATT client (Intiface Central?) is sharing the BLE link.")
+                    .arg(timeout_ms);
+            }
+        }
+
+        try { asyncOp.Cancel(); }
+        catch (const winrt::hresult_error&) { /* Already finished — ignore */ }
+
+        const auto grace_deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(500);
+        while (std::chrono::steady_clock::now() < grace_deadline)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        }
+        disconnectDevice();
+    }
+
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 3: sendSpeedCommand (low-latency fire-and-forget, LATEST-WINS)
 // ---------------------------------------------------------------------------
 bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
@@ -900,6 +1303,400 @@ bool WinRtBleManager::sendSpeedCommand(uint8_t speed)
         qWarning() << "sendSpeedCommand: C++ exception:" << ex.what();
         return false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// dispatchRawFrame — core raw-frame dispatch (fire-and-forget, LATEST-WINS).
+//   Shared by sendRawFrame(). `contextTag` is a short label used in the
+//   Completed-delegate log line (e.g. "sendRawFrame").
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::dispatchRawFrame(const std::vector<uint8_t>& payload,
+                                       const char* contextTag)
+{
+    if (payload.empty())
+    {
+        return false;
+    }
+
+    // Snapshot TX characteristic under the lock.
+    GattCharacteristic tx{ nullptr };
+    {
+        std::lock_guard l(m_mtx);
+        tx = pimpl->txCharacteristic;
+    }
+
+    if (!tx)
+    {
+        qWarning() << "dispatchRawFrame: TX characteristic not bound — frame dropped";
+        return false;
+    }
+
+    DataWriter writer;
+    for (const auto b : payload)
+    {
+        writer.WriteByte(b);
+    }
+    auto buffer = writer.DetachBuffer();
+
+    // -------------------------------------------------------------------------
+    // LATEST-WINS coalescing: if a previous WriteValueAsync is still pending,
+    // CANCEL it before dispatching the new one, so the device is always
+    // commanded at the freshest frame.
+    // -------------------------------------------------------------------------
+    {
+        std::lock_guard l(m_mtx);
+        if (pimpl->pendingWrite)
+        {
+            try { pimpl->pendingWrite.Cancel(); }
+            catch (const winrt::hresult_error&) { /* already finished */ }
+            pimpl->pendingWrite = nullptr;
+        }
+        pimpl->inFlightWrites.fetch_add(1, std::memory_order_release);
+    }
+
+    try
+    {
+        auto* selfRaw = this;
+        auto asyncOp = tx.WriteValueAsync(buffer, GattWriteOption::WriteWithoutResponse);
+        {
+            std::lock_guard l(m_mtx);
+            pimpl->pendingWrite = asyncOp;
+        }
+        asyncOp.Completed([selfRaw, contextTag](
+            winrt::Windows::Foundation::IAsyncOperation<
+                winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> const& op,
+            winrt::Windows::Foundation::AsyncStatus status)
+        {
+            auto* selfNC = const_cast<WinRtBleManager*>(selfRaw);
+            selfNC->pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+            const int intStatus = (int)status;
+            int gstat = -1;
+            if (intStatus == 0)
+            {
+                try { gstat = (int)op.GetResults(); }
+                catch (const winrt::hresult_error&) { gstat = -1; }
+            }
+            static const char* kAsyncName[4] = { "Completed", "Canceled", "Error", "Started" };
+            const char* an = (intStatus >= 0 && intStatus < 4) ? kAsyncName[intStatus] : "Unknown";
+            const bool fullyOk = (intStatus == 0 && gstat == 0); // Completed && Gatt==Success
+            if (!fullyOk)
+            {
+                qWarning().noquote()
+                    << (contextTag ? contextTag : "dispatchRawFrame")
+                    << ": write NOT OK — AsyncStatus:" << intStatus << "(" << an << ")"
+                    << "  GattStatus:"
+                    << (intStatus == 0 ? QString::number(gstat) : QString("n/a (op not Completed)"));
+            }
+        });
+        return true;
+    }
+    catch (const winrt::hresult_error& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        const wchar_t* msg = ex.message().c_str();
+        qWarning() << "dispatchRawFrame: WinRT exception:"
+                   << (msg && *msg ? QString::fromWCharArray(msg).toStdString()
+                                   : std::string("unknown"));
+        return false;
+    }
+    catch (const std::exception& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        qWarning() << "dispatchRawFrame: C++ exception:" << ex.what();
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sendRawFrame — public fire-and-forget raw-frame write (LATEST-WINS).
+//   Used by FredorchF21sController to emit Modbus RTU frames over BLE.
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::sendRawFrame(const std::vector<uint8_t>& frame)
+{
+    if (!m_connected.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+    if (frame.empty())
+    {
+        return false;
+    }
+    return dispatchRawFrame(frame, "sendRawFrame");
+}
+
+// ---------------------------------------------------------------------------
+// inFlightWriteCount — public accessor for the in-flight write counter.
+// ---------------------------------------------------------------------------
+void WinRtBleManager::setRawNotifyCallback(RawNotifyCallback cb)
+{
+    std::lock_guard l(m_mtx);
+    pimpl->rawNotifyCallback = std::move(cb);
+}
+
+// ---------------------------------------------------------------------------
+// inFlightWriteCount — public accessor for the in-flight write counter.
+// ---------------------------------------------------------------------------
+int WinRtBleManager::inFlightWriteCount() const
+{
+    return pimpl->inFlightWrites.load(std::memory_order_acquire);
+}
+
+// ---------------------------------------------------------------------------
+// sendRawFrameQueued — fire-and-forget raw-frame write WITHOUT LATEST-WINS
+//   cancel. Intended for framed protocols (Fredorch Modbus) where a logical
+//   command is a SEQUENCE of frames (Play OFF + Step + Play ON) and a cancel
+//   would eat the previous frame of the sequence.
+//
+//   Each WriteValueWithoutResponse op is stored in the pimpl ring buffer
+//   (strong ref, max 8) so the runtime keeps it alive until the driver
+//   completes it. The Windows BLE stack queues the writes and flushes them
+//   at the next connection event, so a 3-frame sequence lands in one
+//   ~15-30ms radio interval instead of 3 separate ones.
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::sendRawFrameQueued(const std::vector<uint8_t>& frame)
+{
+    if (!m_connected.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+    if (frame.empty())
+    {
+        return false;
+    }
+
+    // Snapshot TX characteristic under the lock.
+    GattCharacteristic tx{ nullptr };
+    {
+        std::lock_guard l(m_mtx);
+        tx = pimpl->txCharacteristic;
+    }
+    if (!tx)
+    {
+        qWarning() << "sendRawFrameQueued: TX characteristic not bound — frame dropped";
+        return false;
+    }
+
+    DataWriter writer;
+    for (const auto b : frame)
+    {
+        writer.WriteByte(b);
+    }
+    auto buffer = writer.DetachBuffer();
+
+    {
+        std::lock_guard l(m_mtx);
+        pimpl->inFlightWrites.fetch_add(1, std::memory_order_release);
+    }
+
+    try
+    {
+        auto* selfRaw = this;
+        auto asyncOp = tx.WriteValueAsync(buffer, GattWriteOption::WriteWithoutResponse);
+        {
+            std::lock_guard l(m_mtx);
+            // Rotate the ring: the slot we overwrite holds an op that is
+            // almost certainly completed (its Completed delegate has already
+            // decremented inFlightWrites); overwriting releases the last
+            // strong ref, which is safe.
+            pimpl->queuedWrites[pimpl->queuedWriteIndex] = asyncOp;
+            pimpl->queuedWriteIndex = (pimpl->queuedWriteIndex + 1)
+                % WinRtBleManager::Impl::kQueuedWritesDepth;
+        }
+        asyncOp.Completed([selfRaw](
+            winrt::Windows::Foundation::IAsyncOperation<
+                winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> const& op,
+            winrt::Windows::Foundation::AsyncStatus status)
+        {
+            auto* selfNC = const_cast<WinRtBleManager*>(selfRaw);
+            selfNC->pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+            const int intStatus = (int)status;
+            int gstat = -1;
+            if (intStatus == 0)
+            {
+                try { gstat = (int)op.GetResults(); }
+                catch (const winrt::hresult_error&) { gstat = -1; }
+            }
+            static const char* kAsyncName[4] = { "Completed", "Canceled", "Error", "Started" };
+            const bool fullyOk = (intStatus == 0 && gstat == 0);
+            if (!fullyOk)
+            {
+                const char* an = (intStatus >= 0 && intStatus < 4) ? kAsyncName[intStatus] : "Unknown";
+                qWarning().noquote()
+                    << "sendRawFrameQueued: write NOT OK — AsyncStatus:" << intStatus << "(" << an << ")"
+                    << "  GattStatus:"
+                    << (intStatus == 0 ? QString::number(gstat) : QString("n/a (op not Completed)"));
+            }
+        });
+        return true;
+    }
+    catch (const winrt::hresult_error& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        const wchar_t* msg = ex.message().c_str();
+        qWarning() << "sendRawFrameQueued: WinRT exception:"
+                   << (msg && *msg ? QString::fromWCharArray(msg).toStdString()
+                                   : std::string("unknown"));
+        return false;
+    }
+    catch (const std::exception& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        qWarning() << "sendRawFrameQueued: C++ exception:" << ex.what();
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// dispatchRawFrameAndWait — core raw-frame dispatch (blocking, pumps events
+//   until the GATT Completed delegate fires or timeout). Shared by
+//   sendRawFrameAndWait().
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::dispatchRawFrameAndWait(const std::vector<uint8_t>& payload,
+                                              int timeout_ms,
+                                              int* status_out)
+{
+    if (status_out) *status_out = -1;
+    if (payload.empty())
+    {
+        return false;
+    }
+
+    GattCharacteristic tx{ nullptr };
+    {
+        std::lock_guard l(m_mtx);
+        tx = pimpl->txCharacteristic;
+    }
+    if (!tx)
+    {
+        qWarning() << "dispatchRawFrameAndWait: TX characteristic not bound";
+        return false;
+    }
+
+    DataWriter writer;
+    for (const auto b : payload) writer.WriteByte(b);
+    auto buffer = writer.DetachBuffer();
+
+    // LATEST-WINS: cancel any pending write
+    {
+        std::lock_guard l(m_mtx);
+        if (pimpl->pendingWrite)
+        {
+            try { pimpl->pendingWrite.Cancel(); }
+            catch (const winrt::hresult_error&) {}
+            pimpl->pendingWrite = nullptr;
+        }
+        pimpl->inFlightWrites.fetch_add(1, std::memory_order_release);
+    }
+
+    // Heap-allocated result box — outlives the lambda if the op outlives us.
+    auto resultBox = std::make_shared<std::pair<bool, int>>(false, -1);
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto fut = promise->get_future();
+
+    try
+    {
+        auto* selfRaw = this;
+        auto asyncOp = tx.WriteValueAsync(buffer, GattWriteOption::WriteWithoutResponse);
+        {
+            std::lock_guard l(m_mtx);
+            pimpl->pendingWrite = asyncOp;
+        }
+
+        asyncOp.Completed([resultBox, promise, selfRaw](
+            winrt::Windows::Foundation::IAsyncOperation<
+                winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus> const& op,
+            winrt::Windows::Foundation::AsyncStatus status)
+        {
+            auto* selfNC = const_cast<WinRtBleManager*>(selfRaw);
+            selfNC->pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+
+            const int intStatus = ((int)status);
+            int gstat = -1;
+            bool ok = false;
+            if (intStatus == 0)   // AsyncStatus::Completed
+            {
+                try { gstat = (int)op.GetResults(); }
+                catch (const winrt::hresult_error&) { gstat = -1; }
+                ok = (gstat == 0);   // Gatt 0 = GattCommunicationStatus::Success
+            }
+            // --- DIAGNOSTICS: expose the AsyncStatus so we can tell
+            //     "not even Completed" (Canceled/Error/Started) apart from
+            //     "Completed but the device rejected the PDU" (Gatt!=Success).
+            if (!ok)
+            {
+                static const char* kAsyncName[4] = { "Completed", "Canceled", "Error", "Started" };
+                const char* an = (intStatus >= 0 && intStatus < 4) ? kAsyncName[intStatus] : "Unknown";
+                qWarning().noquote() << "sendRawFrameAndWait: write NOT OK —"
+                                     << "AsyncStatus:" << intStatus << "(" << an << ")"
+                                     << "  GattStatus:"
+                                     << (intStatus == 0 ? QString::number(gstat) : QString("n/a (op not Completed)"))
+                                     << "  [0=Completed 1=Canceled 2=Error 3=Started; Gatt 0=Success, 1=DeviceUnreachable, 2=InvalidPdu, 20=DeviceNotAvailable, 22=AccessDenied]";
+            }
+            *resultBox = { ok, gstat };
+            try { promise->set_value(ok); }
+            catch (const std::future_error&) { /* already set */ }
+        });
+
+        // Pump until delegate fires or timeout (10ms ticks)
+        const auto deadline = std::chrono::steady_clock::now()
+                             + std::chrono::milliseconds(timeout_ms);
+        bool done = false;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            if (fut.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready)
+            {
+                done = true;
+                break;
+            }
+        }
+
+        if (done)
+        {
+            fut.get();
+            if (status_out) *status_out = resultBox->second;
+            return resultBox->first;   // true only when Completed && Gatt==Success
+        }
+
+        // Timeout — cancel and drain briefly
+        try { asyncOp.Cancel(); } catch (...) {}
+        for (int i = 0; i < 5; ++i)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            if (fut.wait_for(std::chrono::milliseconds(5)) == std::future_status::ready)
+                break;
+        }
+        return false; // timed out
+    }
+    catch (const winrt::hresult_error& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        const wchar_t* msg = ex.message().c_str();
+        qWarning() << "dispatchRawFrameAndWait: WinRT exception:"
+                     << (msg && *msg ? QString::fromWCharArray(msg).toStdString() : std::string("unknown"));
+        return false;
+    }
+    catch (const std::exception& ex)
+    {
+        pimpl->inFlightWrites.fetch_sub(1, std::memory_order_release);
+        qWarning() << "dispatchRawFrameAndWait: C++ exception:" << ex.what();
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sendRawFrameAndWait — public blocking raw-frame write.
+// ---------------------------------------------------------------------------
+bool WinRtBleManager::sendRawFrameAndWait(const std::vector<uint8_t>& frame,
+                                          int timeout_ms,
+                                          int* status_out)
+{
+    if (!m_connected.load(std::memory_order_acquire))
+    {
+        if (status_out) *status_out = -1;
+        return false;
+    }
+    return dispatchRawFrameAndWait(frame, timeout_ms, status_out);
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,20 +1932,22 @@ void WinRtBleManager::disconnectDevice()
                      << (pimpl->drainDurationMs > 500 ? " — SLOW" : "");
         }
 
-        // 4. Clear the ConnectionParametersChanged subscription token. We do
-        // NOT need to explicitly revoke it: dropping `pimpl->device` in
-        // step 5 destroys the COM object, which auto-detaches all its
-        // handlers. Moving the token out just clears the binding slot so a
-        // future connect() does not see a stale token.
+        // 4. Clear the ConnectionParametersChanged and Fredorch FFB2 notify
+        // subscription tokens. We do NOT need to explicitly revoke them:
+        // dropping `pimpl->device` in step 5 destroys the COM object, which
+        // auto-detaches all its handlers. Moving the tokens out just clears
+        // the binding slots so a future connect() does not see stale tokens.
         {
             winrt::event_token token;
+            winrt::event_token notifyToken;
             {
                 std::lock_guard l(m_mtx);
                 token = std::move(pimpl->connectParamsToken);
+                notifyToken = std::move(pimpl->fredorchNotifyToken);
             }
-            // Scope-exit: `token` is destroyed; the remove_* slot runs and the
-            // handler is released. (cppwinrt event_token is move-only; no
-            // .revoke() method needed.)
+            // Scope-exit: both tokens are destroyed; the remove_* slots run
+            // and the handlers are released. (cppwinrt event_token is
+            // move-only; no .revoke() method needed.)
         }
 
         // 5. Release the BluetoothLEDevice — drops the COM reference and asks

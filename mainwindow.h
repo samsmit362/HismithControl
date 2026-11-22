@@ -38,6 +38,7 @@
 #include "3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h"
 
 #include "WinRtBleManager.h"
+#include "FredorchF21sController.h"
 
 //---------------------------------------------------------------
 
@@ -109,6 +110,7 @@ void warning_msg(QString msg, QString title = "");
 void show_msg(QString msg, int timeout = 5000, MessageType msg_type = MessageType::Add, bool drow_modify_funscript_functions = false, double msg_wnd_y_offset_from_top = 0.5);
 void run_funscript();
 void test_hismith(int hismith_speed);
+void test_FredorchF21S();
 void get_performance_with_hismith(int hismith_speed);
 void get_webcam_latency();
 void test_camera();
@@ -342,6 +344,54 @@ signals:
 };
 
 //---------------------------------------------------------------
+// Fredorch F21S test worker — runs test_FredorchF21S() in a separate
+// QThread so that the UI is never blocked during the test.
+//---------------------------------------------------------------
+
+class FredorchTestWorker : public QObject
+{
+    Q_OBJECT
+
+    MainWindow* p_parent;
+
+public:
+    FredorchTestWorker(MainWindow* parent) : p_parent(parent) {}
+
+public slots:
+    void doWork();
+
+signals:
+    void resultReady();
+};
+
+class FredorchTestController : public QObject
+{
+    Q_OBJECT
+
+    QThread workerThread;
+    MainWindow* p_parent;
+
+public:
+    FredorchTestController(MainWindow* parent) : p_parent(parent) {
+        FredorchTestWorker* worker = new FredorchTestWorker(parent);
+        worker->moveToThread(&workerThread);
+        connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
+        connect(this, &FredorchTestController::operate, worker, &FredorchTestWorker::doWork);
+        connect(worker, &FredorchTestWorker::resultReady, this, &FredorchTestController::handleResults);
+        workerThread.start();
+    }
+    ~FredorchTestController() {
+        workerThread.quit();
+        workerThread.wait();
+    }
+
+public slots:
+    void handleResults();
+signals:
+    void operate();
+};
+
+//---------------------------------------------------------------
 // Get Performance worker — runs get_performance_with_hismith() in
 // a separate QThread so that the UI never blocks.
 //---------------------------------------------------------------
@@ -407,10 +457,45 @@ public:
     GetStatisticsController ctrlGetStatistics;
     TestController ctrlTest;
     PerfController ctrlPerformance;
+    FredorchTestController ctrlFredorchTest;
 
     QSystemTrayIcon* trayIcon;
 
     WinRtBleManager* m_bleManager = nullptr;
+
+    // Fredorch F21S / T8 Program Mode controller (owned by MainWindow;
+    // constructed in the constructor after m_bleManager, destroyed in the
+    // destructor). Null until explicitly connected.
+    FredorchF21sController* m_fredorch = nullptr;
+
+    // ---- Fredorch F21S / T8 Program Mode transport (minimal wiring) ----
+    bool connect_to_fredorch(QString bleMacAddress);
+    void disconnect_from_fredorch();
+    bool fredorch_moveTo(int targetPos, int speed);
+    // Batch (spline) form: sends a sequence of FredorchMoveSteps slots as
+    // Modbus 0x10 slot frames (Play ON + Loop + slots).
+    // Each step is {pos1, speed1, pos2, speed2} mapped to the registers in
+    // write order [speed1->speedOut] [speed2->speedIn] [pos1->posIn]
+    // [pos2->posOut]. All four values are sent as-is (zero is valid).
+    bool fredorch_moveTo(const std::vector<FredorchF21sController::FredorchMoveSteps>& steps,
+                         bool loop = false);
+    // Batch form with explicit slot offset (0..9) — enables the ping-pong
+    // live rewrite when the device is already looping: only the slots from
+    // slotOffset onward are reprogrammed, no Play OFF / Play ON in between.
+    //   fredorch_moveTo(0, {{50,5}, {100,10}, ...}, /*loop=*/true)
+    bool fredorch_moveTo(int slotOffset,
+                         const std::vector<FredorchF21sController::FredorchMoveSteps>& steps,
+                         bool loop = false);
+    bool fredorch_stop();
+    bool fredorch_startLoopRange(int posA, int posB, int speed);
+    // Explicitly re-enter Program Mode (0x0064=1) before the first
+    // fredorch_moveTo() after a fredorch_stop() / disconnect (the device
+    // is in Pattern mode / RF-remote control after stop).
+    bool start_programMode();
+    // Read the Play/Stop state register (0x0069) via Modbus fn 0x03.
+    // Blocking: waits up to timeoutMs for the FFB2 notify response.
+    // stateOut: 1 = Play ON, 0 = Play OFF.
+    bool fredorch_readPlayState(uint16_t* stateOut, int timeoutMs = 500);
 
     bool eventFilter(QObject* obj, QEvent* event);
     void RegisterHotKeys();
@@ -431,6 +516,7 @@ private slots:
     void handleGetWebcamLatency();
     void handleStartButton();
     void handleTestButton();
+    void handleTestButtonFredorchF21S();
     void handleGetPerformance();
     void handleGetStatistics();
     void handleTestCameraButton();

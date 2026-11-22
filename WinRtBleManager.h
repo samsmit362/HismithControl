@@ -25,11 +25,13 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <functional>
 
 enum class DeviceProtocolMode {
     Unknown,
     LegacyHismith,
-    HismithMini
+    HismithMini,
+    FredorchF21S
 };
 
 // Result of a BLE advertisement scan. Returned by findHismithDevices().
@@ -76,6 +78,17 @@ public:
     bool connectToDevice(uint64_t address, int timeout_ms = 8000);
 
     // -----------------------------------------------------------------
+    // PHASE 2b: Synchronous targeted connection for Fredorch F21S/T8.
+    //   Binds the FFB0 -> FFB1 TX characteristic (falling back to the
+    //   legacy FFE5 -> FFE9 layout if FFB1 is absent), best-effort
+    //   subscribes to the FFB2 notify characteristic, and sets
+    //   m_protocolMode to FredorchF21S. Blocks up to timeout_ms.
+    //   On success:  tx_char bound, m_protocolMode = FredorchF21S, returns true.
+    //   On failure:  tx_char cleared, m_protocolMode = Unknown, returns false.
+    // -----------------------------------------------------------------
+    bool connectToFredorch(uint64_t address, int timeout_ms = 8000);
+
+    // -----------------------------------------------------------------
     // PHASE 3: Low-latency fire-and-forget speed command (LATEST-WINS).
     //   - If a previous WriteValueAsync is still pending, it is CANCELLED
     //     and the new write is dispatched. This guarantees that if speeds
@@ -106,6 +119,56 @@ public:
     bool sendSpeedCommandAndWait(uint8_t speed,
                                  int timeout_ms,
                                  int* status_out = nullptr); // int cast of GattCommunicationStatus
+
+    // -----------------------------------------------------------------
+    // PHASE 3c: Send an arbitrary raw byte frame (fire-and-forget,
+    //   LATEST-WINS coalescing). Used by FredorchF21sController to emit
+    //   Modbus RTU frames over the BLE link. Returns true if the write
+    //   was dispatched to WinRT (NOT meaning it was ACK'd —
+    //   WriteWithoutResponse has no ACK).
+    //   - Thread-safe; safe to call concurrently from the tracking thread.
+    // -----------------------------------------------------------------
+    bool sendRawFrame(const std::vector<uint8_t>& frame);
+
+    // -----------------------------------------------------------------
+    // PHASE 3e: Queued raw-frame write (NO LATEST-WINS cancel).
+    //   Fire-and-forget: dispatches WriteValueWithoutResponse and stores
+    //   the IAsyncOperation in a 32-slot ring buffer so it is not destroyed
+    //   (GC'd) before the driver completes it — the depth is sized so old
+    //   ops survive a 200-300 ms GattStatus stall on the YXLinksSPP bridge
+    //   without being wrapped-over and released. Multiple queued writes
+    //   are bundled by the Windows BLE driver into a single connection
+    //   event, reducing 3-frame sequences (Play OFF + Step + Play ON)
+    //   from ~150 ms to ~20-30 ms.
+    //   Thread-safe; safe to call from the worker thread.
+    //   Returns true if the write was dispatched to WinRT.
+    // -----------------------------------------------------------------
+    bool sendRawFrameQueued(const std::vector<uint8_t>& frame);
+
+    // -----------------------------------------------------------------
+    // Number of dispatched writes whose GATT Completed delegate has NOT
+    // fired yet. Intended for callers that dispatch fire-and-forget
+    // writes in rapid succession and want to "settle" (wait for the
+    // in-flight write to complete) before the next dispatch, so the
+    // LATEST-WINS coalescing cancel does not eat a packet that has not
+    // left the radio yet. Thread-safe.
+    // -----------------------------------------------------------------
+    int inFlightWriteCount() const;
+
+    // -----------------------------------------------------------------
+    // PHASE 3d: Send an arbitrary raw byte frame and wait for the GATT
+    //   Completed delegate to fire (blocking variant of sendRawFrame).
+    //   - status_out receives the GattCommunicationStatus as an int
+    //     (0 = Success, 2 = InvalidPdu, ...); -1 if no result.
+    //   - Returns true if the delegate fired within timeout_ms AND the
+    //     Gatt status was Success.
+    //   - Thread-confined: must be called from the thread that owns the
+    //     WinRtBleManager's event loop (i.e. the thread that called
+    //     connectToDevice / connectToFredorch).
+    // -----------------------------------------------------------------
+    bool sendRawFrameAndWait(const std::vector<uint8_t>& frame,
+                             int timeout_ms,
+                             int* status_out = nullptr);
 
     // -----------------------------------------------------------------
     // TEARDOWN. Safe to call on an unconnected manager (no-op).
@@ -142,6 +205,19 @@ public:
         m_lastError = s;
     }
 
+    // -----------------------------------------------------------------
+    // Optional raw-notification callback (Fredorch FFB2 / 0xFFB2 notify).
+    // Every ValueChanged payload on the Fredorch Rx characteristic is
+    // forwarded to this callback IN ADDITION to the log line. The callback
+    // runs on the WinRT callback thread (UI/STA thread) and MUST be
+    // non-blocking and exception-safe. Pass nullptr to clear.
+    // Intended use: FredorchF21sController captures Modbus RTU response
+    // frames (e.g. readPlayState() waiting for the 0x0069 read reply).
+    // -----------------------------------------------------------------
+    using RawNotifyCallback =
+        std::function<void(const uint8_t* data, size_t length)>;
+    void setRawNotifyCallback(RawNotifyCallback cb);
+
 signals:
     // Convenience signals (emitted from the sync API — safe to connect for
     // logging / status UIs):
@@ -151,6 +227,18 @@ signals:
 private:
     std::vector<uint8_t> generateModbusPacketForSpeed(uint8_t speed);
     uint16_t calculateCRC16(const std::vector<uint8_t>& data);
+
+    // Core raw-frame dispatch (LATEST-WINS coalescing + fire-and-forget).
+    // Shared by sendSpeedCommand() and sendRawFrame(). `contextTag` is a
+    // short label used in the Completed-delegate log line.
+    bool dispatchRawFrame(const std::vector<uint8_t>& payload,
+                          const char* contextTag);
+
+    // Core raw-frame dispatch + wait (blocking variant). Shared by
+    // sendSpeedCommandAndWait() and sendRawFrameAndWait().
+    bool dispatchRawFrameAndWait(const std::vector<uint8_t>& payload,
+                                 int timeout_ms,
+                                 int* status_out);
 
     std::unique_ptr<Impl> pimpl;
 };

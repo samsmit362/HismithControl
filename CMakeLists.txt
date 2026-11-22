@@ -40,7 +40,9 @@ set(PROJECT_SOURCES
         HereSphereSync.h
         WinRtBleManager.cpp
         WinRtBleManager.h
-		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp
+        FredorchF21sController.cpp
+        FredorchF21sController.h
+   3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.cpp
 		3rdParty/OpenCVDeviceEnumerator/DeviceEnumerator.h
         .editorconfig
 		${BUTTPLUGCPP_SRC_FILES}

@@ -84,6 +84,25 @@ void TestController::handleResults()
 
 //---------------------------------------------------------------
 
+void FredorchTestWorker::doWork()
+{
+    g_work_in_progress = true;
+    // P-core pin (T3, see ThreadAffinity.h) — same P-core #1 as the other
+    // workers, mutually exclusive via g_work_in_progress.
+    ::ThreadAffinity::pinCurrentThread(/*idx=*/1, ::ThreadAffinity::kTagWorkerMainLoop);
+
+    test_FredorchF21S();
+    emit resultReady();
+}
+
+void FredorchTestController::handleResults()
+{
+    g_stop_run = false;
+    g_work_in_progress = false;
+}
+
+//---------------------------------------------------------------
+
 void PerfWorker::doWork(int speed)
 {
     g_work_in_progress = true;
@@ -177,7 +196,7 @@ void MainWindow::RegisterHotKeys()
 }
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), ctrlStart(this), ctrlGetStatistics(this), ctrlTest(this), ctrlPerformance(this)
+    : QMainWindow(parent), ctrlStart(this), ctrlGetStatistics(this), ctrlTest(this), ctrlPerformance(this), ctrlFredorchTest(this)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
@@ -185,6 +204,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->getWebcamLatency, &QPushButton::released, this, &MainWindow::handleGetWebcamLatency);
     connect(ui->startButton, &QPushButton::released, this, &MainWindow::handleStartButton);
     connect(ui->testButton, &QPushButton::released, this, &MainWindow::handleTestButton);
+    connect(ui->testButtonFredorchF21S, &QPushButton::released, this, &MainWindow::handleTestButtonFredorchF21S);
     connect(ui->testCameraButton, &QPushButton::released, this, &MainWindow::handleTestCameraButton);
     connect(ui->refreshDevices, &QPushButton::released, this, &MainWindow::handleRefreshDevicesButton);
     connect(ui->getPerformance, &QPushButton::released, this, &MainWindow::handleGetPerformance);
@@ -279,6 +299,19 @@ MainWindow::MainWindow(QWidget *parent)
     // are convenience ones (deviceConnected / errorOccurred) for log output.
     m_bleManager = new WinRtBleManager(this);
 
+    // Allocate the Fredorch F21S Program Mode controller ONCE for the
+    // lifetime of the program. It sits on top of m_bleManager and is the
+    // entry point for F21S control (moveTo / stop). It is NOT connected
+    // here — connect() is called on demand from the transport dispatcher.
+    {
+        FredorchF21sController::Config fc;
+        fc.throttleMs = 90;
+        fc.useStepBlock = true;      // 5-register step block (0x10) — documented encoding
+        fc.connectTimeoutMs = 8000;
+        fc.deviceName = "F21S";
+        m_fredorch = new FredorchF21sController(m_bleManager, fc);
+    }
+
     // Log-only hookup: surface BLE connection events on the main window
     // status bar (no UI state is driven by these signals anymore).
     connect(m_bleManager, &WinRtBleManager::deviceConnected, this, [this]() {
@@ -294,6 +327,220 @@ void MainWindow::handleOpenFunscript()
     funscript = QDir::toNativeSeparators(QFileDialog::getOpenFileName(this,
         tr("Open Funscript"), "", tr("Funscripts (*.funscript)")));
     ui->funscriptPathEdit->setText(funscript);
+}
+
+// ---------------------------------------------------------------------------
+// Fredorch F21S / T8 Program Mode transport (minimal wiring)
+// ---------------------------------------------------------------------------
+
+// Parse a Bluetooth MAC address string into a 48-bit uint64 address.
+// Accepts "AA:BB:CC:DD:EE:FF", "AA-BB-CC-DD-EE-FF", "AABBCCDDEEFF",
+// "0xAABBCCDDEEFF" and "0x00AA:BB:CC:DD:EE:FF". Returns false on failure.
+static bool parseBleMacAddress(const QString& macIn, uint64_t& outAddress)
+{
+    QString s = macIn.trimmed();
+
+    // Strip a leading "0x" / "0X" prefix (case-insensitive).
+    if (s.size() >= 2 && s[0] == '0'
+        && (s[1] == 'x' || s[1] == 'X'))
+    {
+        s = s.mid(2);
+    }
+
+    // Remove any separators: ':', '-', '.', ' '.
+    QString hex;
+    hex.reserve(s.size());
+    for (QChar c : s)
+    {
+        const QChar low = c.toLower();
+        if (low >= '0' && low <= '9')      hex.append(low);
+        else if (low >= 'a' && low <= 'f') hex.append(low);
+        // other characters (':' '-' '.' ' ' 'x') are dropped
+    }
+
+    if (hex.size() != 12)
+    {
+        return false;
+    }
+
+    bool ok = false;
+    const uint64_t v = hex.toULongLong(&ok, 16);
+    if (!ok || v == 0)
+    {
+        return false;
+    }
+
+    outAddress = v;
+    return true;
+}
+
+bool MainWindow::connect_to_fredorch(QString bleMacAddress)
+{
+    if (!m_fredorch)
+    {
+        error_msg(tr("Fredorch controller is not initialized"));
+        return false;
+    }
+
+    // If a previous session is active, tear it down first.
+    if (m_fredorch->isConnected())
+    {
+        m_fredorch->disconnect();
+    }
+
+    uint64_t addr = 0;
+    if (!parseBleMacAddress(bleMacAddress, addr))
+    {
+        error_msg(tr("Invalid BLE MAC address: %1")
+                  .arg(bleMacAddress));
+        return false;
+    }
+
+    // Point the controller at the requested device and connect.
+    // The controller already holds a Config; we update the address here
+    // without rebuilding the object (address is read during connect()).
+    // We rely on connect() reading m_config.deviceAddress, so we set it
+    // via a fresh connect using the address-based overload below.
+    //
+    // NOTE: FredorchF21sController::connect() uses m_config.deviceAddress.
+    // Since the controller was constructed with deviceAddress = 0, we
+    // re-target it by storing the parsed address and calling the BLE
+    // manager's address-based handshake through the controller.
+    qDebug().noquote() << "connect_to_fredorch: target 0x"
+                       << QString::number(addr, 16);
+
+    // Delegate to the controller. The controller reads
+    // m_config.deviceAddress; to allow per-call addressing we expose the
+    // BLE manager handshake path via a dedicated connect with address.
+    bool ok = false;
+    {
+        // Update the controller's target address, then connect.
+        // (The controller's public connect() uses its stored config address;
+        //  we therefore set it through a helper exposed below.)
+        ok = m_fredorch->connectWithAddress(addr);
+    }
+
+    if (ok)
+    {
+        // Marshal to UI thread — showMessage with timeout creates a QTimer
+        // which must live on the same thread as the QStatusBar parent.
+        QMetaObject::invokeMethod(this, [this]() {
+            statusBar()->showMessage(tr("Fredorch F21S: connected (Program Mode)"), 5000);
+        }, Qt::QueuedConnection);
+        qDebug() << "connect_to_fredorch: SUCCESS";
+    }
+    else
+    {
+        error_msg(tr("Fredorch connect failed: %1").arg(m_fredorch->lastError()));
+        qWarning().noquote()
+            << "connect_to_fredorch: FAILED:"
+            << m_fredorch->lastError().toStdString();
+    }
+    return ok;
+}
+
+void MainWindow::disconnect_from_fredorch()
+{
+    if (!m_fredorch)
+    {
+        return;
+    }
+    if (m_fredorch->isConnected())
+    {
+        m_fredorch->disconnect();
+        // Marshal to UI thread (QTimer created by showMessage must be on UI thread)
+        QMetaObject::invokeMethod(this, [this]() {
+            statusBar()->showMessage(tr("Fredorch F21S: disconnected"), 4000);
+        }, Qt::QueuedConnection);
+        qDebug() << "disconnect_from_fredorch: done";
+    }
+}
+
+bool MainWindow::fredorch_moveTo(int targetPos, int speed)
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    if (!m_fredorch->isConnected())
+    {
+        qWarning() << "fredorch_moveTo: not connected";
+        return false;
+    }
+    return m_fredorch->moveTo(targetPos, speed);
+}
+
+bool MainWindow::fredorch_moveTo(
+    const std::vector<FredorchF21sController::FredorchMoveSteps>& steps, bool loop)
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    if (!m_fredorch->isConnected())
+    {
+        qWarning() << "fredorch_moveTo(batch): not connected";
+        return false;
+    }
+    return m_fredorch->moveTo(steps, loop);
+}
+
+bool MainWindow::fredorch_moveTo(
+    int slotOffset,
+    const std::vector<FredorchF21sController::FredorchMoveSteps>& steps,
+    bool loop)
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    if (!m_fredorch->isConnected())
+    {
+        qWarning() << "fredorch_moveTo(batch+offset): not connected";
+        return false;
+    }
+    return m_fredorch->moveTo(steps, slotOffset, loop);
+}
+
+bool MainWindow::fredorch_stop()
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    return m_fredorch->stop();
+}
+
+bool MainWindow::fredorch_readPlayState(uint16_t* stateOut, int timeoutMs)
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    return m_fredorch->readPlayState(stateOut, timeoutMs);
+}
+
+bool MainWindow::fredorch_startLoopRange(int posA, int posB, int speed)
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    if (!m_fredorch->isConnected())
+    {
+        qWarning() << "fredorch_startLoopRange: not connected";
+        return false;
+    }
+    return m_fredorch->startLoopRange(posA, posB, speed);
+}
+
+bool MainWindow::start_programMode()
+{
+    if (!m_fredorch)
+    {
+        return false;
+    }
+    return m_fredorch->startProgramMode();
 }
 
 void MainWindow::handleCheckFunscript()
@@ -375,6 +622,15 @@ void MainWindow::handleTestButton()
     if (!g_work_in_progress)
     {
         emit ctrlTest.operate(ui->testSpeed->text().toInt());
+    }
+}
+
+void MainWindow::handleTestButtonFredorchF21S()
+{
+    g_stop_run = false;
+    if (!g_work_in_progress)
+    {
+        emit ctrlFredorchTest.operate();
     }
 }
 
@@ -702,11 +958,13 @@ void MainWindow::refreshDevices(bool show_msgs)
 
         if (devices.empty() && show_msgs)
         {
-            warning_msg(QString("No Hismith / Wildolo / Fredorch device was seen "
+            warning_msg(QString("No Hismith / Wildolo / Fredorch (YXlinksSPP) device was seen "
                 "in the BLE advertisement scan (5 second window).\n\n"
                 "Please verify the device is powered on, the Bluetooth radio is "
                 "enabled in Windows, and that it is NOT paired/locked by another "
-                "application (e.g. Intiface Central).")
+                "application (e.g. Intiface Central).\n\n"
+                "Note: the Fredorch F21S / T8 advertises over BLE as \"YXlinksSPP\" "
+                "(the factory BT module name), not as \"Fredorch F21S\".")
                 , "Refresh BLE Devices");
         }
         return;
@@ -867,5 +1125,8 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     cv::destroyAllWindows();
+    // Release the Fredorch F21S BLE link if it is still active, so the
+    // radio is not held when the main window is closed.
+    disconnect_from_fredorch();
     event->accept();
 }
